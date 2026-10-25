@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 #include <stdint.h>
 #define REVIX_REPLAY 1

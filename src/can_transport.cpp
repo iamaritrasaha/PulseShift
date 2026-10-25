@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "can_transport.h"
 #include <Arduino.h>
 #include <sdkconfig.h>

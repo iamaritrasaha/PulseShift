@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "frame_log.h"
 #include <Arduino.h>
 void FrameLog::push(const CanFrame& f, DecodeResult result) {

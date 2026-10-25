@@ -6,7 +6,7 @@ ESP32 Arduino C++ firmware for the **2025 Bajaj Pulsar NS125 ABS**, using an **S
 
 1. Open Ubuntu (WSL) and run:
    ```sh
-   cd /home/hrik/projects/REVIX_LINK_ESP32
+   cd REVIX-LINK
    code .
    ```
 2. In VS Code, confirm **WSL: Ubuntu** at the bottom.
@@ -28,7 +28,7 @@ In `include/config.h`, this is the only simulation switch:
 ```
 
 - `REVIX_REPLAY` (currently selected): feeds complete synthetic CAN frames through the decoder to test the OLED/LEDs. The banner says `FRAME_REPLAY_TEST`. This does **not** test TWAI or a physical CAN bus.
-- `REVIX_TWAI_TEST`: exercises TWAI self-reception with the dashboard. A transaction requires matching RX, TX_SUCCESS and zero pending TX. The user's latest Wokwi run received one frame but stalled before TX completion; this mode halts with a diagnostic.
+- `REVIX_TWAI_TEST`: exercises TWAI self-reception with the dashboard. A transaction requires matching RX, TX_SUCCESS and zero pending TX. The latest recorded Wokwi test received one frame but stalled before TX completion; this mode halts with a diagnostic.
 
 Change the value, build, and restart Wokwi. Neither choice requires changing paths or the circuit. Replay ignores the simulator's loopback wire.
 
@@ -57,10 +57,16 @@ bash test/run.sh
 
 The first command builds the same Wokwi firmware as Ctrl+Shift+B. The second runs C++ tests and requires Ubuntu's `g++`.
 
-VS Code needs WSL support, with PlatformIO IDE and Wokwi installed in **WSL: Ubuntu**, plus a Wokwi license. These tools are already set up in this workspace. No Windows ESP/Arduino toolchain is required.
+VS Code needs WSL support, with PlatformIO IDE and Wokwi installed in **WSL: Ubuntu**, plus a Wokwi license. Open the cloned repository folder in WSL. No Windows ESP/Arduino toolchain is required.
 
 ## Real hardware
 
 `esp32dev_bike` is a separate receive-only build. It overrides the simulation switch, excludes the synthetic ECU, disables RPM decoding, and defaults to bitrate 0 (CAN stopped). The 2025 Pulsar NS125 ABS bitrate and RPM mapping are unverified. Do not flash the Wokwi firmware to the motorcycle.
 
-Read [hardware requirements](docs/HARDWARE.md), [CAN findings](docs/CAN-INVESTIGATION.md), [testing](docs/TESTING.md), and [actual verification results](docs/VERIFICATION.md) before further hardware work.
+SN65HVD230 uses a 3.3 V supply, RXD to GPIO16 and TXD to GPIO17. Bike mode disables GPIO17 output; verify external TXD bias and hold the SN65HVD230 RS pin high for passive reception after checking the module schematic. Use appropriate LED power and data-level conversion. The simulation loopback is not real CAN wiring.
+
+Before connecting to the motorcycle, verify the connector, signaling type, bitrate and RPM mapping; validate physical passivity on an isolated bench. Automotive power protection, safe grounding and verified termination are required. No successful motorcycle RPM capture is claimed.
+
+## Copyright
+
+Copyright (c) 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).

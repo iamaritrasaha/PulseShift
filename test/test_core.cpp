@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "rpm_decoder.h"
 #include "dashboard_model.h"
 #include "tx_tracker.h"

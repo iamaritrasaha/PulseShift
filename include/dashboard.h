@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 #include "config.h"
 #include "dashboard_model.h"

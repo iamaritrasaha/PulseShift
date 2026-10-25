@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "rpm_decoder.h"
 DecodeResult decodeRpm(const CanFrame& f, const RpmMapping& m, uint16_t& rpm) {
   if (!validEnvelope(f)) return DecodeResult::Malformed;

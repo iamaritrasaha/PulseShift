@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "dashboard.h"
 #include <Wire.h>
 namespace {

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include <Arduino.h>
 #include "config.h"
 #include "rpm_decoder.h"

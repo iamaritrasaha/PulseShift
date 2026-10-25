@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "simulated_ecu.h"
 RpmMapping demonstrationMapping() {
   RpmMapping m; m.enabled = true; m.id = 0x555; return m;

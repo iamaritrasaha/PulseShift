@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 #include "rpm_decoder.h"
 // Bounded UART capture queue. Loss is counted, never silently sampled away.

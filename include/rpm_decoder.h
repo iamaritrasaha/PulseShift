@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 #include "can_frame.h"
 enum class DecodeResult { Valid, Disabled, Malformed, Remote, WrongId, WrongDlc, BadMapping, OutOfRange };
