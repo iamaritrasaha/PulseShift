@@ -1,0 +1,186 @@
+name: Firmware CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_call:
+    inputs:
+      package_version:
+        description: Version string to embed in the tested Arduino ZIP
+        required: false
+        type: string
+        default: v0.0.0
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build, test, and compile Arduino package
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PACKAGE_VERSION: ${{ inputs.package_version || 'v0.0.0' }}
+      ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      ESP32_FQBN: esp32:esp32:esp32
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-6.1.18-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-6.1.18-
+
+      - name: Install PlatformIO
+        run: python -m pip install platformio==6.1.18
+
+      - name: Build Wokwi target
+        run: pio run -e esp32dev_wokwi
+
+      - name: Build experimental Wokwi TWAI self-test
+        run: pio run -e esp32dev_twai_test
+
+      - name: Build receive-only target
+        run: pio run -e esp32dev_bike
+
+      - name: Run host-side C++ tests
+        run: bash test/run.sh
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.1.1
+
+      - name: Cache Arduino packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/.cache/arduino
+          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-2.0.17-neopixel-1.12.3-oled-2.5.13-gfx-1.11.11-busio-1.17.0
+
+      - name: Install ESP32 core and Arduino libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls "$ESP32_INDEX_URL"
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@2.0.17
+          arduino-cli lib update-index
+          arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
+          arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"
+          arduino-cli lib install --no-deps "Adafruit GFX Library@1.11.11"
+          arduino-cli lib install --no-deps "Adafruit BusIO@1.17.0"
+          arduino-cli lib list
+          arduino-cli board listall | grep -F "$ESP32_FQBN"
+
+      - name: Install pinned Arduino ctags
+        env:
+          CTAGS_VERSION: 5.8-arduino11
+        run: |
+          archive="ctags-$CTAGS_VERSION-x86_64-pc-linux-gnu.tar.bz2"
+          base="https://github.com/arduino/ctags/releases/download/$CTAGS_VERSION"
+          curl -fsSLo "$RUNNER_TEMP/$archive" "$base/$archive"
+          curl -fsSLo "$RUNNER_TEMP/$archive.sha512" "$base/$archive.sha512"
+          (cd "$RUNNER_TEMP" && sha512sum --check "$archive.sha512")
+          export_dir="$RUNNER_TEMP/arduino-ctags"
+          mkdir -p "$export_dir"
+          tar -xjf "$RUNNER_TEMP/$archive" -C "$export_dir"
+          test -x "$export_dir/ctags"
+          echo "CTAGS_PATH=$export_dir" >> "$GITHUB_ENV"
+
+      - name: Package and validate Arduino distribution
+        id: package
+        run: |
+          output="$RUNNER_TEMP/revix-arduino-package"
+          mkdir -p "$output"
+          python scripts/package_arduino.py --version "$PACKAGE_VERSION" --output-dir "$output"
+          zip="$output/REVIX-LINK-Arduino-$PACKAGE_VERSION.zip"
+          python scripts/verify_arduino_package.py --zip "$zip" --version "$PACKAGE_VERSION"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Check deterministic package output
+        run: |
+          repeat="$RUNNER_TEMP/revix-arduino-package-repeat"
+          mkdir -p "$repeat"
+          python scripts/package_arduino.py --version "$PACKAGE_VERSION" --output-dir "$repeat"
+          cmp "${{ steps.package.outputs.zip }}" "$repeat/REVIX-LINK-Arduino-$PACKAGE_VERSION.zip"
+          cmp "${{ steps.package.outputs.output }}/REVIX-LINK-Arduino-$PACKAGE_VERSION.sha256" \
+            "$repeat/REVIX-LINK-Arduino-$PACKAGE_VERSION.sha256"
+
+      - name: Compile extracted Arduino configuration variants
+        run: |
+          set -euo pipefail
+          for variant in demo-oled-off demo-oled-on bench-oled-off bench-oled-on demo-serial-off; do
+            work="$RUNNER_TEMP/revix-$variant"
+            python scripts/verify_arduino_package.py \
+              --zip "${{ steps.package.outputs.zip }}" \
+              --version "$PACKAGE_VERSION" \
+              --extract-to "$work"
+            config="$work/REVIX_LINK/UserConfig.h"
+            python - "$config" "$variant" <<'PY'
+          from pathlib import Path
+          import sys
+
+          config = Path(sys.argv[1])
+          variant = sys.argv[2]
+          text = config.read_text(encoding="utf-8")
+          mode = "REVIX_USER_MODE_DEMO" if variant.startswith("demo-") else "REVIX_USER_MODE_BENCH_LISTEN_ONLY"
+          oled = "1" if variant.endswith("oled-on") else "0"
+          text = text.replace(
+              "#define REVIX_OPERATING_MODE REVIX_USER_MODE_DEMO",
+              f"#define REVIX_OPERATING_MODE {mode}",
+          )
+          text = text.replace("#define REVIX_OLED_ENABLED 0", f"#define REVIX_OLED_ENABLED {oled}")
+          if variant.endswith("serial-off"):
+              text = text.replace("#define REVIX_SERIAL_DIAGNOSTICS 1", "#define REVIX_SERIAL_DIAGNOSTICS 0")
+          config.write_text(text, encoding="utf-8")
+          PY
+            arduino-cli compile \
+              --fqbn "$ESP32_FQBN" \
+              --warnings all \
+              --build-property "runtime.tools.ctags.path=$CTAGS_PATH" \
+              --build-path "$RUNNER_TEMP/build-$variant" \
+              "$work/REVIX_LINK"
+          done
+
+      - name: Reject invalid user configuration
+        run: |
+          work="$RUNNER_TEMP/revix-invalid-config"
+          python scripts/verify_arduino_package.py \
+            --zip "${{ steps.package.outputs.zip }}" \
+            --version "$PACKAGE_VERSION" \
+            --extract-to "$work"
+          sed -i 's/#define REVIX_LED_COUNT 6/#define REVIX_LED_COUNT 0/' "$work/REVIX_LINK/UserConfig.h"
+          log="$RUNNER_TEMP/invalid-config-build.log"
+          if arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-property "runtime.tools.ctags.path=$CTAGS_PATH" \
+            --build-path "$RUNNER_TEMP/build-invalid-config" \
+            "$work/REVIX_LINK" > "$log" 2>&1; then
+            cat "$log"
+            echo "Invalid LED count unexpectedly compiled" >&2
+            exit 1
+          fi
+          grep -F "REVIX_LED_COUNT must be between 1 and 255" "$log"
+
+      - name: Upload verified Arduino source assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: revix-arduino-release-assets
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.output }}/REVIX-LINK-Arduino-${{ env.PACKAGE_VERSION }}.sha256
+          if-no-files-found: error
+          retention-days: 90

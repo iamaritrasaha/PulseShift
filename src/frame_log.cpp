@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "frame_log.h"
+#include "config.h"
 #include <Arduino.h>
 void FrameLog::push(const CanFrame& f, DecodeResult result) {
   if (count_ == 64) { ++dropped_; return; }
@@ -24,6 +25,7 @@ void FrameLog::push(const CanFrame& f, DecodeResult result) {
   head_ = (head_+1) % 64; ++count_;
 }
 void FrameLog::pump() {
+#if REVIX_SERIAL_DIAGNOSTICS
   if (!count_) return;
   auto& line = lines_[tail_];
   const int free = Serial.availableForWrite();
@@ -31,4 +33,5 @@ void FrameLog::pump() {
   if (free < line.size) return;
   Serial.write(reinterpret_cast<const uint8_t*>(line.text), line.size);
   tail_ = (tail_+1) % 64; --count_;
+#endif
 }
