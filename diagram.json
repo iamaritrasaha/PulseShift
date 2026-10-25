@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "author": "REVIX LINK",
+  "editor": "wokwi",
+  "parts": [
+    {"type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {}},
+    {"type": "board-ssd1306", "id": "oled", "top": -30, "left": 205, "attrs": {"i2cAddress": "0x3c"}},
+    {"type": "wokwi-led-strip", "id": "leds", "top": -120, "left": 205, "attrs": {"pixels": "6", "pixelShape": "square"}}
+  ],
+  "connections": [
+    ["esp:TX0", "$serialMonitor:RX", "", []],
+    ["esp:RX0", "$serialMonitor:TX", "", []],
+    ["esp:TX2", "esp:RX2", "purple", []],
+    ["oled:VCC", "esp:3V3", "red", []],
+    ["oled:GND", "esp:GND.1", "black", []],
+    ["oled:SDA", "esp:D21", "blue", []],
+    ["oled:SCL", "esp:D22", "yellow", []],
+    ["leds:VDD", "esp:VIN", "red", []],
+    ["leds:VSS", "esp:GND.1", "black", []],
+    ["leds:DIN", "esp:D27", "green", []]
+  ],
+  "dependencies": {}
+}

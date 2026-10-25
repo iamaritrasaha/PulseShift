@@ -1,0 +1,12 @@
+{
+  "files.exclude": {
+    "**/.pio": true,
+    "**/__pycache__": true,
+    ".vscode/c_cpp_properties.json": true,
+    ".vscode/launch.json": true
+  },
+  "search.exclude": {
+    "**/.pio": true,
+    "**/__pycache__": true
+  }
+}

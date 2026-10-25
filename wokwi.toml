@@ -1,0 +1,5 @@
+# Keep this file beside platformio.ini. Both simulation modes use these paths.
+[wokwi]
+version = 1
+firmware = '.pio/build/esp32dev_wokwi/firmware.bin'
+elf = '.pio/build/esp32dev_wokwi/firmware.elf'
