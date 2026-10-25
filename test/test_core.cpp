@@ -5,7 +5,8 @@
 #include "simulated_ecu.h"
 #include <cstdio>
 #include <cstdlib>
-#include <limits>
+#include <climits>
+#include <cstring>
 namespace {
 unsigned assertions = 0, cases = 0;
 #define CHECK(expr) do { ++assertions; if (!(expr)) { std::fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#expr); std::exit(1); } } while(0)
@@ -61,6 +62,36 @@ void decoding() {
   }
   pass("exhaustive 16-bit RPM range including zero and limits");
 }
+void envelope() {
+  // Standard ID boundary: 0x7FF is max, 0x800 is malformed.
+  CanFrame f{}; f.dlc=8; f.extended=false;
+  f.id=0x7FF; CHECK(validEnvelope(f));
+  f.id=0x800; CHECK(!validEnvelope(f));
+  // Extended ID boundary: 0x1FFFFFFF is max, 0x20000000 is malformed.
+  f.extended=true;
+  f.id=0x1FFFFFFF; CHECK(validEnvelope(f));
+  f.id=0x20000000; CHECK(!validEnvelope(f));
+  // DLC boundary: 8 is max, 9 is malformed.
+  f.id=0x100; f.extended=false;
+  f.dlc=8; CHECK(validEnvelope(f));
+  f.dlc=9; CHECK(!validEnvelope(f));
+  f.dlc=0; CHECK(validEnvelope(f));
+  pass("validEnvelope: ID and DLC boundary conditions");
+}
+void decode_names() {
+  // Every DecodeResult enum value must produce a non-null, non-empty label.
+  const DecodeResult all[] = {
+    DecodeResult::Valid, DecodeResult::Disabled, DecodeResult::Malformed,
+    DecodeResult::Remote, DecodeResult::WrongId, DecodeResult::WrongDlc,
+    DecodeResult::BadMapping, DecodeResult::OutOfRange
+  };
+  for(auto r : all) {
+    const char* n = decodeName(r);
+    CHECK(n != nullptr);
+    CHECK(n[0] != '\0');
+  }
+  pass("decodeName: all enum values return non-empty strings");
+}
 void state() {
   RpmState s(demonstrationMapping());
   CHECK(!s.fresh(0,1000)); CHECK(!s.hasValue());
@@ -84,18 +115,33 @@ void state() {
   RpmState invalid(demonstrationMapping()); f.dlc=1; invalid.ingest(f);
   CHECK(viewStatus(invalid,20,1000,true)==ViewStatus::Invalid);
   pass("unmapped, invalid and disconnected states");
+  // Counter verification: accepted and rejected counts must track precisely.
+  RpmState ctr(demonstrationMapping());
+  CHECK(ctr.accepted()==0); CHECK(ctr.rejected()==0);
+  auto g=frame(100); g.timestampMs=0; ctr.ingest(g);
+  CHECK(ctr.accepted()==1); CHECK(ctr.rejected()==0);
+  g=frame(9999); g.timestampMs=0; ctr.ingest(g); // out of range
+  CHECK(ctr.accepted()==1); CHECK(ctr.rejected()==1);
+  g.remote=true; g.dlc=8; ctr.ingest(g); // RTR -- rejected but validEnvelope still sets hasFrame_
+  CHECK(ctr.accepted()==1); CHECK(ctr.rejected()==2);
+  pass("RpmState accepted/rejected counters");
 }
 void leds() {
   CHECK(litLedCount(0,6500,6,true)==0);
   for(unsigned n=1;n<=6;++n) {
     unsigned threshold=(6500*n+5)/6;
-    CHECK(litLedCount(threshold-1,6500,6,true)==n-1);
-    CHECK(litLedCount(threshold,6500,6,true)==n);
+    CHECK(litLedCount(uint16_t(threshold-1),6500,6,true)==uint8_t(n-1));
+    CHECK(litLedCount(uint16_t(threshold),6500,6,true)==uint8_t(n));
   }
   CHECK(litLedCount(65535,6500,6,true)==6);
   CHECK(litLedCount(6500,6500,6,false)==0);
   CHECK(litLedCount(6500,0,6,true)==0);
-  pass("six LED thresholds, clamping and stale/off behavior");
+  // Zero count: no LEDs regardless of RPM.
+  CHECK(litLedCount(6500,6500,0,true)==0);
+  // Single LED: threshold exactly at maximum.
+  CHECK(litLedCount(6499,6500,1,true)==0);
+  CHECK(litLedCount(6500,6500,1,true)==1);
+  pass("six LED thresholds, clamping, zero count and stale/off behavior");
 }
 void tx() {
   auto f=frame(); TxTracker t;
@@ -113,6 +159,27 @@ void tx() {
   CHECK(!mismatch.onReceive(f)); f.data[4]^=1;
   CHECK(mismatch.onReceive(f)); CHECK(!mismatch.onReceive(f));
   pass("RX/TX ordering, driver pending requirement, sequence mismatch and duplicates");
+  // TxTracker must reject RTR frames as match candidates.
+  {
+    TxTracker rtr_test; auto fr=frame(); CHECK(rtr_test.begin(fr,0));
+    auto fr_rtr=fr; fr_rtr.remote=true;
+    CHECK(!rtr_test.onReceive(fr_rtr));
+    pass("TxTracker rejects RTR frames");
+  }
+  // TxTracker must reject frames with mismatched DLC.
+  {
+    TxTracker dlc_test; auto fd=frame(); CHECK(dlc_test.begin(fd,0));
+    auto fd_bad=fd; fd_bad.dlc=7;
+    CHECK(!dlc_test.onReceive(fd_bad));
+    pass("TxTracker rejects DLC-mismatched frames");
+  }
+  // TxTracker must reject frames with mismatched extended flag.
+  {
+    TxTracker ext_test; auto fe=frame(); CHECK(ext_test.begin(fe,0));
+    auto fe_ext=fe; fe_ext.extended=true;
+    CHECK(!ext_test.onReceive(fe_ext));
+    pass("TxTracker rejects extended-flag-mismatched frames");
+  }
 }
 void replay() {
   ReplayTransport replay; RpmState s(demonstrationMapping()); CanFrame f;
@@ -125,9 +192,23 @@ void replay() {
     if(now==17000) CHECK(s.fresh(now,1000));
   }
   pass("full-frame replay, invalid interval, silence and resumed frames");
+  // Sequence counter in demonstration frames must increase by exactly 1 per emitted frame.
+  {
+    ReplayTransport seq_replay; CanFrame sf;
+    bool got0 = seq_replay.receive(100, sf);
+    CHECK(got0);
+    uint32_t seq0 = uint32_t(sf.data[2]) | (uint32_t(sf.data[3])<<8)
+                  | (uint32_t(sf.data[4])<<16) | (uint32_t(sf.data[5])<<24);
+    bool got1 = seq_replay.receive(200, sf);
+    CHECK(got1);
+    uint32_t seq1 = uint32_t(sf.data[2]) | (uint32_t(sf.data[3])<<8)
+                  | (uint32_t(sf.data[4])<<16) | (uint32_t(sf.data[5])<<24);
+    CHECK(seq1 == seq0 + 1);
+    pass("demonstration frame sequence counter increments by 1");
+  }
 }
-}
+} // namespace
 int main() {
-  decoding(); state(); leds(); tx(); replay();
+  decoding(); envelope(); decode_names(); state(); leds(); tx(); replay();
   std::printf("ALL PASS: %u cases, %u assertions\n",cases,assertions); return 0;
 }
