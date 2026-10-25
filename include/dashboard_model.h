@@ -13,5 +13,5 @@ inline ViewStatus viewStatus(const RpmState& s, uint32_t now, uint32_t timeout, 
 inline uint8_t litLedCount(uint16_t rpm, uint16_t maximum, uint8_t count, bool valid) {
   if (!valid || maximum == 0) return 0;
   if (rpm >= maximum) return count;
-  return uint32_t(rpm) * count / maximum;
+  return uint8_t(uint32_t(rpm) * count / maximum);
 }

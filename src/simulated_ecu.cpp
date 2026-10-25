@@ -6,7 +6,7 @@ RpmMapping demonstrationMapping() {
 CanFrame demonstrationFrame(uint32_t now, uint32_t sequence) {
   CanFrame f; f.id = 0x555; f.dlc = 8; f.timestampMs = now;
   const uint32_t step = sequence % 131;
-  const uint16_t raw = (step <= 65 ? step : 130 - step) * 100;
+  const uint16_t raw = uint16_t((step <= 65 ? step : 130 - step) * 100);
   f.data[0] = uint8_t(raw); f.data[1] = uint8_t(raw >> 8);
   for (unsigned i = 0; i < 4; ++i) f.data[i+2] = uint8_t(sequence >> (8*i));
   f.data[6] = 0xA5; f.data[7] = 0x5A;

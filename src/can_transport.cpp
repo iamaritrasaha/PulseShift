@@ -69,9 +69,21 @@ void CanTransport::poll(uint32_t now) {
   auto err = twai_read_alerts(&alerts, 0);
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) { fault("alert read failed"); return; }
   alertsSeen_ |= alerts;
-  if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN | TWAI_ALERT_BUS_ERROR)) {
-    fault("bus error or RX overflow; inspect counters"); return;
+  if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
+    fault("bus-off or RX overflow; inspect counters"); return;
   }
+#if REVIX_MODE == REVIX_BIKE
+  // In listen-only mode, isolated bus errors are non-fatal: the CAN controller
+  // recovers automatically and an automotive bus may produce transient errors at
+  // startup or under electrical disturbance. Count them for diagnostics.
+  if (alerts & TWAI_ALERT_BUS_ERROR) {
+    Serial.println("CAN WARNING: bus error detected (non-fatal in listen-only mode)");
+  }
+#else
+  if (alerts & TWAI_ALERT_BUS_ERROR) {
+    fault("bus error in self-test; inspect counters"); return;
+  }
+#endif
 #if REVIX_MODE == REVIX_TWAI_TEST
   if (alerts & TWAI_ALERT_TX_FAILED) { fault("TX failed"); return; }
   if (alerts & TWAI_ALERT_TX_SUCCESS) {

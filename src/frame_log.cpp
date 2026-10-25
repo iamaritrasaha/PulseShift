@@ -6,10 +6,21 @@ void FrameLog::push(const CanFrame& f, DecodeResult result) {
   auto& line = lines_[head_];
   int n = snprintf(line.text, sizeof(line.text), "RX t=%lu id=%08lX ext=%d rtr=%d dlc=%u data=",
     (unsigned long)f.timestampMs, (unsigned long)f.id, f.extended, f.remote, f.dlc);
-  for (unsigned i = 0; !f.remote && i < f.dlc && i < 8; ++i)
-    n += snprintf(line.text+n, sizeof(line.text)-n, "%02X", f.data[i]);
-  n += snprintf(line.text+n, sizeof(line.text)-n, " %s\r\n", decodeName(result));
-  line.size = uint8_t(n);
+  if (n < 0) n = 0;
+  for (unsigned i = 0; !f.remote && i < f.dlc && i < 8; ++i) {
+    const int rem = int(sizeof(line.text)) - n;
+    if (rem <= 0) break;
+    const int w = snprintf(line.text+n, size_t(rem), "%02X", f.data[i]);
+    if (w > 0) n += w;
+  }
+  {
+    const int rem = int(sizeof(line.text)) - n;
+    if (rem > 0) {
+      const int w = snprintf(line.text+n, size_t(rem), " %s\r\n", decodeName(result));
+      if (w > 0) n += w;
+    }
+  }
+  line.size = uint8_t(n < int(sizeof(line.text)) ? n : int(sizeof(line.text)) - 1);
   head_ = (head_+1) % 64; ++count_;
 }
 void FrameLog::pump() {
