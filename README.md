@@ -1,10 +1,12 @@
 # REVIX LINK
 
-**An open-source ESP32 CAN-bus RPM dashboard prototype for the 2025 Bajaj Pulsar NS125 ABS.**
+**ESP32 CAN-bus RPM dashboard prototype designed for the 2025 Bajaj Pulsar NS125 ABS.**
 
-REVIX LINK is an embedded C++ project that aims to read engine-speed data from a motorcycle's CAN network and present it on an **SSD1306 OLED display** and a **six-pixel WS2812B RGB shift-light bar**. It is built with **PlatformIO**, developed in **VS Code**, and includes a **Wokwi simulation** for development without a motorcycle.
+REVIX LINK is an embedded C++ project specifically configured for the **ESP32 DevKit V1**, **six WS2812B RGB LEDs**, **SN65HVD230 CAN transceiver**, and **2025 Bajaj Pulsar NS125 ABS**. It aims to receive engine-speed data from the motorcycle's CAN network and display RPM on an **SSD1306 OLED screen** and RGB shift-light bar. The firmware uses **PlatformIO**, supports **VS Code** development, and includes **Wokwi simulation** modes for testing without a motorcycle.
 
-> **Project status — prototype:** Frame-replay mode exercises CAN-frame decoding and the dashboard. TWAI self-test is experimental in Wokwi, and continuous CAN transmission has **not** been verified there. Real motorcycle CAN bitrate, wiring, and RPM mapping remain unverified. **Do not connect this prototype to a motorcycle without completing bench and electrical validation.**
+The hardware targets and pin assignments are tailored to this configuration. Vehicle CAN bitrate, message mapping, and physical integration still require validation.
+
+> **Project status: prototype.** Frame-replay mode exercises CAN-frame decoding and the dashboard. TWAI self-test is experimental in Wokwi, and continuous CAN transmission has **not** been verified there. Real motorcycle CAN bitrate, wiring, and RPM mapping remain unverified. **Do not connect this prototype to a motorcycle without completing bench and electrical validation.**
 
 ## Features
 
@@ -20,14 +22,14 @@ REVIX LINK is an embedded C++ project that aims to read engine-speed data from a
 
 | Component | Purpose | ESP32 connections |
 | --- | --- | --- |
-| ESP32 DevKit V1 | Main controller | — |
+| ESP32 DevKit V1 | Main controller | Main board |
 | SSD1306 128×64 OLED (I²C) | RPM and status | SDA GPIO21, SCL GPIO22 |
 | 6 × WS2812B RGB LEDs | Shift-light bar | Data GPIO27 |
 | SN65HVD230 CAN transceiver | Physical CAN interface, for later bench tests | RXD GPIO16, TXD GPIO17 |
 
 **Simulation is not physical CAN wiring.** The ESP32 TWAI controller requires a suitable external transceiver to interface with CAN-H/CAN-L. Hardware builds also require verified voltage levels, suitable LED power/data interfacing, and protection against the motorcycle electrical environment.
 
-## Quick start — Wokwi in VS Code
+## Quick start: Wokwi in VS Code
 
 **Prerequisites:** VS Code with WSL support (if developing on Windows/Ubuntu WSL), [PlatformIO IDE](https://platformio.org/install/ide?install=vscode), and [Wokwi for VS Code](https://docs.wokwi.com/vscode/getting-started) with access activated as required.
 
@@ -59,7 +61,7 @@ Edit `include/config.h`:
 
 | Mode | What it does | What it proves |
 | --- | --- | --- |
-| `REVIX_REPLAY` **(default)** | Sends complete synthetic CAN frames through the shared decoder | Frame parsing, RPM state, and OLED/LED behavior — **not** physical CAN/TWAI |
+| `REVIX_REPLAY` **(default)** | Sends complete synthetic CAN frames through the shared decoder | Frame parsing, RPM state, and OLED/LED behavior, **not** physical CAN/TWAI |
 | `REVIX_TWAI_TEST` | Uses ESP32 TWAI self-reception in Wokwi | Experimental controller behavior; repeatable completion **not yet verified** |
 | `REVIX_BIKE` | Separate physical receive-only build | For controlled bench reception after wiring/bitrate verification; **not** a validated bike RPM reader |
 
