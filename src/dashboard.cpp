@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "dashboard.h"
+#if REVIX_OLED_ENABLED
 #include <Wire.h>
+#endif
+#if REVIX_OLED_ENABLED
 namespace {
 const char* statusName(ViewStatus s) {
   switch(s) {
@@ -15,12 +18,19 @@ const char* statusName(ViewStatus s) {
   return "UNKNOWN";
 }
 }
+#endif
 bool Dashboard::begin() {
+#if REVIX_OLED_ENABLED
   Wire.begin(config::sda, config::scl);
   Wire.setTimeOut(20);
   ready_ = display_.begin(SSD1306_SWITCHCAPVCC, 0x3C, false, false);
+#endif
   leds_.begin(); leds_.setBrightness(config::ledBrightness); leds_.clear(); leds_.show();
+#if REVIX_OLED_ENABLED
   return ready_;
+#else
+  return true;
+#endif
 }
 void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool configured) {
   if (drawn_ && uint32_t(now-refreshed_) < 100) return;
@@ -35,6 +45,7 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
   for (uint8_t i=0; i<count; ++i) leds_.setPixelColor(i,
     i<2 ? leds_.Color(0,255,0) : i<4 ? leds_.Color(255,160,0) : leds_.Color(255,0,0));
   leds_.show();
+#if REVIX_OLED_ENABLED
   if (!ready_) return;
   display_.clearDisplay(); display_.setTextColor(SSD1306_WHITE); display_.setTextSize(1);
   display_.setCursor(0,0); display_.print("REVIX LINK");
@@ -48,4 +59,5 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
   display_.drawRect(0,58,128,6,SSD1306_WHITE);
   if (live) display_.fillRect(1,59,uint32_t(shownRpm)*126/config::maxRpm,4,SSD1306_WHITE);
   display_.display();
+#endif
 }

@@ -1,127 +1,88 @@
 # REVIX LINK
 
-**ESP32 CAN-bus RPM dashboard prototype designed for the 2025 Bajaj Pulsar NS125 ABS.**
+REVIX LINK is an ESP32-based motorcycle RPM shift-light prototype for an ESP32 DevKit V1, six WS2812B LEDs, an SN65HVD230 CAN transceiver, and the 2025 Bajaj Pulsar NS125 ABS. The motorcycle CAN bitrate, wiring, message mapping, and RPM decoding have not been verified.
 
-REVIX LINK is an embedded C++ project specifically configured for the **ESP32 DevKit V1**, **six WS2812B RGB LEDs**, **SN65HVD230 CAN transceiver**, and **2025 Bajaj Pulsar NS125 ABS**. It aims to receive engine-speed data from the motorcycle's CAN network and display RPM on an **SSD1306 OLED screen** and RGB shift-light bar. The firmware uses **PlatformIO**, supports **VS Code** development, and includes **Wokwi simulation** modes for testing without a motorcycle.
+The Arduino IDE package defaults to a standalone demonstration. It generates synthetic CAN frames in software and processes them through the existing decoder and six-LED dashboard. Its RPM values are simulated and do not describe the motorcycle. The demonstration does not transmit CAN frames and requires no CAN connection.
 
-The hardware targets and pin assignments are tailored to this configuration. Vehicle CAN bitrate, message mapping, and physical integration still require validation.
+## Arduino IDE: for regular users
 
-> **Project status: prototype.** Frame-replay mode exercises CAN-frame decoding and the dashboard. TWAI self-test is experimental in Wokwi, and continuous CAN transmission has **not** been verified there. Real motorcycle CAN bitrate, wiring, and RPM mapping remain unverified. **Do not connect this prototype to a motorcycle without completing bench and electrical validation.**
+1. Visit the [REVIX LINK GitHub Releases page](https://github.com/iamaritrasaha/REVIX-LINK/releases) and download the asset named `REVIX-LINK-Arduino-vX.Y.Z.zip` from a release.
+2. Extract the ZIP and keep the `REVIX_LINK` folder intact.
+3. Open `REVIX_LINK/REVIX_LINK.ino` in Arduino IDE 2.x.
+4. In File > Preferences, add the Espressif Boards Manager index URL:
 
-## Features
+   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
 
-- **CAN-frame-based design:** dashboard RPM is derived through the common frame-processing and validation path, not a potentiometer.
-- **OLED RPM dashboard:** engine speed, progress bar, and connection/status information.
-- **Six RGB shift lights:** green → yellow → red progression with RPM.
-- **Two development modes:** synthetic full-frame replay and an experimental ESP32 TWAI self-test.
-- **Separate receive-only hardware build:** no simulated ECU, and RPM decoding disabled until the vehicle protocol is verified.
-- **Stale-data handling:** distinguishes missing/expired RPM data from genuine zero RPM.
-- **Host-side tests:** repeatable C++ decoder/state checks with sanitizers.
+5. In Boards Manager, install **ESP32 by Espressif Systems**, version **2.0.17**.
+6. In Library Manager, install **Adafruit NeoPixel 1.12.3**. If you enable the optional OLED, also install **Adafruit SSD1306 2.5.13**, **Adafruit GFX Library 1.11.11**, and **Adafruit BusIO 1.17.0**.
+7. Edit `UserConfig.h` for the small set of hardware and diagnostic settings. The defaults are for the ESP32 DevKit V1: LED data GPIO 27, six LEDs, OLED pins 21 and 22, CAN RX 16, CAN TX 17, and Serial Monitor at 115200 baud.
+8. Select **ESP32 Dev Module** under Tools > Board and the connected board's USB port under Tools > Port.
+9. Click **Verify**, then **Upload**. Open Serial Monitor at **115200 baud**.
 
-## Hardware
+The downloadable Arduino package disables the OLED by default, so its LED-only build requires only Adafruit NeoPixel. The existing PlatformIO Wokwi target enables the OLED dashboard for development. To enable the OLED in an Arduino IDE build, set `REVIX_OLED_ENABLED` to `1` in `UserConfig.h` and install the three OLED libraries above.
 
-| Component | Purpose | ESP32 connections |
-| --- | --- | --- |
-| ESP32 DevKit V1 | Main controller | Main board |
-| SSD1306 128×64 OLED (I²C) | RPM and status | SDA GPIO21, SCL GPIO22 |
-| 6 × WS2812B RGB LEDs | Shift-light bar | Data GPIO27 |
-| SN65HVD230 CAN transceiver | Physical CAN interface, for later bench tests | RXD GPIO16, TXD GPIO17 |
+### Demonstration and bench modes
 
-**Simulation is not physical CAN wiring.** The ESP32 TWAI controller requires a suitable external transceiver to interface with CAN-H/CAN-L. Hardware builds also require verified voltage levels, suitable LED power/data interfacing, and protection against the motorcycle electrical environment.
+The default `REVIX_USER_MODE_DEMO` mode exercises synthetic frames, the decoder, and the six LEDs. Serial output identifies this mode as simulated. It does not validate the motorcycle protocol or physical CAN hardware.
 
-## Quick start: Wokwi in VS Code
+`REVIX_USER_MODE_BENCH_LISTEN_ONLY` is an optional receive-only mode for an isolated bench setup. Its CAN bitrate defaults to `0`, which keeps TWAI stopped. The RPM mapping remains disabled. Choose a supported bitrate only after verifying it on an isolated bench. In this mode, the firmware uses `TWAI_MODE_LISTEN_ONLY` and disconnects the ESP32 CAN TX GPIO from output. The SN65HVD230 must also be held in its hardware silent state by keeping RS high, and TXD must remain recessive with an external pull-up. Software checks do not prove electrical passivity. Do not connect this unverified prototype directly to the motorcycle.
 
-**Prerequisites:** VS Code with WSL support (if developing on Windows/Ubuntu WSL), [PlatformIO IDE](https://platformio.org/install/ide?install=vscode), and [Wokwi for VS Code](https://docs.wokwi.com/vscode/getting-started) with access activated as required.
+## PlatformIO: for developers
 
-```bash
-git clone https://github.com/iamaritrasaha/REVIX-LINK.git
-cd REVIX-LINK
-code .
-```
-
-If using Windows with WSL, run these commands **inside Ubuntu** and confirm VS Code is attached to **WSL: Ubuntu**. PlatformIO and Wokwi need to be available in that remote environment.
-
-Build the default Wokwi firmware:
+PlatformIO remains supported for development, host-side testing, and Wokwi simulation. Install PlatformIO Core and a C++17 toolchain, then run these commands from the repository root:
 
 ```bash
 pio run -e esp32dev_wokwi
-```
-
-If `pio` is installed but not on the shell path, try `~/.platformio/penv/bin/pio` instead.
-
-Then open the VS Code Command Palette (`Ctrl+Shift+P`) and select **Wokwi: Start Simulator**. The repository's `wokwi.toml` and `diagram.json` must remain next to `platformio.ini`. After code changes, **stop the simulator, rebuild, and restart it**.
-
-## Choose a simulation mode
-
-Edit `include/config.h`:
-
-```cpp
-#define REVIX_MODE REVIX_REPLAY
-```
-
-| Mode | What it does | What it proves |
-| --- | --- | --- |
-| `REVIX_REPLAY` **(default)** | Sends complete synthetic CAN frames through the shared decoder | Frame parsing, RPM state, and OLED/LED behavior, **not** physical CAN/TWAI |
-| `REVIX_TWAI_TEST` | Uses ESP32 TWAI self-reception in Wokwi | Experimental controller behavior; repeatable completion **not yet verified** |
-| `REVIX_BIKE` | Separate physical receive-only build | For controlled bench reception after wiring/bitrate verification; **not** a validated bike RPM reader |
-
-Change the mode, rebuild, and restart Wokwi. No potentiometer is needed. Example CAN IDs and RPM encodings used in demonstrations are **not confirmed Bajaj protocol values**.
-
-### Why the TWAI test is experimental
-
-The observed Wokwi self-test received a frame but did not confirm TX completion; a transmission remained pending. The firmware includes timeout/status diagnostics and halts the failed test rather than flooding the log. Wokwi documents [partial ESP32 TWAI support](https://docs.wokwi.com/guides/esp32), so simulator behavior must not be treated as proof of a working vehicle CAN interface.
-
-## Build and test
-
-```bash
-# Default Wokwi firmware
-pio run -e esp32dev_wokwi
-
-# Separate receive-only hardware build (not ready for vehicle hookup)
+pio run -e esp32dev_twai_test
 pio run -e esp32dev_bike
-
-# Host-side C++ tests; requires g++
 bash test/run.sh
 ```
 
-The hardware build intentionally defaults to **bitrate 0 (TWAI stopped)** and does not decode actual NS125 RPM data. Configuring a bitrate requires verification first.
+The Wokwi target defaults to synthetic frame replay. The separate `esp32dev_twai_test` target is an experimental controller self-test that transmits test frames in Wokwi. Its 500 kbit/s setting is for the simulator only and is not a verified motorcycle bitrate. Do not use it on a motorcycle bus. The `esp32dev_bike` target is receive-only, omits simulated ECU code, and keeps TWAI stopped until a supported bitrate is explicitly configured. It does not decode actual NS125 RPM data.
+
+`diagram.json` and `wokwi.toml` remain beside `platformio.ini` for Wokwi. Restart the simulator after rebuilding firmware. Simulation does not prove physical CAN behavior.
+
+## Arduino package and releases
+
+The tagged-release workflow builds and verifies the extracted Arduino ZIP before attaching it to a GitHub Release. It also publishes a SHA-256 checksum. No release is published until a semantic-version tag such as `v1.0.0` is pushed.
+
+To create and inspect a package locally:
+
+```bash
+python3 scripts/package_arduino.py --version v1.0.0 --output-dir /tmp/revix-release
+python3 scripts/verify_arduino_package.py \
+  --zip /tmp/revix-release/REVIX-LINK-Arduino-v1.0.0.zip \
+  --version v1.0.0 \
+  --extract-to /tmp/revix-extracted
+```
+
+The package includes the REVIX LINK source and preserves its copyright notices. Third-party libraries remain subject to their own licenses. The repository has no explicit `LICENSE` file, so this project is not described as open-source. See [COPYRIGHT](COPYRIGHT) and [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+
+## Hardware and current limitations
+
+| Component | Purpose | ESP32 DevKit V1 connections |
+| --- | --- | --- |
+| ESP32 DevKit V1 | Main controller | Main board |
+| Six WS2812B RGB LEDs | RPM shift-light bar | Data GPIO 27 |
+| SN65HVD230 CAN transceiver | Isolated bench CAN reception only | RXD GPIO 16, TXD GPIO 17 |
+| SSD1306 128x64 OLED | Optional development diagnostics | SDA GPIO 21, SCL GPIO 22 |
+
+Use a suitable transceiver and verify electrical levels, grounding, power, and protection on an isolated bench. Never connect CAN-H, CAN-L, or vehicle power directly to ESP32 GPIO. No successful real-motorcycle CAN capture or RPM reading is claimed.
 
 ## Project structure
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.cpp` | Startup, main loop, and application flow |
-| `include/config.h` | Modes, pins, rates, and thresholds |
-| `src/can_transport.cpp` | TWAI monitoring and self-test |
-| `src/rpm_decoder.cpp` | CAN-frame checks and RPM validity/freshness |
-| `src/dashboard.cpp` | SSD1306 OLED and LED outputs |
-| `src/simulated_ecu.cpp` | Synthetic CAN frames for development |
-| `src/frame_log.cpp` | Bounded CAN diagnostics |
-| `test/` | Host-side decoder/state tests |
-| `diagram.json`, `wokwi.toml` | Wokwi circuit and firmware loading |
-
-## Roadmap
-
-- [x] PlatformIO-based ESP32 application
-- [x] OLED dashboard and six-LED RPM indicator
-- [x] CAN-frame replay and shared RPM processing
-- [x] Host-side decoding tests
-- [ ] Verify continuous TWAI TX/RX behavior with a suitable simulator or bench hardware
-- [ ] Validate electrical passivity and protected CAN reception on an isolated bench
-- [ ] Confirm the **2025 NS125 ABS** CAN network, connector, bitrate, message ID, and RPM encoding
-- [ ] Validate actual motorcycle RPM readings before enabling them in the dashboard
-- [ ] Complete installation-grade power, protection, enclosure, and reliability testing
-
-## Safety and current limitations
-
-This repository is **not a validated plug-and-play motorcycle accessory**. The SN65HVD230 needs correct transceiver wiring and operating configuration; never connect CAN-H/CAN-L or a 12 V vehicle supply directly to ESP32 GPIO. Verify grounding, termination, automotive power protection, the transceiver module schematic, and receive-only behavior in isolation before any vehicle work.
-
-Do not flash the Wokwi build for use on a motorcycle. No successful real-motorcycle CAN capture or RPM reading is claimed.
-
-## Contributing
-
-Bug reports, reproducible Wokwi/TWAI findings, test improvements, documentation fixes, and hardware-bench observations are welcome through [GitHub Issues](https://github.com/iamaritrasaha/REVIX-LINK/issues). Please keep vehicle-specific protocol claims backed by measurements or documentation, and **do not post private vehicle identifiers or sensitive captures**.
+| `src/main.cpp` | Startup and application flow |
+| `include/config.h` and `UserConfig.h` | Shared firmware settings and user options |
+| `src/can_transport.cpp` | TWAI monitoring and receive-only capture |
+| `src/rpm_decoder.cpp` | CAN frame checks and RPM freshness |
+| `src/dashboard.cpp` | Optional SSD1306 display and WS2812B LEDs |
+| `src/simulated_ecu.cpp` | Synthetic frames for development and demo mode |
+| `src/frame_log.cpp` | Bounded serial frame diagnostics |
+| `test/` | Host-side decoder, state, LED, replay, and transport tests |
+| `scripts/package_arduino.py` | Arduino sketch ZIP packaging |
 
 ## Copyright
 
-Copyright © 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).
+Copyright (c) 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).

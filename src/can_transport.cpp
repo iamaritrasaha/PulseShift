@@ -4,7 +4,12 @@
 #include <sdkconfig.h>
 #include <driver/gpio.h>
 bool CanTransport::begin() {
-  if (!configured()) { Serial.println("CAN DISABLED: set verified REVIX_BITRATE before bench capture"); return false; }
+  if (!configured()) {
+#if REVIX_SERIAL_DIAGNOSTICS
+    Serial.println("CAN DISABLED: set a verified REVIX_CAN_BITRATE for isolated bench capture");
+#endif
+    return false;
+  }
 #if REVIX_MODE == REVIX_BIKE
   constexpr auto mode = TWAI_MODE_LISTEN_ONLY;
 #else
@@ -38,21 +43,42 @@ bool CanTransport::begin() {
   if (err == ESP_OK) err = gpio_reset_pin(gpio_num_t(config::txPin));
   if (err == ESP_OK) err = gpio_set_direction(gpio_num_t(config::txPin), GPIO_MODE_INPUT);
   if (err == ESP_OK) err = gpio_set_pull_mode(gpio_num_t(config::txPin), GPIO_PULLUP_ONLY);
-  if (err == ESP_OK) Serial.println("PASSIVE CAPTURE: GPIO17 output disabled; external TXD pull-up required");
+  if (err == ESP_OK) {
+#if REVIX_SERIAL_DIAGNOSTICS
+    Serial.printf("PASSIVE CAPTURE: GPIO%d output disabled; external TXD pull-up required\r\n", config::txPin);
+#endif
+  }
 #endif
   if (err == ESP_OK) err = twai_start();
   running_ = err == ESP_OK;
-  if (!running_) { Serial.printf("CAN INIT: %s\r\n", esp_err_to_name(err)); fault("initialization failed"); }
+  if (!running_) {
+#if REVIX_SERIAL_DIAGNOSTICS
+    Serial.printf("CAN INIT: %s\r\n", esp_err_to_name(err));
+#endif
+    fault("initialization failed");
+  }
   return running_;
 }
 void CanTransport::fault(const char* reason) {
   if (!tracker_.halt()) return;
+#if REVIX_SERIAL_DIAGNOSTICS
   Serial.printf("CAN HALTED: %s\r\n", reason);
   diagnostics();
-  if (running_) Serial.printf("CAN STOP: %s\r\n", esp_err_to_name(twai_stop()));
+#else
+  (void)reason;
+#endif
+  if (running_) {
+    const auto err = twai_stop();
+#if REVIX_SERIAL_DIAGNOSTICS
+    Serial.printf("CAN STOP: %s\r\n", esp_err_to_name(err));
+#else
+    (void)err;
+#endif
+  }
   running_ = false; // Manual reboot required. No automatic recovery loop.
 }
 void CanTransport::diagnostics() const {
+#if REVIX_SERIAL_DIAGNOSTICS
   if (!installed_) return;
   twai_status_info_t s{};
   auto err = twai_get_status_info(&s);
@@ -62,6 +88,7 @@ void CanTransport::diagnostics() const {
     (unsigned long)s.bus_error_count, (unsigned long)s.rx_missed_count, (unsigned long)s.rx_overrun_count,
     (unsigned long)s.arb_lost_count, (unsigned long)queued_, (unsigned long)completed_,
     (unsigned long)rx_, (unsigned long)matched_, (unsigned long)alertsSeen_, tracker_.halted());
+#endif
 }
 void CanTransport::poll(uint32_t now) {
   if (!healthy()) return;
@@ -77,7 +104,9 @@ void CanTransport::poll(uint32_t now) {
   // recovers automatically and an automotive bus may produce transient errors at
   // startup or under electrical disturbance. Count them for diagnostics.
   if (alerts & TWAI_ALERT_BUS_ERROR) {
+#if REVIX_SERIAL_DIAGNOSTICS
     Serial.println("CAN WARNING: bus error detected (non-fatal in listen-only mode)");
+#endif
   }
 #else
   if (alerts & TWAI_ALERT_BUS_ERROR) {
@@ -94,7 +123,11 @@ void CanTransport::poll(uint32_t now) {
   if (twai_get_status_info(&s) != ESP_OK) { fault("status read failed"); return; }
   if (tracker_.finish(s.msgs_to_tx)) {
     ++matched_;
-    if (matched_ % 100 == 0) Serial.printf("TWAI VERIFIED matched=%lu\r\n", (unsigned long)matched_);
+    if (matched_ % 100 == 0) {
+#if REVIX_SERIAL_DIAGNOSTICS
+      Serial.printf("TWAI VERIFIED matched=%lu\r\n", (unsigned long)matched_);
+#endif
+    }
   }
   if (tracker_.timedOut(now, config::txTimeoutMs)) fault(tracker_.txSeen() ? "RX timeout" : "TX completion timeout");
 #else
@@ -123,7 +156,12 @@ bool CanTransport::sendTest(const CanFrame& f, uint32_t now) {
   msg.identifier = f.id; msg.extd = f.extended; msg.data_length_code = f.dlc;
   msg.self = 1; msg.ss = 1; memcpy(msg.data, f.data, f.dlc);
   const auto err = twai_transmit(&msg, 0);
-  if (err != ESP_OK) { Serial.printf("TX enqueue: %s\r\n", esp_err_to_name(err)); fault("TX enqueue failed"); return false; }
+  if (err != ESP_OK) {
+#if REVIX_SERIAL_DIAGNOSTICS
+    Serial.printf("TX enqueue: %s\r\n", esp_err_to_name(err));
+#endif
+    fault("TX enqueue failed"); return false;
+  }
   tracker_.begin(f, now); ++queued_; return true;
 }
 #endif

@@ -1,0 +1,57 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify tagged source and Arduino package
+    uses: ./.github/workflows/ci.yml
+    with:
+      package_version: ${{ github.ref_name }}
+    permissions:
+      contents: read
+
+  publish:
+    name: Create or update GitHub Release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified Arduino assets
+        uses: actions/download-artifact@v4
+        with:
+          name: revix-arduino-release-assets
+          path: release-assets
+
+      - name: Create or update release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          zip="release-assets/REVIX-LINK-Arduino-$TAG.zip"
+          checksum="release-assets/REVIX-LINK-Arduino-$TAG.sha256"
+          test -f "$zip"
+          test -f "$checksum"
+          printf '%s\n' \
+            "Arduino IDE source package for REVIX LINK $TAG." \
+            "The default firmware mode uses simulated frames. Motorcycle CAN integration is not verified." \
+            > "$RUNNER_TEMP/release-notes.txt"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "REVIX LINK $TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.txt"
+            gh release upload "$TAG" "$zip" "$checksum" --clobber
+          else
+            gh release create "$TAG" "$zip" "$checksum" \
+              --title "REVIX LINK $TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.txt"
+          fi

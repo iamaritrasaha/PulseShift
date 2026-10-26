@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "frame_log.h"
+#include "config.h"
 #include <Arduino.h>
 void FrameLog::push(const CanFrame& f, DecodeResult result) {
+#if REVIX_SERIAL_DIAGNOSTICS
   if (count_ == 64) { ++dropped_; return; }
   auto& line = lines_[head_];
   int n = snprintf(line.text, sizeof(line.text), "RX t=%lu id=%08lX ext=%d rtr=%d dlc=%u data=",
@@ -22,8 +24,14 @@ void FrameLog::push(const CanFrame& f, DecodeResult result) {
   }
   line.size = uint8_t(n < int(sizeof(line.text)) ? n : int(sizeof(line.text)) - 1);
   head_ = (head_+1) % 64; ++count_;
+#else
+  // Diagnostics are disabled, so do not retain frames in the UART log queue.
+  (void)f;
+  (void)result;
+#endif
 }
 void FrameLog::pump() {
+#if REVIX_SERIAL_DIAGNOSTICS
   if (!count_) return;
   auto& line = lines_[tail_];
   const int free = Serial.availableForWrite();
@@ -31,4 +39,5 @@ void FrameLog::pump() {
   if (free < line.size) return;
   Serial.write(reinterpret_cast<const uint8_t*>(line.text), line.size);
   tail_ = (tail_+1) % 64; --count_;
+#endif
 }

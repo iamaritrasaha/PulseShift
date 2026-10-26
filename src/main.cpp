@@ -15,19 +15,29 @@ class Application {
  public:
   Application() : rpm_(mapping()) {}
   void begin() {
-    Serial.begin(115200);
+#if REVIX_SERIAL_DIAGNOSTICS
+    Serial.begin(config::serialBaud);
     Serial.printf("REVIX LINK mode=%s SDK=%s\r\n", config::modeName, ESP.getSdkVersion());
+#endif
 #if REVIX_MODE == REVIX_BIKE
+#if REVIX_SERIAL_DIAGNOSTICS
     Serial.printf("TARGET: %s / %s / %u WS2812B LEDs\r\n",
       config::vehicle, config::transceiver, config::ledCount);
-    Serial.println("RPM mapping unverified; SN65HVD230 RS must be held HIGH for passive capture");
+    Serial.println("RPM mapping disabled; SN65HVD230 RS must be held HIGH for passive bench capture");
+#endif
 #endif
 #if REVIX_MODE == REVIX_REPLAY
+#if REVIX_SERIAL_DIAGNOSTICS
     Serial.println("SYNTHETIC FRAMES ONLY: does not validate TWAI or physical CAN");
+#endif
 #else
     transport_.begin();
 #endif
-    if (!dashboard_.begin()) Serial.println("OLED INIT FAILED (CAN processing continues)");
+    if (!dashboard_.begin()) {
+#if REVIX_SERIAL_DIAGNOSTICS
+      Serial.println("OLED INIT FAILED (CAN processing continues)");
+#endif
+    }
   }
   void tick() {
     const uint32_t now = millis();
@@ -60,6 +70,7 @@ class Application {
 #endif
     logger_.pump();
     dashboard_.update(rpm_, now, healthy, configured);
+#if REVIX_SERIAL_DIAGNOSTICS
     if (!finalReportPrinted_ && uint32_t(now-lastReport_) >= 1000) {
       lastReport_ = now;
       Serial.printf("APP mode=%s accepted=%lu rejected=%lu fresh=%d busFresh=%d rpm=%u logDropped=%lu\r\n",
@@ -73,13 +84,16 @@ class Application {
       if (!healthy) finalReportPrinted_ = true;
 #endif
     }
+#endif
   }
  private:
   static RpmMapping mapping() {
 #if REVIX_MODE == REVIX_BIKE
     return RpmMapping{}; // Deliberately disabled: no guessed motorcycle mapping.
 #else
-    return demonstrationMapping();
+    auto m = demonstrationMapping();
+    m.maxRpm = config::maxRpm;
+    return m;
 #endif
   }
   RpmState rpm_;
