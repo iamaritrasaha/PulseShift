@@ -23,6 +23,7 @@ SOURCE_FILES = (
     "src/rpm_decoder.cpp",
     "src/dashboard.cpp",
     "src/frame_log.cpp",
+    "src/shift_light.cpp",
     "src/simulated_ecu.cpp",
     "include/can_frame.h",
     "include/can_transport.h",
@@ -31,6 +32,7 @@ SOURCE_FILES = (
     "include/dashboard_model.h",
     "include/frame_log.h",
     "include/rpm_decoder.h",
+    "include/shift_light.h",
     "include/simulated_ecu.h",
     "include/tx_tracker.h",
 )
