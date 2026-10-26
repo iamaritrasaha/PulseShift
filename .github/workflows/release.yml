@@ -41,17 +41,58 @@ jobs:
           checksum="release-assets/REVIX-LINK-Arduino-$TAG.sha256"
           test -f "$zip"
           test -f "$checksum"
-          printf '%s\n' \
-            "Arduino IDE source package for REVIX LINK $TAG." \
-            "The default firmware mode uses simulated frames. Motorcycle CAN integration is not verified." \
-            > "$RUNNER_TEMP/release-notes.txt"
+
+          prerelease_arg=""
+          title="REVIX LINK $TAG"
+          if [[ "$TAG" =~ ^v0\. ]]; then
+            prerelease_arg="--prerelease"
+            title="REVIX LINK $TAG | Arduino IDE Preview"
+          fi
+
+          cat > "$RUNNER_TEMP/release-notes.txt" <<EOF
+          REVIX LINK $TAG introduces a configurable ESP32-based RGB motorcycle shift-light system.
+
+          ### Highlights
+          - Arduino IDE compatible source distribution.
+          - Six WS2812B RGB LED support.
+          - Classic, Racing, Minimal, and Custom visual profiles.
+          - Smooth progressive RPM indication.
+          - Configurable shift alert with hysteresis.
+          - Non-blocking startup animation.
+          - Configurable LED brightness and direction.
+          - Optional SSD1306 development display.
+          - Serial Monitor commands for standalone demonstration.
+          - Independent PlatformIO development support.
+          - Automated firmware builds and regression tests.
+
+          ### Installation
+          1. Download the \`REVIX-LINK-Arduino-$TAG.zip\` asset below.
+          2. Extract the archive and keep the \`REVIX_LINK\` folder intact.
+          3. Open \`REVIX_LINK.ino\` in Arduino IDE 2.x.
+          4. Install the documented ESP32 board core (ESP32 by Espressif Systems 2.0.17) and required Arduino libraries (Adafruit NeoPixel 1.12.3; if OLED is enabled: Adafruit SSD1306 2.5.13, Adafruit GFX Library 1.11.11, Adafruit BusIO 1.17.0).
+          5. Edit \`UserConfig.h\` to choose your hardware pins, visual style, alert mode, and brightness.
+          6. Select **ESP32 Dev Module** under Tools > Board.
+          7. Select the correct USB serial port under Tools > Port.
+          8. Compile and upload.
+
+          ### Important Notice
+          The default firmware generates synthetic RPM data. The 2025 Bajaj Pulsar NS125 ABS CAN bitrate, CAN message identifiers, and RPM encoding remain unverified.
+
+          This release is intended for standalone demonstration and controlled development. It is not a validated plug-and-play motorcycle accessory.
+          EOF
+
+          # Remove leading indentation from heredoc
+          sed -i 's/^ *//' "$RUNNER_TEMP/release-notes.txt"
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" \
-              --title "REVIX LINK $TAG" \
+              --title "$title" \
+              $prerelease_arg \
               --notes-file "$RUNNER_TEMP/release-notes.txt"
             gh release upload "$TAG" "$zip" "$checksum" --clobber
           else
             gh release create "$TAG" "$zip" "$checksum" \
-              --title "REVIX LINK $TAG" \
+              --title "$title" \
+              $prerelease_arg \
               --notes-file "$RUNNER_TEMP/release-notes.txt"
           fi
