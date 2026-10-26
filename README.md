@@ -19,7 +19,7 @@ The Arduino IDE package defaults to a standalone demonstration. It generates syn
 8. Select **ESP32 Dev Module** under Tools > Board and the connected board's USB port under Tools > Port.
 9. Click **Verify**, then **Upload**. Open Serial Monitor at **115200 baud**.
 
-The OLED is disabled by default so the LED-only build requires only Adafruit NeoPixel. To enable development diagnostics, set `REVIX_OLED_ENABLED` to `1` in `UserConfig.h` and install the three OLED libraries above.
+The downloadable Arduino package disables the OLED by default, so its LED-only build requires only Adafruit NeoPixel. The existing PlatformIO Wokwi target enables the OLED dashboard for development. To enable the OLED in an Arduino IDE build, set `REVIX_OLED_ENABLED` to `1` in `UserConfig.h` and install the three OLED libraries above.
 
 ### Demonstration and bench modes
 

@@ -13,7 +13,9 @@
 #define REVIX_LED_BRIGHTNESS 40  // 0..255; not an electrical current limit.
 
 // Optional development display. Leave disabled for the LED-only device.
+#ifndef REVIX_OLED_ENABLED
 #define REVIX_OLED_ENABLED 0
+#endif
 #define REVIX_OLED_SDA_GPIO 21
 #define REVIX_OLED_SCL_GPIO 22
 
