@@ -1,90 +1,116 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 
-// User settings for the ESP32 DevKit V1.
-// Demo mode is safe to run without a motorcycle or CAN connection.
+// Standard: original ESP32 DevKit V1, six WS2812B pixels and 74AHCT125 buffer.
+// No settings need editing for the standalone demonstration. No CAN is needed.
+// DEFAULT identifies the recommended value. OPTIONAL is a visual/user choice.
+// CHANGE ONLY IF identifies a hardware difference, not a required setup step.
+// DO NOT CHANGE WITHOUT VERIFICATION identifies bench/protocol safety settings.
+// Symbolic choices below are constants: select a name, do not renumber it.
 #define REVIX_USER_MODE_DEMO 1
 #define REVIX_USER_MODE_BENCH_LISTEN_ONLY 3
+// DEFAULT: DEMO creates complete synthetic frames; it needs no CAN connection.
+// DO NOT CHANGE WITHOUT VERIFICATION: BENCH_LISTEN_ONLY requires a reviewed
+// isolated bench. It captures frames only; no motorcycle RPM profile is enabled.
+// PlatformIO bike/self-test environments force their own mode; see README.
 #define REVIX_OPERATING_MODE REVIX_USER_MODE_DEMO
 
-// Six WS2812B LEDs on the default REVIX LINK harness.
+// DEFAULT: GPIO27 to the 74AHCT125 input, never directly to 5V.
+// CHANGE ONLY IF: LED wiring uses another verified output pin. Reserve 16/17 for CAN.
 #define REVIX_LED_DATA_GPIO 27
-#define REVIX_LED_COUNT 6  // 1..32; must match the physically installed chain.
-#define REVIX_LED_BRIGHTNESS 40  // 0..255; master brightness scale.
+// DEFAULT: 6 pixels. CHANGE ONLY IF: the physical chain differs; supported 1..32.
+// Recheck supply/current capacity before increasing the count.
+#define REVIX_LED_COUNT 6
+// DEFAULT: 40/255. OPTIONAL: 0..255 brightness; 0 is dark, 255 is full scale.
+// Software brightness is not a hardware current limiter.
+#define REVIX_LED_BRIGHTNESS 40
 
-// Shift-light style profile:
-// 1 = CLASSIC (green -> yellow -> orange -> red)
-// 2 = RACING  (vivid green -> bright amber -> crimson -> red)
-// 3 = MINIMAL (clean ice white progressive fill with red shift point)
-// 4 = CUSTOM  (user-defined palette)
+// Symbolic style choices: green/yellow/orange/red, vivid racing colors,
+// ice-white progression with red shift alert, or a custom RGB palette.
 #define REVIX_STYLE_CLASSIC 1
 #define REVIX_STYLE_RACING  2
 #define REVIX_STYLE_MINIMAL 3
 #define REVIX_STYLE_CUSTOM  4
+// DEFAULT: CLASSIC. OPTIONAL: select RACING, MINIMAL or CUSTOM for visual preference.
 #define REVIX_SHIFT_LIGHT_STYLE REVIX_STYLE_CLASSIC
 
-// CUSTOM profile: RGB triples in logical LED order, each channel 0..255.
-// Supply 1..32 entries. Extra installed pixels use the engine's fallback colors.
-// Explicit {0,0,0} entries remain dark; direction and brightness apply afterward.
+// DEFAULT: six RGB triples, green through red. OPTIONAL: CUSTOM palette only.
+// Supply 1..32 entries, channels 0..255; {0,0,0} intentionally stays dark.
+// Extra pixels use fallback colors. Direction and brightness apply afterward.
+// Triples are RGB colors; the fixed WS2812B wire format is GRB at 800kHz.
 #define REVIX_CUSTOM_COLORS {0,255,0}, {0,255,0}, {255,200,0}, {255,200,0}, {255,80,0}, {255,0,0}
 
-// LED orientation:
-// 1 = NORMAL   (left-to-right / ascending GPIO data order)
-// 2 = REVERSED (right-to-left / descending order)
 #define REVIX_DIRECTION_NORMAL   1
 #define REVIX_DIRECTION_REVERSED 2
+// DEFAULT: NORMAL fills from the first pixel at DIN. OPTIONAL: REVERSED changes
+// visual order only; it does not swap DIN/DOUT or reverse the strip's data arrow.
 #define REVIX_LED_DIRECTION REVIX_DIRECTION_NORMAL
 
-// Visual features:
-#define REVIX_STARTUP_ANIMATION_ENABLED 1   // 1 = short sweep on boot; 0 = off.
-#define REVIX_SMOOTH_TRANSITIONS_ENABLED 1  // 1 = smooth partial LED brightness; 0 = step-only.
+// DEFAULT: 1 (enabled). OPTIONAL: 0 disables the separate startup sweep.
+#define REVIX_STARTUP_ANIMATION_ENABLED 1
+// DEFAULT: 1 (enabled). OPTIONAL: 0 gives stepped instead of smooth progression.
+#define REVIX_SMOOTH_TRANSITIONS_ENABLED 1
 
-// Shift alert behavior:
-// 0 = OFF (alert disabled, progressive fill stays at maximum)
-// 1 = SOLID_RED (all LEDs illuminate solid red)
-// 2 = FLASH_RED (all LEDs flash red at 10 Hz)
-// 3 = FLASH_WHITE (all LEDs flash white at 10 Hz)
+// Symbolic alert choices. OFF retains full progression; flashes run at 10Hz.
 #define REVIX_ALERT_OFF         0
 #define REVIX_ALERT_SOLID_RED   1
 #define REVIX_ALERT_FLASH_RED   2
 #define REVIX_ALERT_FLASH_WHITE 3
+// DEFAULT: FLASH_RED. OPTIONAL: OFF, SOLID_RED or FLASH_WHITE changes the effect.
 #define REVIX_SHIFT_ALERT_MODE  REVIX_ALERT_FLASH_RED
 
-// Synthetic demonstration RPM thresholds.
-// Demonstration scale only; these are not verified motorcycle calibrations.
-#define REVIX_DEMO_START_RPM      1500  // RPM at which the first shift LED begins illuminating.
-#define REVIX_DEMO_SHIFT_RPM      5800  // Synthetic RPM at which shift alert activates.
-#define REVIX_DEMO_MAX_RPM        6500  // Upper synthetic demonstration scale limit.
-#define REVIX_ALERT_HYSTERESIS_RPM 150  // Clear strictly below shift minus this value; zero allowed.
+// DEFAULT: 1500 RPM, first progression pixel. OPTIONAL: synthetic scale only;
+// use 0 <= start < shift. No threshold here is a verified motorcycle setting.
+#define REVIX_DEMO_START_RPM      1500
+// DEFAULT: 5800 RPM, shift alert starts. OPTIONAL: start < shift <= maximum.
+#define REVIX_DEMO_SHIFT_RPM      5800
+// DEFAULT: 6500 RPM, synthetic decoding/scale limit. OPTIONAL: 1..20000 RPM,
+// at least shift RPM. Above-range frames are rejected, not displayed as valid.
+#define REVIX_DEMO_MAX_RPM        6500
+// DEFAULT: 150 RPM. OPTIONAL: alert clears strictly below shift minus hysteresis.
+// Use 0 <= hysteresis < (shift - start); zero is supported.
+#define REVIX_ALERT_HYSTERESIS_RPM 150
 
-// Animation rendering interval (milliseconds):
-#define REVIX_ANIMATION_INTERVAL_MS 25  // 25 ms = 40 Hz render update rate.
+// DEFAULT: 25ms (40Hz rendering). OPTIONAL: 5..250ms changes animation cadence.
+#define REVIX_ANIMATION_INTERVAL_MS 25
+// DEFAULT: 0 (off). OPTIONAL: 1 enables breathing at low validated/synthetic RPM.
+#define REVIX_IDLE_EFFECT_ENABLED 0
+// DEFAULT: 1300 RPM. OPTIONAL: idle-effect ceiling, 0..shift RPM; used if enabled.
+#define REVIX_IDLE_MAX_RPM        1300
 
-// Optional engine idle breathing effect:
-#define REVIX_IDLE_EFFECT_ENABLED 0     // Disabled by default for riding clarity.
-#define REVIX_IDLE_MAX_RPM        1300  // Maximum RPM considered engine idle.
-
-// Optional development display. Leave disabled for the LED-only device.
+// DEFAULT: 0 (off) for the LED-only Arduino sketch. CHANGE ONLY IF: an SSD1306
+// 128x64 at 0x3C is installed, then use 1 and the documented libraries.
+// The existing Wokwi environment overrides this to 1 for its simulated OLED.
 #ifndef REVIX_OLED_ENABLED
 #define REVIX_OLED_ENABLED 0
 #endif
+// DEFAULT: GPIO21. CHANGE ONLY IF: optional OLED SDA is wired to another safe pin.
 #define REVIX_OLED_SDA_GPIO 21
+// DEFAULT: GPIO22. CHANGE ONLY IF: optional OLED SCL is wired to another safe pin.
 #define REVIX_OLED_SCL_GPIO 22
 
-// Isolated bench CAN capture only. 0 keeps the TWAI controller stopped.
-// Select a nonzero rate only after verifying it on an isolated bench.
-// Both PlatformIO bike builds and packaged Arduino builds read this value.
-// This configures capture only: the NS125 RPM decoder remains disabled.
+// DEFAULT: GPIO16, reserved for transceiver RXD; leave unconnected in LED demo.
+// DO NOT CHANGE WITHOUT VERIFICATION: receiver wiring and ESP32 pin suitability.
 #define REVIX_CAN_RX_GPIO 16
+// DEFAULT: GPIO17, reserved for transceiver TXD; leave unconnected in LED demo.
+// DO NOT CHANGE WITHOUT VERIFICATION: reset/passivity protection. The bench
+// firmware disconnects this output; actual module RS/TXD wiring must be checked.
 #define REVIX_CAN_TX_GPIO 17
-#define REVIX_CAN_BITRATE 0  // Supported: 0, 125000, 250000, 500000, 1000000.
+// DEFAULT: 0 keeps TWAI stopped. DO NOT CHANGE WITHOUT VERIFICATION: only a known
+// isolated bench may use 125000, 250000, 500000 or 1000000 bits/s. Both the bike
+// PlatformIO target and Arduino bench mode read this. It does not enable a
+// motorcycle decoder or prove wiring, bitrate or passive RPM compatibility.
+#define REVIX_CAN_BITRATE 0
 
-// Serial Monitor diagnostics.
+// DEFAULT: 1 (on). OPTIONAL: 0 silences serial diagnostics and demo commands.
 #ifndef REVIX_SERIAL_DIAGNOSTICS
 #define REVIX_SERIAL_DIAGNOSTICS 1
 #endif
+// DEFAULT: 115200 baud. OPTIONAL: 1..2000000; match the monitor's baud setting.
+// PlatformIO monitor_speed stays 115200 unless you change it separately.
 #define REVIX_SERIAL_BAUD 115200
 
+// Internal compile-time validation below. These are not user settings.
 #if REVIX_OPERATING_MODE != REVIX_USER_MODE_DEMO && \
     REVIX_OPERATING_MODE != REVIX_USER_MODE_BENCH_LISTEN_ONLY
 #error "REVIX_OPERATING_MODE must be DEMO or BENCH_LISTEN_ONLY"

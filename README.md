@@ -1,6 +1,6 @@
 # REVIX LINK
 
-ESP32 shift-light firmware for six WS2812B LEDs, an SN65HVD230 transceiver, and an optional SSD1306 128x64 OLED. The intended motorcycle is the **2025 Indian Bajaj Pulsar NS125 ABS**.
+The standard setup is an **ESP32 DevKit V1 and six WS2812B LEDs in standalone simulated RPM mode**. It works without CAN and needs no settings changed. An SN65HVD230 is used only for the separate CAN receiver architecture; an SSD1306 OLED is optional. The intended motorcycle is the **2025 Indian Bajaj Pulsar NS125 ABS**, with integration still unverified.
 
 **Current compatibility:** the default is a working software demonstration. The exact motorcycle harness, bitrate and passive RPM mapping are not verified. This is a preview for simulation and isolated bench development; a motorcycle plug-and-play release requires those measurements.
 
@@ -20,13 +20,14 @@ Wokwi does not compile firmware. If it reports a missing configuration, open the
 Equivalent WSL commands:
 
 ```sh
+cd /home/hrik/projects/REVIX_LINK_ESP32
 ~/.platformio/penv/bin/pio run -e esp32dev_wokwi
 bash test/run.sh
 ```
 
 ## Default configuration
 
-Edit **UserConfig.h** for supported user settings; internal source edits are unnecessary.
+Keep **UserConfig.h** unchanged for standard hardware. Its comments explain every advanced option.
 
 | Setting | Default |
 | --- | --- |
@@ -44,6 +45,61 @@ Edit **UserConfig.h** for supported user settings; internal source edits are unn
 | Bench CAN bitrate | 0, controller disabled |
 
 RPM thresholds are demonstration settings, not a motorcycle calibration or redline. Classic, Racing, Minimal and Custom styles; normal/reversed direction; 1..32 pixels; startup, smoothing and four alert behaviors are supported. Set `REVIX_CUSTOM_COLORS` to RGB triples for a custom palette. Explicit black entries remain dark. Match the configured count to the physical chain.
+
+## Standard standalone LED wiring
+
+No CAN transceiver, motorcycle or OLED is needed for this demonstration. Keep GPIO16 and GPIO17 unconnected and reserved for CAN. Use an original ESP32 DevKit V1 and a six-pixel **5V WS2812B GRB / 800kHz** strip. No setting needs editing.
+
+Parts in addition to the ESP32 and strip:
+
+- One **74AHCT125**, preferably the breadboard-friendly SN74AHCT125N DIP-14. Do not substitute a 74HC125 or a bidirectional I2C level-shifter board.
+- One **330-ohm** series data resistor, one **10k-ohm** input pull-down resistor, one **1000uF 10V** electrolytic capacitor, and one **100nF (0.1uF)** ceramic bypass capacitor.
+- One regulated **5V supply rated at least 1A** for the strip and shifter, a USB data cable for the ESP32, secure wiring/connectors and a breadboard or soldered assembly. Use a multimeter to check supply voltage and polarity before connecting the electronics.
+
+The table uses DIP-14 IC pin numbers, not breakout-board header positions. Viewed from above with the notch upward, pin 1 is top left; pins 1..7 run down the left side and 8..14 run up the right side. Check the actual package marking.
+
+| From | To |
+| --- | --- |
+| Regulated external +5V | Strip +5V and 74AHCT125 VCC pin 14 |
+| External supply negative | Strip GND, ESP32 GND and shifter GND pin 7, all joined |
+| ESP32 GPIO27 | Shifter 1A pin 2; also connect a 10k-ohm resistor from pin 2 to GND |
+| Shifter 1OE pin 1 | GND, enabling the first buffer |
+| Shifter 1Y pin 3 | 330-ohm resistor, then first pixel DIN; put the resistor close to DIN |
+| 1000uF 10V capacitor | Across strip +5V and GND near the input; positive lead to +5V, negative striped side to GND |
+| 100nF ceramic capacitor | Between shifter pins 14 and 7, with short leads close to the IC |
+| Unused shifter OE pins 4, 10, 13 | +5V to disable the unused buffers |
+| Unused shifter A pins 5, 9, 12 | GND; leave unused output pins 6, 8, 11 unconnected |
+| Last pixel DOUT | Unconnected |
+
+Follow the strip's printed arrow: data travels from **DIN -> pixel 1 -> pixel 6 -> DOUT**. Never feed DOUT. Verify labels instead of trusting wire colors. Reversed software direction changes the visual fill order only. Keep signal wiring short and route a ground wire alongside it. The pull-down holds the shifter input low while the ESP32 pin is not driving it. The 5V shifter output goes only to LED DIN, never to an ESP32 GPIO.
+
+### Power and connection order
+
+1. Disconnect USB and external power before assembling or changing wiring. Connect common ground first and keep it connected throughout operation. Check capacitor polarity, connections and absence of shorts before powering up.
+2. For this standard setup, power the ESP32 through USB only. External 5V powers only the strip and shifter. **Do not join external +5V to the ESP32 5V/VIN/3V3 pins while USB is connected.** The two supplies share ground, not their positive rails.
+3. Switch on the regulated strip/shifter 5V supply first, then connect ESP32 USB. This avoids sending data into an unpowered strip. Do not hot-plug the data wire or lose common ground while powered.
+4. Disconnect ESP32 USB first, then switch off strip/shifter power. Let the bulk capacitor discharge before rewiring; do not short its leads. Remove ground last when dismantling the unpowered circuit.
+
+At a conservative 60mA per pixel, six pixels need up to 360mA before other loads. The 1A minimum here is for the separate LED/shifter supply; USB powers the ESP32. Brightness 40/255 is not a current limiter. More pixels or another power arrangement require a new current budget and board power-path check. Never power the strip from a GPIO or the ESP32 3V3 regulator. This bench 5V supply arrangement is not an automotive power system.
+
+Wiring references: [TI 74AHCT125 pinout and logic levels](https://www.ti.com/lit/ds/symlink/sn74ahct125.pdf), [Adafruit NeoPixel wiring and power sequence](https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices). This specifies the intended assembly; physical operation still needs checking on your actual parts.
+
+## Settings for nonstandard hardware and personal preferences
+
+Leave every setting unchanged for the standard LED demonstration. `UserConfig.h` labels each editable setting with **DEFAULT**, **CHANGE ONLY IF**, **OPTIONAL**, or **DO NOT CHANGE WITHOUT VERIFICATION**. Symbolic mode/style constants and the validation section are not user settings.
+
+| Reason to customize | Setting and limits |
+| --- | --- |
+| Different LED wiring or count | `REVIX_LED_DATA_GPIO`, `REVIX_LED_COUNT` (1..32); check wiring and current budget; reserve GPIO16/17 |
+| Personal appearance | `REVIX_LED_BRIGHTNESS` (0..255), `REVIX_SHIFT_LIGHT_STYLE` (Classic/Racing/Minimal/Custom), `REVIX_CUSTOM_COLORS` (RGB triples, channels 0..255), `REVIX_LED_DIRECTION` (normal/reversed) |
+| Animation or alert preference | `REVIX_STARTUP_ANIMATION_ENABLED`, `REVIX_SMOOTH_TRANSITIONS_ENABLED` (0/1), `REVIX_SHIFT_ALERT_MODE` (off/solid red/flashing red/flashing white), `REVIX_ANIMATION_INTERVAL_MS` (5..250ms) |
+| Synthetic scale only | `REVIX_DEMO_START_RPM`, `REVIX_DEMO_SHIFT_RPM`, `REVIX_DEMO_MAX_RPM` (maximum 1..20000; start < shift <= maximum), `REVIX_ALERT_HYSTERESIS_RPM` (0 to less than shift minus start) |
+| Optional idle effect | `REVIX_IDLE_EFFECT_ENABLED` (0/1), `REVIX_IDLE_MAX_RPM` (0..shift RPM) |
+| Add an OLED | `REVIX_OLED_ENABLED` (0/1), `REVIX_OLED_SDA_GPIO`, `REVIX_OLED_SCL_GPIO`; use a 128x64 SSD1306 at 0x3C, safe 3.3V pull-ups and the display libraries |
+| Serial preference | `REVIX_SERIAL_DIAGNOSTICS` (0/1), `REVIX_SERIAL_BAUD` (1..2000000); match the serial monitor rate; diagnostics off also removes runtime demo commands |
+| Verified isolated CAN bench only | `REVIX_OPERATING_MODE`, `REVIX_CAN_RX_GPIO`, `REVIX_CAN_TX_GPIO`, `REVIX_CAN_BITRATE`; read the bench requirements before changing them |
+
+GRB / 800kHz is fixed in the existing LED driver, not a `UserConfig.h` option. A different RGB order, RGBW strip or protocol requires a reviewed driver change. Do not change the RGB order of palette triples to compensate. CAN bitrate does not select a motorcycle protocol; no verified vehicle mapping is supplied.
 
 ## Serial demonstration controls
 
@@ -71,13 +127,12 @@ Use the following **component-side** assignments on an isolated bench. IC pin nu
 | SN65HVD230 D/TXD, IC pin 1 | GPIO17; external recessive pull-up to 3.3 V |
 | SN65HVD230 VCC, IC pin 3 / GND, pin 2 | Regulated 3.3 V / logic ground |
 | SN65HVD230 RS, IC pin 8 | Fixed high at 3.3 V for passive reception, including reset |
-| WS2812B DIN | GPIO27 through an appropriate 3.3-to-5 V data buffer |
-| WS2812B power / ground | Suitable regulated LED supply / common logic ground |
+| WS2812B data / power | Keep the standard 74AHCT125 wiring and external 5V supply described above |
 | Optional SSD1306 SDA / SCL | GPIO21 / GPIO22, ESP32-safe pull-ups |
 
-Inspect the module schematic before wiring RS: some modules tie it low. Never short a grounded RS pin to 3.3 V. Inspect any onboard 120-ohm termination before connecting to an existing network. CANH/CANL belong only on a verified CAN bus; no motorcycle connector assignment is supplied or implied.
+**A six-pin SN65HVD230 breakout is not automatically safe for motorcycle connection.** Its header may not expose RS. Inspect the actual module schematic/continuity and measure electrical passivity through reset and power transitions before bus connection. Some modules tie RS low. Never short a grounded RS pin to 3.3 V. Inspect any onboard 120-ohm termination before connecting to an existing network. CANH/CANL belong only on a verified CAN bus; no motorcycle connector assignment is supplied or implied.
 
-Supporting parts are required: a protected and fused automotive power converter, reverse-polarity/transient protection, a regulated 3.3 V transceiver rail, suitable 5 V LED supply, local bypass/bulk capacitors, data buffer such as a suitable AHCT device, data resistor where required, transceiver TXD pull-up, and a verified harness/enclosure. Use at least 100 nF close to transceiver VCC/GND. A conservative budget for six older 60 mA/pixel devices is 360 mA for LEDs alone; check the exact strip revision and size the supply for the ESP32 and other loads too.
+For any future vehicle installation, additional parts are required: a fused automotive converter with reverse-polarity and transient protection, a regulated 3.3V transceiver rail, transceiver TXD bias, verified connectors/harness and an enclosure. Use at least 100nF close to transceiver VCC/GND. The standard LED bench assembly and a generic six-pin breakout do not provide these protections.
 
 The simulator's TX2-to-RX2 wire is a digital self-test loopback. **Remove that wire for real hardware.** Use the transceiver instead. Never apply vehicle voltage to GPIO or power the LEDs from a GPIO.
 
@@ -111,6 +166,20 @@ bash test/run.sh
 The native suite covers decoding, freshness, replay, serial parsing, bounded log queues, warning aggregation, visual configurations, and OLED refresh through test doubles. Host tests do not establish physical device behavior. For an optional repeatable runtime test, temporarily add `rfc2217ServerPort = 4000` under `[wokwi]`, close and reopen the simulator, then run `~/.platformio/penv/bin/python test/wokwi_runtime.py` inside WSL. Keep the simulator visible. This records and asserts real simulator serial output; separately inspect the LEDs/OLED. Remove the port setting and close the session after the test. No serial bridge is required for normal use.
 
 `esp32dev_twai_test` is an experimental transmit/self-receive target at a simulator-only 500 kbit/s. A completed transaction requires matching RX, actual TX-success and zero pending TX. The recorded Wokwi run received one frame but stalled before completion. [Wokwi lists TWAI as partial](https://docs.wokwi.com/guides/esp32). A timeout halts once; no fake completion or automatic fallback is used. Root Wokwi configuration stays on the default replay target.
+
+## Install the standalone Arduino demonstration in WSL
+
+Use the Arduino source ZIP for the standard LED-only board. Extract it under your WSL home, not `/mnt/c` or `/mnt/d`. Follow [arduino/README.txt](arduino/README.txt) (also included inside the ZIP) for Arduino CLI installation, pinned core/libraries, compilation and USB upload. No settings need editing. The existing WSL installation already has these tools.
+
+After extracting, open a WSL terminal in the `REVIX_LINK` folder and run:
+
+```sh
+arduino-cli compile --fqbn esp32:esp32:esp32 --warnings all --output-dir build .
+```
+
+The guide shows how to select an available WSL USB device and upload the resulting build. USB access in WSL is a prerequisite; if no board appears, arrange that access before uploading. Use USB with the motorcycle disconnected and follow the LED power order above. First boot shows a startup sweep followed by repeating simulated progression, shift flashing, a deliberate stale/off interval, and recovery. A dark interval in this test cycle is expected.
+
+For Arduino IDE users, run the Linux IDE inside WSL2/WSLg, open `REVIX_LINK.ino`, install ESP32 core 2.0.17 and Adafruit NeoPixel 1.12.3, and select **ESP32 Dev Module**. Do not install the toolchain on Windows. The Arduino default disables OLED; the existing PlatformIO `esp32dev_wokwi` target deliberately enables its simulated OLED. Neither `esp32dev_bike` nor `esp32dev_twai_test` is the beginner LED demonstration.
 
 ## Arduino distribution and release preparation
 
