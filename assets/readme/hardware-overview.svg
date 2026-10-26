@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1080" viewBox="0 0 720 1080" role="img" aria-labelledby="title desc">
+<title id="title">Gather these parts</title><desc id="desc">Nine labeled component illustrations for the standard six-pixel demonstration. CAN and OLED are not required.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="720" height="1080" fill="#ffffff"/>
+<text x="28" y="44" font-size="30" fill="#142b3b" font-weight="700" text-anchor="start">Gather these parts</text>
+<text x="28" y="82" font-size="24" fill="#425c6d" font-weight="400" text-anchor="start">Standard demo • no CAN module needed</text>
+<rect x="28" y="108" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<rect x="138" y="122" width="100" height="57" rx="4" fill="#244238" stroke="#334155" stroke-width="2"/>
+<rect x="163" y="129" width="50" height="30" rx="2" fill="#b7c4cc" stroke="#334155" stroke-width="2"/>
+<path d="M 130,128 L 138,128" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 238,128 L 246,128" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 130,136 L 138,136" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 238,136 L 246,136" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 130,144 L 138,144" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 238,144 L 246,144" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 130,152 L 138,152" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 238,152 L 246,152" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 130,160 L 138,160" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 238,160 L 246,160" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 130,168 L 138,168" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 238,168 L 246,168" fill="none" stroke="#334155" stroke-width="4"/>
+<text x="188" y="219" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">ESP32 DevKit V1</text>
+<text x="188" y="251" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">Original ESP32 board</text>
+<rect x="376" y="108" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<rect x="402" y="125" width="268" height="53" rx="8" fill="#244238" stroke="#244238" stroke-width="2"/>
+<rect x="414" y="137" width="29" height="29" rx="6" fill="#18a84d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="457" y="137" width="29" height="29" rx="6" fill="#18a84d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="500" y="137" width="29" height="29" rx="6" fill="#e8b300" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="543" y="137" width="29" height="29" rx="6" fill="#e8b300" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="586" y="137" width="29" height="29" rx="6" fill="#ef741c" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="629" y="137" width="29" height="29" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<text x="536" y="219" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">6 × WS2812B LEDs</text>
+<text x="536" y="251" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">5V • GRB • 800kHz</text>
+<rect x="28" y="288" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<rect x="133" y="312" width="112" height="35" rx="3" fill="#334155" stroke="#334155" stroke-width="2"/>
+<path d="M 142,305 L 142,312" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 142,347 L 142,356" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 157,305 L 157,312" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 157,347 L 157,356" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 172,305 L 172,312" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 172,347 L 172,356" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 187,305 L 187,312" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 187,347 L 187,356" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 202,305 L 202,312" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 202,347 L 202,356" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 217,305 L 217,312" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 217,347 L 217,356" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 232,305 L 232,312" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 232,347 L 232,356" fill="none" stroke="#334155" stroke-width="4"/>
+<circle cx="142" cy="322" r="3" fill="#fff"/>
+<text x="188" y="399" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">SN74AHCT125N</text>
+<text x="188" y="431" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">DIP-14 level shifter</text>
+<rect x="376" y="288" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<path d="M 493,333 L 508,333" fill="none" stroke="#334155" stroke-width="4"/>
+<rect x="508" y="323" width="52" height="20" rx="2" fill="#f8e8b7" stroke="#334155" stroke-width="2"/>
+<path d="M 560,333 L 575,333" fill="none" stroke="#334155" stroke-width="4"/>
+<text x="536" y="399" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">330Ω resistor</text>
+<text x="536" y="431" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">In series with DIN</text>
+<rect x="28" y="468" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<path d="M 145,513 L 160,513" fill="none" stroke="#334155" stroke-width="4"/>
+<rect x="160" y="503" width="52" height="20" rx="2" fill="#f8e8b7" stroke="#334155" stroke-width="2"/>
+<path d="M 212,513 L 227,513" fill="none" stroke="#334155" stroke-width="4"/>
+<text x="188" y="579" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">10kΩ resistor</text>
+<text x="188" y="611" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">Input pull-down</text>
+<rect x="376" y="468" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<rect x="506" y="483" width="55" height="50" rx="6" fill="#263647" stroke="#334155" stroke-width="2"/>
+<rect x="541" y="486" width="15" height="44" rx="2" fill="#e6edf3" stroke="#e6edf3" stroke-width="2"/>
+<text x="544" y="515" font-size="17" fill="#142b3b" font-weight="400" text-anchor="start">−</text>
+<path d="M 516,533 L 516,551" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 549,533 L 549,544" fill="none" stroke="#334155" stroke-width="4"/>
+<text x="536" y="579" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">1000µF capacitor</text>
+<text x="536" y="611" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">10V • polarized</text>
+<rect x="28" y="648" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<circle cx="188" cy="685" r="22" fill="#d59632"/>
+<path d="M 178,705 L 178,726" fill="none" stroke="#334155" stroke-width="4"/>
+<path d="M 198,705 L 198,726" fill="none" stroke="#334155" stroke-width="4"/>
+<text x="188" y="759" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">100nF capacitor</text>
+<text x="188" y="791" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">0.1µF • ceramic</text>
+<rect x="376" y="648" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<rect x="488" y="664" width="98" height="58" rx="8" fill="#334155" stroke="#334155" stroke-width="2"/>
+<text x="537" y="701" font-size="27" fill="#fff" font-weight="700" text-anchor="middle">5V</text>
+<path d="M 586,693 L 622,693" fill="none" stroke="#ba2e34" stroke-width="4"/>
+<text x="536" y="759" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">Regulated 5V supply</text>
+<text x="536" y="791" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">At least 1A</text>
+<rect x="28" y="828" width="320" height="164" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<path d="M 134,866 L 168,866 L 168,889 L 221,889 L 221,866 L 242,866" fill="none" stroke="#7652ac" stroke-width="6"/>
+<rect x="110" y="852" width="30" height="28" rx="3" fill="#b7c4cc" stroke="#334155" stroke-width="2"/>
+<rect x="239" y="856" width="24" height="20" rx="3" fill="#b7c4cc" stroke="#334155" stroke-width="2"/>
+<text x="188" y="939" font-size="24" fill="#142b3b" font-weight="700" text-anchor="middle">USB data cable</text>
+<text x="188" y="971" font-size="22" fill="#425c6d" font-weight="400" text-anchor="middle">ESP32 power + upload</text>
+<text x="380" y="880" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">Also have ready:</text>
+<text x="380" y="918" font-size="21" fill="#425c6d" font-weight="400" text-anchor="start">Secure wires / connectors</text>
+<text x="380" y="952" font-size="21" fill="#425c6d" font-weight="400" text-anchor="start">Breadboard or soldered board</text>
+<text x="380" y="986" font-size="21" fill="#425c6d" font-weight="400" text-anchor="start">Multimeter for checks</text>
+<text x="28" y="1048" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">Illustrations identify parts; check the real markings.</text>
+</svg>

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="960" viewBox="0 0 720 960" role="img" aria-labelledby="title desc">
+<title id="title">What a working demo looks like</title><desc id="desc">Illustrative LED states: startup sweep and pulse, progressive classic colors, flashing red shift alert, then deliberate stale-data blanking and recovery. Not measured engine RPM.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="720" height="960" fill="#ffffff"/>
+<text x="28" y="44" font-size="30" fill="#142b3b" font-weight="700" text-anchor="start">What a working demo looks like</text>
+<text x="28" y="83" font-size="24" fill="#425c6d" font-weight="400" text-anchor="start">Illustrative snapshots • simulated RPM only</text>
+<rect x="28" y="113" width="664" height="177" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<text x="49" y="149" font-size="26" fill="#142b3b" font-weight="700" text-anchor="start">1  STARTUP</text>
+<text x="49" y="184" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">Short sweep forward/back, then a pulse.</text>
+<rect x="52" y="205" width="414" height="64" rx="8" fill="#244238" stroke="#244238" stroke-width="2"/>
+<rect x="64" y="217" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="134" y="217" width="40" height="40" rx="6" fill="#18a84d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="204" y="217" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="274" y="217" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="344" y="217" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="414" y="217" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<text x="514" y="247" font-size="23" fill="#0969aa" font-weight="700" text-anchor="start">→ ←</text>
+<rect x="28" y="309" width="664" height="177" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<text x="49" y="345" font-size="26" fill="#142b3b" font-weight="700" text-anchor="start">2  PROGRESSIVE FILL</text>
+<text x="49" y="380" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">More pixels light as the demo RPM rises.</text>
+<rect x="52" y="401" width="414" height="64" rx="8" fill="#244238" stroke="#244238" stroke-width="2"/>
+<rect x="64" y="413" width="40" height="40" rx="6" fill="#18a84d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="134" y="413" width="40" height="40" rx="6" fill="#18a84d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="204" y="413" width="40" height="40" rx="6" fill="#e8b300" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="274" y="413" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="344" y="413" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="414" y="413" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<text x="514" y="443" font-size="23" fill="#0969aa" font-weight="700" text-anchor="start"></text>
+<rect x="28" y="505" width="664" height="177" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<text x="49" y="541" font-size="26" fill="#142b3b" font-weight="700" text-anchor="start">3  SHIFT ALERT</text>
+<text x="49" y="576" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">All six flash red at 5800 simulated RPM.</text>
+<rect x="52" y="597" width="414" height="64" rx="8" fill="#244238" stroke="#244238" stroke-width="2"/>
+<rect x="64" y="609" width="40" height="40" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="134" y="609" width="40" height="40" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="204" y="609" width="40" height="40" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="274" y="609" width="40" height="40" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="344" y="609" width="40" height="40" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="414" y="609" width="40" height="40" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<text x="514" y="639" font-size="23" fill="#ba2e34" font-weight="700" text-anchor="start">ON / OFF</text>
+<rect x="28" y="701" width="664" height="177" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
+<text x="49" y="737" font-size="26" fill="#142b3b" font-weight="700" text-anchor="start">4  TEST PAUSE + RECOVERY</text>
+<text x="49" y="772" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">A planned dark interval, then lights return.</text>
+<rect x="52" y="793" width="414" height="64" rx="8" fill="#244238" stroke="#244238" stroke-width="2"/>
+<rect x="64" y="805" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="134" y="805" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="204" y="805" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="274" y="805" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="344" y="805" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="414" y="805" width="40" height="40" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<text x="514" y="835" font-size="23" fill="#0969aa" font-weight="700" text-anchor="start"></text>
+<text x="28" y="916" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">Dark squares = off. Colors are illustrative.</text>
+<text x="28" y="947" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">Default brightness: 40/255. No settings to change.</text>
+</svg>

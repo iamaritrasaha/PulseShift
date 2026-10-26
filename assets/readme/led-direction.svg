@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="390" viewBox="0 0 720 390" role="img" aria-labelledby="title desc">
+<title id="title">Find the strip INPUT</title><desc id="desc">Buffered ESP32 data through the resistor connects to DIN. Follow the printed arrow toward DOUT, which is unused.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="720" height="390" fill="#ffffff"/>
+<text x="28" y="44" font-size="30" fill="#142b3b" font-weight="700" text-anchor="start">Find the strip INPUT</text>
+<text x="28" y="86" font-size="25" fill="#0969aa" font-weight="400" text-anchor="start">Signal from GPIO27 via shifter + 330Ω</text>
+<path d="M 44,110 L 44,192 L 108,192" fill="none" stroke="#0969aa" stroke-width="4"/>
+<path d="M 96,184 L 108,192 L 96,200" fill="none" stroke="#0969aa" stroke-width="4"/>
+<rect x="108" y="158" width="480" height="70" rx="8" fill="#244238" stroke="#244238" stroke-width="2"/>
+<rect x="120" y="170" width="46" height="46" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="202" y="170" width="46" height="46" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="284" y="170" width="46" height="46" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="366" y="170" width="46" height="46" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="448" y="170" width="46" height="46" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<rect x="530" y="170" width="46" height="46" rx="6" fill="#41554d" stroke="#9eb7aa" stroke-width="2"/>
+<text x="112" y="260" font-size="26" fill="#0969aa" font-weight="700" text-anchor="start">DIN / IN</text>
+<text x="512" y="260" font-size="26" fill="#142b3b" font-weight="700" text-anchor="start">DOUT / OUT</text>
+<path d="M 252,270 L 490,270" fill="none" stroke="#0969aa" stroke-width="4"/>
+<path d="M 478,262 L 490,270 L 478,278" fill="none" stroke="#0969aa" stroke-width="4"/>
+<text x="282" y="307" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">Printed arrow</text>
+<text x="28" y="355" font-size="25" fill="#142b3b" font-weight="700" text-anchor="start">Connect DIN. Leave DOUT unused.</text>
+</svg>
