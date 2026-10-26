@@ -1,123 +1,142 @@
 # REVIX LINK
 
-REVIX LINK is an ESP32-based motorcycle RPM shift-light system for an ESP32 DevKit V1, six WS2812B LEDs, an SN65HVD230 CAN transceiver, and the 2025 Bajaj Pulsar NS125 ABS. The motorcycle CAN bitrate, wiring, message mapping, and RPM decoding have not been verified.
+ESP32 shift-light firmware for six WS2812B LEDs, an SN65HVD230 transceiver, and an optional SSD1306 128x64 OLED. The intended motorcycle is the **2025 Indian Bajaj Pulsar NS125 ABS**.
 
-The Arduino IDE package defaults to a standalone demonstration. It generates synthetic CAN frames in software and processes them through the existing decoder and visual shift-light engine. Its RPM values are simulated and do not describe the motorcycle. The demonstration does not transmit CAN frames and requires no CAN connection.
+**Current compatibility:** the default is a working software demonstration. The exact motorcycle harness, bitrate and passive RPM mapping are not verified. This is a preview for simulation and isolated bench development; a motorcycle plug-and-play release requires those measurements.
 
-> **Latest Preview Release**: Download the verified Arduino IDE package directly from [REVIX LINK v0.1.0 Preview](https://github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.1.0) (`REVIX-LINK-Arduino-v0.1.0.zip`).
+## Run the default simulation
 
-## Visual shift-light system
+Develop entirely in Ubuntu WSL. Open the repository in VS Code through **Remote WSL**, with PlatformIO and the licensed Wokwi extension installed in that environment.
 
-REVIX LINK prioritizes an LED-first instrument architecture:
-- Six WS2812B RGB LEDs on GPIO 27 by default, supporting configurable LED counts.
-- Progressive RPM fill with configurable start and shift thresholds.
-- Optional smooth partial brightness interpolation using fixed-point math.
-- Selectable color profiles:
-  - Classic: progressive green, yellow, orange, and red.
-  - Racing: vivid racing green, bright amber, crimson, and red.
-  - Minimal: clean ice-white progressive fill with red shift point.
-  - Custom: user-configurable color array.
-- Non-blocking startup sequence with forward sweep, reverse sweep, and confirmation pulse.
-- Configurable shift alert with hysteresis to prevent rapid flickering around the threshold. Supported alert modes include Off, Solid Red, Flash Red at 10 Hz, and Flash White at 10 Hz.
-- Fail-safe state handling: LEDs blank immediately if communication is disconnected, stale, invalid, or faulted. No stale engine speed is displayed.
-- Optional engine idle breathing effect on the first LED during live idle RPM.
+1. Open the repository folder, containing `platformio.ini`, `wokwi.toml` and `diagram.json`.
+2. Press **Ctrl+Shift+B** and wait for **SUCCESS**.
+3. Press **F1 -> Wokwi: Start Simulator**.
+4. Stop Wokwi, rebuild and restart after code changes.
 
-## Arduino IDE: for regular users
+The default `esp32dev_wokwi` environment enables the OLED and runs `DEMO_SIMULATED`. A 20-second sequence sends complete synthetic CAN frames through the same decoder and RPM state used by reception: valid frames, wrong DLC, out-of-range data, silence, then recovery. LEDs blank and the OLED shows `-- RPM` when valid data becomes stale. The startup sweep is identified as `STARTUP`, separately from RPM indication.
 
-1. Download `REVIX-LINK-Arduino-v0.1.0.zip` directly from the [REVIX LINK v0.1.0 Release](https://github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.1.0), or browse all releases on the [GitHub Releases page](https://github.com/iamaritrasaha/REVIX-LINK/releases).
-2. Extract the ZIP and keep the `REVIX_LINK` folder intact.
-3. Open `REVIX_LINK/REVIX_LINK.ino` in Arduino IDE 2.x.
-4. In File > Preferences, add the Espressif Boards Manager index URL:
+Wokwi does not compile firmware. If it reports a missing configuration, open the repository root and select its `wokwi.toml`. No preparation script or configuration generator is required.
 
-   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
+Equivalent WSL commands:
 
-5. In Boards Manager, install **ESP32 by Espressif Systems**, version **2.0.17**.
-6. In Library Manager, install **Adafruit NeoPixel 1.12.3**. If you enable the optional OLED, also install **Adafruit SSD1306 2.5.13**, **Adafruit GFX Library 1.11.11**, and **Adafruit BusIO 1.17.0**.
-7. Edit `UserConfig.h` to choose your settings. The defaults are:
-   - LED data pin: GPIO 27, count: 6 LEDs, brightness: 40 (0..255).
-   - Style: `REVIX_STYLE_CLASSIC` (options: `REVIX_STYLE_RACING`, `REVIX_STYLE_MINIMAL`, `REVIX_STYLE_CUSTOM`).
-   - Shift alert: `REVIX_ALERT_FLASH_RED` (options: `REVIX_ALERT_OFF`, `REVIX_ALERT_SOLID_RED`, `REVIX_ALERT_FLASH_WHITE`).
-   - Orientation: `REVIX_DIRECTION_NORMAL` (or `REVIX_DIRECTION_REVERSED`).
-   - Start RPM: 1500, Shift RPM: 5800, Alert hysteresis: 150 RPM.
-   - Smooth transitions: enabled; Startup animation: enabled.
-   - OLED display: disabled by default.
-8. Select **ESP32 Dev Module** under Tools > Board and the connected board port under Tools > Port.
-9. Click **Verify**, then **Upload**. Open Serial Monitor at **115200 baud**.
-
-The downloadable Arduino package disables the OLED by default, so its LED-only build requires only Adafruit NeoPixel. To enable the optional OLED diagnostics in an Arduino IDE build, set `REVIX_OLED_ENABLED` to `1` in `UserConfig.h` and install the OLED libraries listed above.
-
-### Demonstration and bench modes
-
-The default `REVIX_USER_MODE_DEMO` mode exercises synthetic frames, the decoder, and the shift lights. Serial output identifies this mode as simulated. It does not validate the motorcycle protocol or physical CAN hardware.
-
-In demonstration mode, you can interact directly via the Serial Monitor (115200 baud, newline line ending):
-- `help`: list available commands.
-- `status`: inspect current RPM, alert state, style profile, and brightness.
-- `demo start`: resume automated synthetic acceleration and deceleration cycle.
-- `demo stop`: pause automated synthetic cycle at current RPM.
-- `rpm <val>`: manually inject synthetic RPM (e.g. `rpm 4200` or `rpm 6000`).
-- `profile <classic|racing|minimal>`: dynamically switch LED color style.
-- `brightness <val>`: adjust master brightness (0..255).
-
-`REVIX_USER_MODE_BENCH_LISTEN_ONLY` is an optional receive-only mode for an isolated bench setup. Its CAN bitrate defaults to `0`, which keeps TWAI stopped. The RPM mapping remains disabled. Choose a supported bitrate only after verifying it on an isolated bench. In this mode, the firmware uses `TWAI_MODE_LISTEN_ONLY` and disconnects the ESP32 CAN TX GPIO from output. The SN65HVD230 must also be held in its hardware silent state by keeping RS high, and TXD must remain recessive with an external pull-up. Software checks do not prove electrical passivity. Do not connect this unverified prototype directly to the motorcycle.
-
-## PlatformIO: for developers
-
-PlatformIO remains supported for development, host-side testing, and Wokwi simulation. Install PlatformIO Core and a C++17 toolchain, then run these commands from the repository root:
-
-```bash
-pio run -e esp32dev_wokwi
-pio run -e esp32dev_twai_test
-pio run -e esp32dev_bike
+```sh
+~/.platformio/penv/bin/pio run -e esp32dev_wokwi
 bash test/run.sh
 ```
 
-The Wokwi target defaults to synthetic frame replay with optional OLED diagnostics enabled. The separate `esp32dev_twai_test` target is an experimental controller self-test that transmits test frames in Wokwi. Its 500 kbit/s setting is for the simulator only and is not a verified motorcycle bitrate. Do not use it on a motorcycle bus. The `esp32dev_bike` target is receive-only, omits simulated ECU code, and keeps TWAI stopped until a supported bitrate is explicitly configured. It does not decode actual NS125 RPM data.
+## Default configuration
 
-`diagram.json` and `wokwi.toml` remain beside `platformio.ini` for Wokwi. Restart the simulator after rebuilding firmware. Simulation does not prove physical CAN behavior.
+Edit **UserConfig.h** for supported user settings; internal source edits are unnecessary.
 
-## Arduino package and releases
+| Setting | Default |
+| --- | --- |
+| Operating mode | DEMO; synthetic frames, no CAN transmission |
+| LEDs | Six WS2812B, GPIO27, GRB / 800 kHz |
+| Brightness | 40/255; a scale, not a hardware current limiter |
+| Style / direction | Classic / normal |
+| Startup / smoothing | Enabled / enabled |
+| Demonstration progression | 1500 start, 5800 shift, 6500 maximum RPM |
+| Shift alert / hysteresis | Red flash at 10 Hz / 150 RPM |
+| Optional idle effect | Disabled |
+| Serial | 115200 baud, diagnostics enabled |
+| OLED | Wokwi enabled; packaged Arduino sketch disabled |
+| CAN RX / TX | GPIO16 / GPIO17 |
+| Bench CAN bitrate | 0, controller disabled |
 
-The tagged-release workflow builds and verifies the extracted Arduino ZIP before attaching it to a GitHub Release. It also publishes a SHA-256 checksum. No release is published until a semantic-version tag such as `v0.1.0` is pushed.
+RPM thresholds are demonstration settings, not a motorcycle calibration or redline. Classic, Racing, Minimal and Custom styles; normal/reversed direction; 1..32 pixels; startup, smoothing and four alert behaviors are supported. Set `REVIX_CUSTOM_COLORS` to RGB triples for a custom palette. Explicit black entries remain dark. Match the configured count to the physical chain.
 
-To create and inspect a package locally:
+## Serial demonstration controls
 
-```bash
-python3 scripts/package_arduino.py --version v0.1.0 --output-dir /tmp/revix-release
-python3 scripts/verify_arduino_package.py \
-  --zip /tmp/revix-release/REVIX-LINK-Arduino-v0.1.0.zip \
-  --version v0.1.0 \
-  --extract-to /tmp/revix-extracted
+Type commands in the **Wokwi Terminal**, or the serial monitor of a standalone demo board. Commands end with newline. They are compiled only into demonstration firmware with diagnostics enabled.
+
+| Command | Effect |
+| --- | --- |
+| `help`, `status` | Available commands and current state |
+| `demo start` | Resume the automated full-frame replay |
+| `demo stop` | Stop all replay frames; RPM becomes stale after 1000 ms |
+| `rpm 4200` | Resume frames at synthetic 4200 RPM |
+| `rpm 6501` | Exercise decoder rejection above the default range |
+| `profile classic`, `profile racing`, `profile minimal` | Change the visual style |
+| `brightness 40` | Set brightness in 0..255 |
+
+`rpm` accepts decimal 0..20000; values above the configured demo maximum are rejected by the decoder instead of clamped into a valid reading. Malformed numbers and overlong/binary commands are rejected. Runtime settings are temporary and reset at restart. No command writes an RPM value directly to the display or LEDs.
+
+## Real hardware and bench reception
+
+Use the following **component-side** assignments on an isolated bench. IC pin numbers are not necessarily module header positions.
+
+| Component connection | ESP32 / supply |
+| --- | --- |
+| SN65HVD230 R/RXD, IC pin 4 | GPIO16 |
+| SN65HVD230 D/TXD, IC pin 1 | GPIO17; external recessive pull-up to 3.3 V |
+| SN65HVD230 VCC, IC pin 3 / GND, pin 2 | Regulated 3.3 V / logic ground |
+| SN65HVD230 RS, IC pin 8 | Fixed high at 3.3 V for passive reception, including reset |
+| WS2812B DIN | GPIO27 through an appropriate 3.3-to-5 V data buffer |
+| WS2812B power / ground | Suitable regulated LED supply / common logic ground |
+| Optional SSD1306 SDA / SCL | GPIO21 / GPIO22, ESP32-safe pull-ups |
+
+Inspect the module schematic before wiring RS: some modules tie it low. Never short a grounded RS pin to 3.3 V. Inspect any onboard 120-ohm termination before connecting to an existing network. CANH/CANL belong only on a verified CAN bus; no motorcycle connector assignment is supplied or implied.
+
+Supporting parts are required: a protected and fused automotive power converter, reverse-polarity/transient protection, a regulated 3.3 V transceiver rail, suitable 5 V LED supply, local bypass/bulk capacitors, data buffer such as a suitable AHCT device, data resistor where required, transceiver TXD pull-up, and a verified harness/enclosure. Use at least 100 nF close to transceiver VCC/GND. A conservative budget for six older 60 mA/pixel devices is 360 mA for LEDs alone; check the exact strip revision and size the supply for the ESP32 and other loads too.
+
+The simulator's TX2-to-RX2 wire is a digital self-test loopback. **Remove that wire for real hardware.** Use the transceiver instead. Never apply vehicle voltage to GPIO or power the LEDs from a GPIO.
+
+For a known isolated CAN bench, set `REVIX_CAN_BITRATE` in `UserConfig.h` to the bench's verified bitrate and build:
+
+```sh
+~/.platformio/penv/bin/pio run -e esp32dev_bike
 ```
 
-The package includes the REVIX LINK source and preserves its copyright notices. Third-party libraries remain subject to their own licenses. The repository has no explicit `LICENSE` file, so this project is not described as open-source. See [COPYRIGHT](COPYRIGHT) and [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+This environment forces receive-only mode, reads that bitrate setting, excludes the synthetic ECU, and uses `TWAI_MODE_LISTEN_ONLY`. GPIO17 output is disconnected before controller start; hardware RS-high protection is still required. The RPM mapping remains disabled, so reception logs frames rather than guessing engine RPM. A normal transmitter needs another ACK-capable node on the bench. Error-alert logs are aggregated; driver loss/error counters remain visible. This is a bounded logger, not a lossless high-load CAN analyzer.
 
-## Hardware and current limitations
+After a qualified setup has verified the wiring and bitrate, the optional **Tasks: Run Task -> REVIX: Record bench CAN log** task uses PlatformIO's existing serial monitor to save complete frame/status output under the project's ignored `logs/` directory. It opens an already available WSL serial device; it does not build, upload, discover connector pins, or identify an RPM mapping. If several serial devices exist, select the correct board; if none is exposed to WSL, there is no capture. Check the firmware banner is `BENCH_LISTEN_ONLY` and distinguish it from `DEMO_SIMULATED` before treating any recording as vehicle evidence. Preserve the bitrate, reference RPM measurements and error/drop counters alongside the log. Stop with Ctrl+C. Recorded logs are excluded from Git and source exports.
 
-| Component | Purpose | ESP32 DevKit V1 connections |
-| --- | --- | --- |
-| ESP32 DevKit V1 | Main controller | Main board |
-| Six WS2812B RGB LEDs | RPM shift-light bar | Data GPIO 27 |
-| SN65HVD230 CAN transceiver | Isolated bench CAN reception only | RXD GPIO 16, TXD GPIO 17 |
-| SSD1306 128x64 OLED | Optional development diagnostics | SDA GPIO 21, SCL GPIO 22 |
+A physical bench test must verify bus levels and passivity through reset, startup, disconnection and errors. Do not flash the simulator or experimental self-test onto a motorcycle.
 
-Use a suitable transceiver and verify electrical levels, grounding, power, and protection on an isolated bench. Never connect CAN-H, CAN-L, or vehicle power directly to ESP32 GPIO. No successful real-motorcycle CAN capture or RPM reading is claimed.
+## Motorcycle evidence and remaining verification
 
-## Project structure
+Bajaj's [NS125 ABS owner manual, revision 00, September 2025](https://cdn.bajajauto.com/-/media/assets/bajajauto/customer-service/owners-manual/owners-manual-pdf/owner-manual-pdf-2026/pulsar-ns125_led-bt-abs.pdf) identifies the relevant model and documents an instrument indication above 9000 RPM. That is not a verified RPM frame encoding or an aftermarket shift recommendation. The older [EU5 training manual](https://bajajmotos.es/wp-content/uploads/2025/05/bajaj-motos-manual-pulsar-ns-125-euro-es.pdf) describes RPM over CAN for that variant; its wiring/protocol cannot be substituted for the 2025 Indian ABS model.
 
-| Path | Responsibility |
-| --- | --- |
-| `src/main.cpp` | Startup, application lifecycle, and demo command parsing |
-| `include/config.h` and `UserConfig.h` | Shared firmware settings and user options |
-| `include/shift_light.h` and `src/shift_light.cpp` | Shift-light engine, animations, and color profiles |
-| `src/can_transport.cpp` | TWAI monitoring and receive-only capture |
-| `src/rpm_decoder.cpp` | CAN frame checks and RPM freshness |
-| `src/dashboard.cpp` | Optional SSD1306 display and WS2812B output |
-| `src/simulated_ecu.cpp` | Synthetic frames for development and demo mode |
-| `src/frame_log.cpp` | Bounded serial frame diagnostics |
-| `test/` | Host-side decoder, state, LED, animation, and transport tests |
-| `scripts/package_arduino.py` | Arduino sketch ZIP packaging |
+Before vehicle use, obtain the exact connector view/pinout and ECU/cluster variant, establish bitrate and passive RPM frames, and corroborate the mapping against an independent RPM reference over repeated controlled observations. No diagnostic requests, spoofed messages or active discovery are implemented. If RPM requires requests, that is a separate design decision and is not silently enabled here.
+
+Component references: [TI SN65HVD230 datasheet](https://www.ti.com/lit/ds/symlink/sn65hvd230.pdf), [NeoPixel connections](https://learn.adafruit.com/adafruit-neopixel-uberguide/basic-connections), [Espressif TWAI](https://docs.espressif.com/projects/esp-idf/en/v4.4.7/esp32/api-reference/peripherals/twai.html).
+
+## Tests and experimental TWAI target
+
+```sh
+bash test/run.sh
+~/.platformio/penv/bin/pio run -e esp32dev_wokwi -e esp32dev_twai_test -e esp32dev_bike
+```
+
+The native suite covers decoding, freshness, replay, serial parsing, bounded log queues, warning aggregation, visual configurations, and OLED refresh through test doubles. Host tests do not establish physical device behavior. For an optional repeatable runtime test, temporarily add `rfc2217ServerPort = 4000` under `[wokwi]`, close and reopen the simulator, then run `~/.platformio/penv/bin/python test/wokwi_runtime.py` inside WSL. Keep the simulator visible. This records and asserts real simulator serial output; separately inspect the LEDs/OLED. Remove the port setting and close the session after the test. No serial bridge is required for normal use.
+
+`esp32dev_twai_test` is an experimental transmit/self-receive target at a simulator-only 500 kbit/s. A completed transaction requires matching RX, actual TX-success and zero pending TX. The recorded Wokwi run received one frame but stalled before completion. [Wokwi lists TWAI as partial](https://docs.wokwi.com/guides/esp32). A timeout halts once; no fake completion or automatic fallback is used. Root Wokwi configuration stays on the default replay target.
+
+## Arduino distribution and release preparation
+
+The `.ino` distribution remains supported. Its complete WSL installation, compile and optional USB-upload instructions are included in `REVIX_LINK/README.txt`. The default package needs Adafruit NeoPixel only; enable the documented OLED libraries when opting into the display. All dependencies and compilation stay in WSL.
+
+Release maintenance commands (not required to run Wokwi):
+
+```sh
+python3 scripts/package_arduino.py --version v0.2.0 --output-dir .pio/release-work/dist
+python3 scripts/verify_arduino_package.py --version v0.2.0 \
+  --zip .pio/release-work/dist/REVIX-LINK-Arduino-v0.2.0.zip \
+  --extract-to .pio/release-work/extracted-check
+```
+
+The ZIP uses an explicit file allowlist, includes COPYRIGHT, and has a SHA-256 checksum. Exact extracted packages must compile before release. Source ZIPs and Arduino packages carry the owner's reserved rights; dependency licenses remain separate. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md). Public releases require owner approval; the tag workflow publishes only preview versions while vehicle validation is incomplete.
+
+## Troubleshooting
+
+- **No Wokwi firmware:** build first and open the repository root.
+- **No serial commands:** use the Wokwi Terminal; check diagnostics are enabled and send a newline.
+- **No bench traffic:** bitrate 0 intentionally disables reception. Verify the known bench rate, transceiver power/RS/RXD, wiring and another ACK-capable node.
+- **CAN traffic but no RPM:** the vehicle mapping is intentionally disabled until verified.
+- **Stale indication:** valid frames stopped or were rejected; inspect frame results and error/loss counters.
+- **LEDs flicker or ESP32 resets:** check power capacity, grounding, bypassing and data-level conversion before altering firmware timings.
+- **OLED absent:** optional display is disabled in the Arduino package; check its enabled setting, address, wiring and safe pull-ups.
 
 ## Copyright
 
-Copyright (c) 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).
+Copyright (c) 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT). No redistribution license is granted here.

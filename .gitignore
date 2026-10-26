@@ -9,3 +9,4 @@ __pycache__/
 REVIX-LINK-Arduino-v*.zip
 REVIX-LINK-Arduino-v*.sha256
 /docs/
+/logs/

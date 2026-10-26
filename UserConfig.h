@@ -9,7 +9,7 @@
 
 // Six WS2812B LEDs on the default REVIX LINK harness.
 #define REVIX_LED_DATA_GPIO 27
-#define REVIX_LED_COUNT 6
+#define REVIX_LED_COUNT 6  // 1..32; must match the physically installed chain.
 #define REVIX_LED_BRIGHTNESS 40  // 0..255; master brightness scale.
 
 // Shift-light style profile:
@@ -22,6 +22,11 @@
 #define REVIX_STYLE_MINIMAL 3
 #define REVIX_STYLE_CUSTOM  4
 #define REVIX_SHIFT_LIGHT_STYLE REVIX_STYLE_CLASSIC
+
+// CUSTOM profile: RGB triples in logical LED order, each channel 0..255.
+// Supply 1..32 entries. Extra installed pixels use the engine's fallback colors.
+// Explicit {0,0,0} entries remain dark; direction and brightness apply afterward.
+#define REVIX_CUSTOM_COLORS {0,255,0}, {0,255,0}, {255,200,0}, {255,200,0}, {255,80,0}, {255,0,0}
 
 // LED orientation:
 // 1 = NORMAL   (left-to-right / ascending GPIO data order)
@@ -50,7 +55,7 @@
 #define REVIX_DEMO_START_RPM      1500  // RPM at which the first shift LED begins illuminating.
 #define REVIX_DEMO_SHIFT_RPM      5800  // Synthetic RPM at which shift alert activates.
 #define REVIX_DEMO_MAX_RPM        6500  // Upper synthetic demonstration scale limit.
-#define REVIX_ALERT_HYSTERESIS_RPM 150  // RPM drop required to clear the shift alert.
+#define REVIX_ALERT_HYSTERESIS_RPM 150  // Clear strictly below shift minus this value; zero allowed.
 
 // Animation rendering interval (milliseconds):
 #define REVIX_ANIMATION_INTERVAL_MS 25  // 25 ms = 40 Hz render update rate.
@@ -68,12 +73,16 @@
 
 // Isolated bench CAN capture only. 0 keeps the TWAI controller stopped.
 // Select a nonzero rate only after verifying it on an isolated bench.
+// Both PlatformIO bike builds and packaged Arduino builds read this value.
+// This configures capture only: the NS125 RPM decoder remains disabled.
 #define REVIX_CAN_RX_GPIO 16
 #define REVIX_CAN_TX_GPIO 17
 #define REVIX_CAN_BITRATE 0  // Supported: 0, 125000, 250000, 500000, 1000000.
 
 // Serial Monitor diagnostics.
+#ifndef REVIX_SERIAL_DIAGNOSTICS
 #define REVIX_SERIAL_DIAGNOSTICS 1
+#endif
 #define REVIX_SERIAL_BAUD 115200
 
 #if REVIX_OPERATING_MODE != REVIX_USER_MODE_DEMO && \
@@ -81,12 +90,16 @@
 #error "REVIX_OPERATING_MODE must be DEMO or BENCH_LISTEN_ONLY"
 #endif
 
-#if REVIX_LED_DATA_GPIO < 0 || REVIX_LED_DATA_GPIO > 33 || \
-    (REVIX_LED_DATA_GPIO >= 6 && REVIX_LED_DATA_GPIO <= 11)
+#define REVIX_OUTPUT_GPIO_OK(pin) (((pin) >= 0 && (pin) <= 5) || \
+    ((pin) >= 12 && (pin) <= 19) || ((pin) >= 21 && (pin) <= 23) || \
+    ((pin) >= 25 && (pin) <= 27) || (pin) == 32 || (pin) == 33)
+// GPIO6..11 are flash pins; GPIO20/24/28..31 do not exist on classic ESP32.
+// GPIO0/2/5/12/15 are strapping pins: retain defaults unless the board is reviewed.
+#if !REVIX_OUTPUT_GPIO_OK(REVIX_LED_DATA_GPIO)
 #error "REVIX_LED_DATA_GPIO must be an exposed ESP32 output-capable GPIO"
 #endif
-#if REVIX_LED_COUNT < 1 || REVIX_LED_COUNT > 255
-#error "REVIX_LED_COUNT must be between 1 and 255"
+#if REVIX_LED_COUNT < 1 || REVIX_LED_COUNT > 32
+#error "REVIX_LED_COUNT must be between 1 and 32"
 #endif
 #if REVIX_LED_BRIGHTNESS < 0 || REVIX_LED_BRIGHTNESS > 255
 #error "REVIX_LED_BRIGHTNESS must be between 0 and 255"
@@ -115,7 +128,7 @@
 #error "REVIX_DEMO_SHIFT_RPM must be greater than REVIX_DEMO_START_RPM and <= REVIX_DEMO_MAX_RPM"
 #endif
 #if REVIX_ALERT_HYSTERESIS_RPM < 0 || REVIX_ALERT_HYSTERESIS_RPM >= (REVIX_DEMO_SHIFT_RPM - REVIX_DEMO_START_RPM)
-#error "REVIX_ALERT_HYSTERESIS_RPM must be positive and less than the shift progression range"
+#error "REVIX_ALERT_HYSTERESIS_RPM must be non-negative and less than the shift progression range"
 #endif
 #if REVIX_DEMO_MAX_RPM < 1 || REVIX_DEMO_MAX_RPM > 20000
 #error "REVIX_DEMO_MAX_RPM must be between 1 and 20000"
@@ -133,24 +146,21 @@
 #if REVIX_OLED_ENABLED != 0 && REVIX_OLED_ENABLED != 1
 #error "REVIX_OLED_ENABLED must be 0 or 1"
 #endif
-#if REVIX_OLED_SDA_GPIO < 0 || REVIX_OLED_SDA_GPIO > 33 || \
-    (REVIX_OLED_SDA_GPIO >= 6 && REVIX_OLED_SDA_GPIO <= 11)
+#if !REVIX_OUTPUT_GPIO_OK(REVIX_OLED_SDA_GPIO)
 #error "REVIX_OLED_SDA_GPIO must be an exposed ESP32 GPIO"
 #endif
-#if REVIX_OLED_SCL_GPIO < 0 || REVIX_OLED_SCL_GPIO > 33 || \
-    (REVIX_OLED_SCL_GPIO >= 6 && REVIX_OLED_SCL_GPIO <= 11)
+#if !REVIX_OUTPUT_GPIO_OK(REVIX_OLED_SCL_GPIO)
 #error "REVIX_OLED_SCL_GPIO must be an exposed ESP32 GPIO"
 #endif
 #if REVIX_OLED_ENABLED && REVIX_OLED_SDA_GPIO == REVIX_OLED_SCL_GPIO
 #error "OLED SDA and SCL must use different GPIO pins"
 #endif
 
-#if REVIX_CAN_RX_GPIO < 0 || REVIX_CAN_RX_GPIO > 33 || \
-    (REVIX_CAN_RX_GPIO >= 6 && REVIX_CAN_RX_GPIO <= 11)
+#if !(REVIX_OUTPUT_GPIO_OK(REVIX_CAN_RX_GPIO) || \
+      (REVIX_CAN_RX_GPIO >= 34 && REVIX_CAN_RX_GPIO <= 36) || REVIX_CAN_RX_GPIO == 39)
 #error "REVIX_CAN_RX_GPIO must be an exposed ESP32 GPIO"
 #endif
-#if REVIX_CAN_TX_GPIO < 0 || REVIX_CAN_TX_GPIO > 33 || \
-    (REVIX_CAN_TX_GPIO >= 6 && REVIX_CAN_TX_GPIO <= 11)
+#if !REVIX_OUTPUT_GPIO_OK(REVIX_CAN_TX_GPIO)
 #error "REVIX_CAN_TX_GPIO must be an exposed output-capable ESP32 GPIO"
 #endif
 #if REVIX_CAN_RX_GPIO == REVIX_CAN_TX_GPIO

@@ -11,7 +11,7 @@ CanFrame demonstrationFrame(uint32_t now, uint32_t sequence);
 class ReplayTransport {
  public:
   bool receive(uint32_t now, CanFrame& frame);
-  void setManualRpm(int32_t rpm) { manualRpm_ = rpm; }
+  void setManualRpm(int32_t rpm) { manualRpm_ = rpm < 0 ? -1 : (rpm > 65535 ? 65535 : rpm); }
   void setPaused(bool paused) { paused_ = paused; }
   bool isPaused() const { return paused_; }
   int32_t manualRpm() const { return manualRpm_; }

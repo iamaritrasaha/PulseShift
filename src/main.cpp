@@ -6,6 +6,7 @@
 #include "rpm_decoder.h"
 #include "frame_log.h"
 #include "dashboard.h"
+#include "demo_commands.h"
 #if REVIX_MODE != REVIX_BIKE
 #include "simulated_ecu.h"
 #endif
@@ -82,10 +83,11 @@ class Application {
 #if REVIX_SERIAL_DIAGNOSTICS
     if (!finalReportPrinted_ && uint32_t(now - lastReport_) >= 1000) {
       lastReport_ = now;
-      Serial.printf("APP mode=%s accepted=%lu rejected=%lu fresh=%d busFresh=%d rpm=%u alert=%d logDropped=%lu\r\n",
+      Serial.printf("APP mode=%s accepted=%lu rejected=%lu fresh=%d busFresh=%d rpm=%u alert=%d startup=%d logDropped=%lu\r\n",
         config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
         rpm_.fresh(now, config::staleMs) && healthy, rpm_.busFresh(now, config::staleMs), rpm_.rpm(),
-        dashboard_.shiftLight().isAlertActive(), (unsigned long)logger_.dropped());
+        dashboard_.shiftLight().isAlertActive(), !dashboard_.shiftLight().isStartupComplete(),
+        (unsigned long)logger_.dropped());
 #if REVIX_MODE != REVIX_REPLAY
       transport_.diagnostics();
       // After a terminal fault, retain one final stopped-state report then
@@ -109,17 +111,12 @@ class Application {
 
 #if REVIX_MODE == REVIX_REPLAY && REVIX_SERIAL_DIAGNOSTICS
   void handleSerialInput() {
-    while (Serial.available() > 0) {
-      char ch = static_cast<char>(Serial.read());
-      if (ch == '\r' || ch == '\n') {
-        if (cmdLen_ > 0) {
-          cmdBuf_[cmdLen_] = '\0';
-          processCommand(cmdBuf_);
-          cmdLen_ = 0;
-        }
-      } else if (cmdLen_ < sizeof(cmdBuf_) - 1) {
-        cmdBuf_[cmdLen_++] = ch;
-      }
+    // Bound serial work so a continuous input stream cannot starve CAN or LEDs.
+    for (unsigned i = 0; i < 32 && Serial.available() > 0; ++i) {
+      const auto result = command_.feed(static_cast<char>(Serial.read()));
+      if (result == DemoCommandLine::Result::Ready) processCommand(command_.text());
+      else if (result == DemoCommandLine::Result::Rejected)
+        Serial.println("[ERROR] Command discarded: too long or invalid characters");
     }
   }
 
@@ -132,7 +129,7 @@ class Application {
       Serial.println("  help            : Show this help");
       Serial.println("  status          : Show shift-light status");
       Serial.println("  demo start      : Resume automated synthetic sweep");
-      Serial.println("  demo stop       : Pause automated synthetic sweep");
+      Serial.println("  demo stop       : Stop synthetic frame reception (RPM becomes stale)");
       Serial.println("  rpm <val>       : Inject synthetic RPM (e.g. rpm 4500)");
       Serial.println("  profile classic : Set classic style");
       Serial.println("  profile racing  : Set racing style");
@@ -153,12 +150,13 @@ class Application {
       Serial.println("[DEMO] Automated synthetic cycle resumed.");
     } else if (strcmp(cmd, "demo stop") == 0) {
       transport_.setPaused(true);
-      Serial.println("[DEMO] Automated synthetic cycle paused.");
+      Serial.println("[DEMO] Synthetic reception stopped; RPM becomes stale after 1000 ms.");
     } else if (strncmp(cmd, "rpm ", 4) == 0) {
-      int val = atoi(cmd + 4);
-      if (val >= 0 && val <= 20000) {
-        transport_.setManualRpm(val);
-        Serial.printf("[SYNTHETIC MANUAL RPM] %d (simulation only, not real vehicle)\r\n", val);
+      uint32_t val = 0;
+      if (parseDemoUnsigned(cmd + 4, 20000, val)) {
+        transport_.setManualRpm(static_cast<int32_t>(val));
+        transport_.setPaused(false);
+        Serial.printf("[SYNTHETIC MANUAL RPM] %lu (simulation only, not real vehicle)\r\n", (unsigned long)val);
       } else {
         Serial.println("[ERROR] RPM must be 0..20000");
       }
@@ -177,10 +175,10 @@ class Application {
         Serial.println("[ERROR] Unknown style. Options: classic, racing, minimal");
       }
     } else if (strncmp(cmd, "brightness ", 11) == 0) {
-      int b = atoi(cmd + 11);
-      if (b >= 0 && b <= 255) {
+      uint32_t b = 0;
+      if (parseDemoUnsigned(cmd + 11, 255, b)) {
         dashboard_.shiftLight().setMasterBrightness(static_cast<uint8_t>(b));
-        Serial.printf("[DEMO] Brightness set to %d.\r\n", b);
+        Serial.printf("[DEMO] Brightness set to %lu.\r\n", (unsigned long)b);
       } else {
         Serial.println("[ERROR] Brightness must be 0..255");
       }
@@ -196,8 +194,7 @@ class Application {
 #if REVIX_MODE == REVIX_REPLAY
   ReplayTransport transport_;
 #if REVIX_SERIAL_DIAGNOSTICS
-  char cmdBuf_[64]{};
-  uint8_t cmdLen_ = 0;
+  DemoCommandLine command_;
 #endif
 #else
   CanTransport transport_;

@@ -81,6 +81,11 @@ inline ShiftLightConfig makeShiftLightConfig() {
   c.animationIntervalMs = animationIntervalMs;
   c.idleEffectEnabled = idleEffectEnabled;
   c.idleMaxRpm = idleMaxRpm;
+  constexpr RgbColor palette[] = {REVIX_CUSTOM_COLORS};
+  static_assert(sizeof(palette)/sizeof(palette[0]) <= ShiftLightEngine::MAX_LEDS,
+                "REVIX_CUSTOM_COLORS supports at most 32 entries");
+  c.customColorCount = static_cast<uint8_t>(sizeof(palette)/sizeof(palette[0]));
+  for (uint8_t i = 0; i < c.customColorCount; ++i) c.customColors[i] = palette[i];
   return c;
 }
 }

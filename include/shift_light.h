@@ -74,6 +74,7 @@ struct ShiftLightConfig {
   bool idleEffectEnabled = false;
   uint16_t idleMaxRpm = 1300;
   RgbColor customColors[32]{};
+  uint8_t customColorCount = 0; // Explicit entries include intentional black pixels.
 };
 
 class ShiftLightEngine {

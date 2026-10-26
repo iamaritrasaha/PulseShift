@@ -42,6 +42,13 @@ jobs:
           test -f "$zip"
           test -f "$checksum"
 
+          # Vehicle harness and RPM profile are not validated. Keep publication
+          # in the preview series until the owner reviews physical evidence.
+          if [[ ! "$TAG" =~ ^v0\. ]]; then
+            echo "Only v0.x preview releases are allowed while vehicle validation is incomplete."
+            exit 1
+          fi
+
           prerelease_arg=""
           title="REVIX LINK $TAG"
           if [[ "$TAG" =~ ^v0\. ]]; then
@@ -67,13 +74,11 @@ jobs:
 
           ### Installation
           1. Download the \`REVIX-LINK-Arduino-$TAG.zip\` asset below.
-          2. Extract the archive and keep the \`REVIX_LINK\` folder intact.
-          3. Open \`REVIX_LINK.ino\` in Arduino IDE 2.x.
-          4. Install the documented ESP32 board core (ESP32 by Espressif Systems 2.0.17) and required Arduino libraries (Adafruit NeoPixel 1.12.3; if OLED is enabled: Adafruit SSD1306 2.5.13, Adafruit GFX Library 1.11.11, Adafruit BusIO 1.17.0).
-          5. Edit \`UserConfig.h\` to choose your hardware pins, visual style, alert mode, and brightness.
-          6. Select **ESP32 Dev Module** under Tools > Board.
-          7. Select the correct USB serial port under Tools > Port.
-          8. Compile and upload.
+          2. Extract the archive inside Ubuntu WSL and keep the \`REVIX_LINK\` folder intact.
+          3. Follow the packaged \`README.txt\` for the pinned ESP32 core and libraries, and compile with Arduino CLI inside WSL.
+          4. Edit \`UserConfig.h\` only for supported hardware and visual settings; demonstration defaults need no edits.
+          5. Use the packaged USB instructions only for a separately approved standalone board setup.
+          6. Keep the vehicle disconnected: no motorcycle harness or RPM profile is certified by this preview.
 
           ### Important Notice
           The default firmware generates synthetic RPM data. The 2025 Bajaj Pulsar NS125 ABS CAN bitrate, CAN message identifiers, and RPM encoding remain unverified.

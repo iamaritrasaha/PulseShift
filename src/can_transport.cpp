@@ -82,12 +82,12 @@ void CanTransport::diagnostics() const {
   if (!installed_) return;
   twai_status_info_t s{};
   auto err = twai_get_status_info(&s);
-  Serial.printf("CAN status=%s state=%d pendingTX=%lu pendingRX=%lu TEC=%lu REC=%lu failed=%lu busErrors=%lu missed=%lu overrun=%lu arbLost=%lu queued=%lu completed=%lu RX=%lu matched=%lu alerts=0x%08lX halted=%d\r\n",
+  Serial.printf("CAN status=%s state=%d pendingTX=%lu pendingRX=%lu TEC=%lu REC=%lu failed=%lu busErrors=%lu missed=%lu overrun=%lu arbLost=%lu queued=%lu completed=%lu RX=%lu matched=%lu alerts=0x%08lX busErrorAlerts=%lu halted=%d\r\n",
     esp_err_to_name(err), int(s.state), (unsigned long)s.msgs_to_tx, (unsigned long)s.msgs_to_rx,
     (unsigned long)s.tx_error_counter, (unsigned long)s.rx_error_counter, (unsigned long)s.tx_failed_count,
     (unsigned long)s.bus_error_count, (unsigned long)s.rx_missed_count, (unsigned long)s.rx_overrun_count,
     (unsigned long)s.arb_lost_count, (unsigned long)queued_, (unsigned long)completed_,
-    (unsigned long)rx_, (unsigned long)matched_, (unsigned long)alertsSeen_, tracker_.halted());
+    (unsigned long)rx_, (unsigned long)matched_, (unsigned long)alertsSeen_, (unsigned long)busErrorAlerts_.total(), tracker_.halted());
 #endif
 }
 void CanTransport::poll(uint32_t now) {
@@ -103,11 +103,14 @@ void CanTransport::poll(uint32_t now) {
   // In listen-only mode, isolated bus errors are non-fatal: the CAN controller
   // recovers automatically and an automotive bus may produce transient errors at
   // startup or under electrical disturbance. Count them for diagnostics.
-  if (alerts & TWAI_ALERT_BUS_ERROR) {
+  if (alerts & TWAI_ALERT_BUS_ERROR) busErrorAlerts_.record();
+  const auto warnings = busErrorAlerts_.take(now, 1000);
 #if REVIX_SERIAL_DIAGNOSTICS
-    Serial.println("CAN WARNING: bus error detected (non-fatal in listen-only mode)");
+  if (warnings) Serial.printf("CAN WARNING: bus-error alerts=%lu total=%lu (last interval; see TEC/REC/busErrors)\r\n",
+    (unsigned long)warnings, (unsigned long)busErrorAlerts_.total());
+#else
+  (void)warnings;
 #endif
-  }
 #else
   if (alerts & TWAI_ALERT_BUS_ERROR) {
     fault("bus error in self-test; inspect counters"); return;

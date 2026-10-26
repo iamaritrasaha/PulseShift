@@ -4,10 +4,13 @@
 #include "tx_tracker.h"
 #include "simulated_ecu.h"
 #include "shift_light.h"
+#include "demo_commands.h"
+#include "event_summary.h"
 #include <cstdio>
 #include <cstdlib>
 #include <climits>
 #include <cstring>
+#include <initializer_list>
 
 namespace {
 unsigned assertions = 0, cases = 0;
@@ -551,9 +554,109 @@ void shift_light_replay_manual_control() {
   pass("ReplayTransport manual synthetic RPM injection and pause/resume control");
 }
 
+
+void command_regressions() {
+  uint32_t value = 123;
+  for (const char* invalid : {"", " ", "abc", "-1", "+1", "42rpm", "1 2", "0x10", "4294967296", "999999999999999999999"}) {
+    CHECK(!parseDemoUnsigned(invalid, UINT32_MAX, value)); CHECK(value == 123);
+  }
+  CHECK(parseDemoUnsigned(" 4500\t", 20000, value)); CHECK(value == 4500);
+  CHECK(!parseDemoUnsigned("20001", 20000, value)); CHECK(value == 4500);
+  CHECK(parseDemoUnsigned("4294967295", UINT32_MAX, value)); CHECK(value == UINT32_MAX);
+  CHECK(parseDemoUnsigned("0", 0, value)); CHECK(value == 0);
+  CHECK(!parseDemoUnsigned("1", 0, value));
+  DemoCommandLine line;
+  for (unsigned i=0; i<1000; ++i) CHECK(line.feed('x') == DemoCommandLine::Result::None);
+  CHECK(line.feed('\n') == DemoCommandLine::Result::Rejected);
+  CHECK(line.feed('\r') == DemoCommandLine::Result::None);
+  for (char ch : "rpm 4500") if (ch) line.feed(ch);
+  CHECK(line.feed('\r') == DemoCommandLine::Result::Ready);
+  CHECK(std::strcmp(line.text(), "rpm 4500") == 0);
+  CHECK(line.feed('\n') == DemoCommandLine::Result::None);
+  line.feed('r'); line.feed('\0'); line.feed('x');
+  CHECK(line.feed('\n') == DemoCommandLine::Result::Rejected);
+  line.feed('h'); CHECK(line.feed('\n') == DemoCommandLine::Result::Ready);
+  CHECK(std::strcmp(line.text(), "h") == 0);
+  pass("bounded command parser rejects overflow, binary input, junk numbers, and recovers at newline");
+}
+
+void replay_regressions() {
+  ReplayTransport replay;
+  RpmState state(demonstrationMapping());
+  CanFrame f{}; f.extended = true; f.remote = true; f.id = 0x10000000;
+  replay.setManualRpm(4200);
+  CHECK(replay.receive(100, f)); CHECK(!f.extended && !f.remote && f.dlc == 8);
+  CHECK(state.ingest(f) == DecodeResult::Valid); CHECK(state.rpm() == 4200);
+  replay.setPaused(true);
+  CHECK(!replay.receive(200, f)); CHECK(!replay.receive(1100, f));
+  CHECK(!state.fresh(1100, 1000));
+  replay.setPaused(false); replay.setManualRpm(6501);
+  CHECK(replay.receive(1200, f)); CHECK(state.ingest(f) == DecodeResult::OutOfRange);
+  CHECK(state.rpm() == 4200 && !state.fresh(1200, 1000));
+  replay.setManualRpm(0); CHECK(replay.receive(1300, f));
+  CHECK(state.ingest(f) == DecodeResult::Valid); CHECK(state.rpm() == 0 && state.fresh(1300,1000));
+  pass("manual replay retains full frame semantics, stops during pause, rejects above-range injection, and recovers");
+}
+
+void warning_aggregation() {
+  EventSummary summary;
+  for (unsigned i=0;i<10000;++i) summary.record();
+  CHECK(summary.total() == 10000); CHECK(summary.take(999, 1000) == 0);
+  CHECK(summary.take(1000, 1000) == 10000); CHECK(summary.take(2000, 1000) == 0);
+  summary.record(); CHECK(summary.take(2000, 1000) == 1);
+  summary.record(); CHECK(summary.take(0xFFFFFFF0, 1000) == 1);
+  summary.record(); CHECK(summary.take(0x20, 1000) == 0);
+  CHECK(summary.take(0x400, 1000) == 1);
+  CHECK(summary.total() == 10003);
+  pass("bus-error alert aggregation bounds logging without losing observation counts, including timer rollover");
+}
+
+void explicit_custom_black() {
+  auto cfg=defaultTestConfig(); cfg.style=ShiftLightStyle::Custom;
+  cfg.customColorCount=2; cfg.customColors[0]={0,0,0}; cfg.customColors[1]={0,0,255};
+  cfg.alertMode=ShiftAlertMode::Off;
+  ShiftLightEngine engine(cfg); engine.reset(0); engine.update(100,6500,ViewStatus::Live);
+  CHECK(engine.getPixel(0)==RgbColor(0,0,0)); CHECK(engine.getPixel(1)==RgbColor(0,0,255));
+  pass("explicit custom black remains dark and assigned blue is preserved");
+}
+
+void visual_configuration_matrix() {
+  for (unsigned count=1;count<=32;++count)
+  for (unsigned style=1;style<=4;++style)
+  for (unsigned direction=1;direction<=2;++direction)
+  for (unsigned alert=0;alert<=3;++alert)
+  for (unsigned brightness : {0u, 1u, 40u, 255u}) {
+    auto cfg = defaultTestConfig();
+    cfg.ledCount=uint8_t(count); cfg.style=static_cast<ShiftLightStyle>(style);
+    cfg.direction=static_cast<LedDirection>(direction);
+    cfg.alertMode=static_cast<ShiftAlertMode>(alert); cfg.masterBrightness=uint8_t(brightness);
+    ShiftLightEngine engine(cfg); engine.reset(0);
+    CHECK(engine.ledCount()==count);
+    engine.update(100,6500,ViewStatus::Live);
+    CHECK(engine.isAlertActive());
+    for(unsigned i=0;i<count;++i) {
+      const auto c=engine.getPixel(uint8_t(i)); CHECK(c.r<=brightness && c.g<=brightness && c.b<=brightness);
+    }
+    // Every non-live state must blank an active shift alert.
+    for (auto status : {ViewStatus::Disconnected, ViewStatus::Stale, ViewStatus::Invalid,
+                       ViewStatus::Unmapped, ViewStatus::Fault, ViewStatus::Unconfigured}) {
+      engine.update(200,6500,status);
+      CHECK(!engine.isAlertActive());
+      for(unsigned i=0;i<count;++i) CHECK(engine.getPixel(uint8_t(i))==RgbColor(0,0,0));
+      engine.update(300,6500,ViewStatus::Live);
+    }
+  }
+  pass("all 1..32 counts, styles, directions, alert modes and brightness extremes blank on every invalid state");
+}
+
 } // namespace
 
 int main() {
+  explicit_custom_black();
+  command_regressions();
+  replay_regressions();
+  warning_aggregation();
+  visual_configuration_matrix();
   decoding();
   envelope();
   decode_names();

@@ -3,6 +3,7 @@
 #include "config.h"
 #include "can_frame.h"
 #include "tx_tracker.h"
+#include "event_summary.h"
 #include <driver/twai.h>
 class CanTransport {
  public:
@@ -20,5 +21,6 @@ class CanTransport {
   void fault(const char* reason);
   bool installed_ = false, running_ = false;
   TxTracker tracker_;
+  EventSummary busErrorAlerts_;
   uint32_t queued_ = 0, completed_ = 0, rx_ = 0, matched_ = 0, alertsSeen_ = 0;
 };

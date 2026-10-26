@@ -183,7 +183,7 @@ jobs:
             echo "Invalid LED count unexpectedly compiled" >&2
             exit 1
           fi
-          grep -F "REVIX_LED_COUNT must be between 1 and 255" "$log"
+          grep -F "REVIX_LED_COUNT must be between 1 and 32" "$log"
 
       - name: Upload verified Arduino source assets
         uses: actions/upload-artifact@v4

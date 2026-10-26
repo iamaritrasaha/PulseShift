@@ -27,4 +27,5 @@ class Dashboard {
   ViewStatus lastStatus_ = ViewStatus::Fault;
   uint32_t lastId_ = 0;
   bool lastAlertActive_ = false;
+  bool lastStartupActive_ = false, drawn_ = false;
 };

@@ -31,12 +31,15 @@ bool ReplayTransport::receive(uint32_t now, CanFrame& f) {
   if (uint32_t(now - last_) < 100) return false;
   last_ = now;
 
+  if (paused_) return false;
+
   if (manualRpm_ >= 0) {
+    f = {}; // Clear flags/payload when reusing a caller-owned frame.
     f.id = 0x555;
     f.dlc = 8;
     f.timestampMs = now;
-    const uint16_t raw = (manualRpm_ > config::maxRpm)
-        ? config::maxRpm : static_cast<uint16_t>(manualRpm_);
+    // Preserve out-of-range injection so the shared decoder can reject it.
+    const uint16_t raw = static_cast<uint16_t>(manualRpm_);
     f.data[0] = uint8_t(raw);
     f.data[1] = uint8_t(raw >> 8);
     for (unsigned i = 0; i < 4; ++i) f.data[i + 2] = uint8_t(sequence_ >> (8 * i));
@@ -45,8 +48,6 @@ bool ReplayTransport::receive(uint32_t now, CanFrame& f) {
     ++sequence_;
     return true;
   }
-
-  if (paused_) return false;
 
   // Every 20s: acceleration -> shift point -> deceleration -> malformed -> out-of-range -> silence -> recovery.
   const uint32_t phase = now % 20000;

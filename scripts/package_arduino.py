@@ -26,6 +26,8 @@ SOURCE_FILES = (
     "src/shift_light.cpp",
     "src/simulated_ecu.cpp",
     "include/can_frame.h",
+    "include/demo_commands.h",
+    "include/event_summary.h",
     "include/can_transport.h",
     "include/config.h",
     "include/dashboard.h",

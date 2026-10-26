@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "dashboard.h"
+#include <Arduino.h>
 
 #if REVIX_OLED_ENABLED
 #include <Wire.h>
@@ -30,7 +31,8 @@ bool Dashboard::begin() {
   leds_.setBrightness(255);
   leds_.clear();
   leds_.show();
-  shiftLight_.reset(0);
+  // Start the boot animation clock after peripheral setup, not at reset time.
+  shiftLight_.reset(millis());
 #if REVIX_OLED_ENABLED
   return ready_;
 #else
@@ -57,13 +59,18 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
 #if REVIX_OLED_ENABLED
   if (!ready_) return;
   const bool alertActive = shiftLight_.isAlertActive();
-  if (uint32_t(now - lastOledRefresh_) < 100 &&
-      lastRpm_ == shownRpm &&
+  // Cap I2C traffic at 10 Hz even while RPM/animation changes, and avoid
+  // redrawing an unchanged display once that interval has elapsed.
+  const bool startupActive = live && !shiftLight_.isStartupComplete();
+  if (drawn_ && (uint32_t(now - lastOledRefresh_) < 100 ||
+      (lastRpm_ == shownRpm &&
       lastStatus_ == status &&
       lastId_ == s.lastId() &&
-      lastAlertActive_ == alertActive) {
+      lastAlertActive_ == alertActive && lastStartupActive_ == startupActive))) {
     return;
   }
+  drawn_ = true;
+  lastStartupActive_ = startupActive;
   lastOledRefresh_ = now;
   lastRpm_ = shownRpm;
   lastStatus_ = status;
@@ -80,7 +87,9 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
 
   display_.setCursor(0, 22);
   display_.setTextSize(2);
-  if (alertActive) {
+  if (startupActive) {
+    display_.print("STARTUP");
+  } else if (alertActive) {
     display_.print("SHIFT!");
   } else if (live) {
     display_.print(shownRpm);

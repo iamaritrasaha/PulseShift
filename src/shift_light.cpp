@@ -77,8 +77,8 @@ RgbColor ShiftLightEngine::profileColor(uint8_t index) const {
   }
 
   if (cfg_.style == ShiftLightStyle::Custom) {
-    if (index < 32 &&
-        (cfg_.customColors[index].r != 0 ||
+    if (index < MAX_LEDS &&
+        (index < cfg_.customColorCount || cfg_.customColors[index].r != 0 ||
          cfg_.customColors[index].g != 0 ||
          cfg_.customColors[index].b != 0)) {
       return cfg_.customColors[index];

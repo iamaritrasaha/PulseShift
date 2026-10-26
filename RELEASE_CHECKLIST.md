@@ -6,7 +6,11 @@
 - Confirm that the generated Arduino source ZIP passes verification (`scripts/verify_arduino_package.py`) and matches its SHA-256 checksum.
 - Confirm that `UserConfig.h` compile-time validations correctly reject out-of-range settings.
 - Confirm that demo mode remains the default and that no NS125 CAN bitrate or RPM mapping is claimed as verified.
-- Confirm that no `docs` directory has been reintroduced and no generated artifacts are tracked in Git.
-- Confirm that no em dashes or AI references are present in documentation, release notes, or commit messages.
+- Confirm that local `docs` remains intact while no `docs` paths or generated artifacts are tracked or packaged.
+- Confirm public attribution matches COPYRIGHT and all dependency notices are preserved.
 - Decide whether to grant redistribution and modification rights. `COPYRIGHT` currently reserves all rights, and there is no explicit `LICENSE` file. Do not describe the project as open-source unless an approved license supports that statement.
-- Push a semantic-version tag such as `v1.0.0` only when the release is explicitly approved by the owner. The tag workflow publishes the verified ZIP and checksum.
+- Push a semantic-version tag such as `v0.2.0` only when the release is explicitly approved by the owner. The tag workflow publishes the verified ZIP and checksum.
+
+- Confirm that the final firmware hash matches the recorded Wokwi runtime test, and actual pixels/OLED were observed.
+- Confirm the temporary RFC2217 test port is removed from the normal configuration.
+- Keep stable publication gated until target-variant wiring, RPM mapping and physical passivity are verified.
