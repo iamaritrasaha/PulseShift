@@ -4,6 +4,8 @@ REVIX LINK is an ESP32-based motorcycle RPM shift-light system for an ESP32 DevK
 
 The Arduino IDE package defaults to a standalone demonstration. It generates synthetic CAN frames in software and processes them through the existing decoder and visual shift-light engine. Its RPM values are simulated and do not describe the motorcycle. The demonstration does not transmit CAN frames and requires no CAN connection.
 
+> **Latest Preview Release**: Download the verified Arduino IDE package directly from [REVIX LINK v0.1.0 Preview](https://github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.1.0) (`REVIX-LINK-Arduino-v0.1.0.zip`).
+
 ## Visual shift-light system
 
 REVIX LINK prioritizes an LED-first instrument architecture:
@@ -22,7 +24,7 @@ REVIX LINK prioritizes an LED-first instrument architecture:
 
 ## Arduino IDE: for regular users
 
-1. Visit the [REVIX LINK GitHub Releases page](https://github.com/iamaritrasaha/REVIX-LINK/releases) and download the asset named `REVIX-LINK-Arduino-vX.Y.Z.zip` from a release.
+1. Download `REVIX-LINK-Arduino-v0.1.0.zip` directly from the [REVIX LINK v0.1.0 Release](https://github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.1.0), or browse all releases on the [GitHub Releases page](https://github.com/iamaritrasaha/REVIX-LINK/releases).
 2. Extract the ZIP and keep the `REVIX_LINK` folder intact.
 3. Open `REVIX_LINK/REVIX_LINK.ino` in Arduino IDE 2.x.
 4. In File > Preferences, add the Espressif Boards Manager index URL:
@@ -76,15 +78,15 @@ The Wokwi target defaults to synthetic frame replay with optional OLED diagnosti
 
 ## Arduino package and releases
 
-The tagged-release workflow builds and verifies the extracted Arduino ZIP before attaching it to a GitHub Release. It also publishes a SHA-256 checksum. No release is published until a semantic-version tag such as `v1.0.0` is pushed.
+The tagged-release workflow builds and verifies the extracted Arduino ZIP before attaching it to a GitHub Release. It also publishes a SHA-256 checksum. No release is published until a semantic-version tag such as `v0.1.0` is pushed.
 
 To create and inspect a package locally:
 
 ```bash
-python3 scripts/package_arduino.py --version v1.0.0 --output-dir /tmp/revix-release
+python3 scripts/package_arduino.py --version v0.1.0 --output-dir /tmp/revix-release
 python3 scripts/verify_arduino_package.py \
-  --zip /tmp/revix-release/REVIX-LINK-Arduino-v1.0.0.zip \
-  --version v1.0.0 \
+  --zip /tmp/revix-release/REVIX-LINK-Arduino-v0.1.0.zip \
+  --version v0.1.0 \
   --extract-to /tmp/revix-extracted
 ```
 
