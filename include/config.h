@@ -3,22 +3,27 @@
 #include <stdint.h>
 #include "../UserConfig.h"
 #include "shift_light.h"
+#include "vehicle_profile.h"
 
 #define REVIX_REPLAY 1
 #define REVIX_TWAI_TEST 2
-#define REVIX_BIKE 3
+#define REVIX_BIKE 3 // Legacy capture target.
+#define REVIX_CAPTURE 3
+#define REVIX_VEHICLE 4
 
 #ifndef REVIX_MODE
 #if REVIX_OPERATING_MODE == REVIX_USER_MODE_DEMO
 #define REVIX_MODE REVIX_REPLAY
-#elif REVIX_OPERATING_MODE == REVIX_USER_MODE_BENCH_LISTEN_ONLY
-#define REVIX_MODE REVIX_BIKE
+#elif REVIX_OPERATING_MODE == REVIX_USER_MODE_CAN_CAPTURE
+#define REVIX_MODE REVIX_CAPTURE
+#elif REVIX_OPERATING_MODE == REVIX_USER_MODE_VEHICLE_RPM
+#define REVIX_MODE REVIX_VEHICLE
 #else
 #error "Unsupported REVIX_OPERATING_MODE"
 #endif
 #endif
 
-#if REVIX_MODE < 1 || REVIX_MODE > 3
+#if REVIX_MODE < 1 || REVIX_MODE > 4
 #error "Invalid REVIX_MODE"
 #endif
 
@@ -63,7 +68,8 @@ constexpr bool serialDiagnostics = REVIX_SERIAL_DIAGNOSTICS != 0;
 constexpr uint32_t serialBaud = REVIX_SERIAL_BAUD;
 constexpr uint32_t staleMs = 1000, txTimeoutMs = 1500, framePeriodMs = 100;
 constexpr const char* modeName = REVIX_MODE == REVIX_REPLAY ? "DEMO_SIMULATED" :
-  REVIX_MODE == REVIX_TWAI_TEST ? "TWAI_SELF_TEST" : "BENCH_LISTEN_ONLY";
+  REVIX_MODE == REVIX_TWAI_TEST ? "TWAI_SELF_TEST" :
+  REVIX_MODE == REVIX_CAPTURE ? "CAN_CAPTURE" : "VEHICLE_RPM";
 
 inline ShiftLightConfig makeShiftLightConfig() {
   ShiftLightConfig c;
@@ -81,6 +87,17 @@ inline ShiftLightConfig makeShiftLightConfig() {
   c.animationIntervalMs = animationIntervalMs;
   c.idleEffectEnabled = idleEffectEnabled;
   c.idleMaxRpm = idleMaxRpm;
+#if REVIX_MODE == REVIX_VEHICLE
+  const auto& p = selectedVehicleProfile();
+  // Fail-closed placeholder bounds are never rendered as live RPM. No demo
+  // threshold is used for the vehicle; reviewed profile calibration is required.
+  const bool ready = vehicleProfileReady(p);
+  c.rpmStart = ready ? p.lights.start : 0;
+  c.rpmShift = ready ? p.lights.shift : 1;
+  c.rpmMax = ready ? p.lights.maximum : 1;
+  c.hysteresisRpm = ready ? p.lights.hysteresis : 0;
+  c.idleEffectEnabled = false; // No vehicle idle-effect calibration supplied.
+#endif
   constexpr RgbColor palette[] = {REVIX_CUSTOM_COLORS};
   static_assert(sizeof(palette)/sizeof(palette[0]) <= ShiftLightEngine::MAX_LEDS,
                 "REVIX_CUSTOM_COLORS supports at most 32 entries");

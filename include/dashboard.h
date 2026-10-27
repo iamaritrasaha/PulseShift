@@ -11,7 +11,7 @@
 class Dashboard {
  public:
   bool begin();
-  void update(const RpmState& s, uint32_t now, bool healthy, bool configured);
+  void update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
   ShiftLightEngine& shiftLight() { return shiftLight_; }
   const ShiftLightEngine& shiftLight() const { return shiftLight_; }
 

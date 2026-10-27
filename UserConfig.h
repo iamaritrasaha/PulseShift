@@ -1,21 +1,25 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 
-// Standard: original ESP32 DevKit V1, six WS2812B pixels and 74AHCT125 buffer.
+// Standard: original ESP32 DevKit V1, six WS2812B pixels, direct data via 330 ohms.
 // No settings need editing for the standalone demonstration. No CAN is needed.
 // DEFAULT identifies the recommended value. OPTIONAL is a visual/user choice.
 // CHANGE ONLY IF identifies a hardware difference, not a required setup step.
 // DO NOT CHANGE WITHOUT VERIFICATION identifies bench/protocol safety settings.
 // Symbolic choices below are constants: select a name, do not renumber it.
 #define REVIX_USER_MODE_DEMO 1
-#define REVIX_USER_MODE_BENCH_LISTEN_ONLY 3
+#define REVIX_USER_MODE_CAN_CAPTURE 3
+#define REVIX_USER_MODE_BENCH_LISTEN_ONLY REVIX_USER_MODE_CAN_CAPTURE // Compatibility alias.
+#define REVIX_USER_MODE_VEHICLE_RPM 4
 // DEFAULT: DEMO creates complete synthetic frames; it needs no CAN connection.
-// DO NOT CHANGE WITHOUT VERIFICATION: BENCH_LISTEN_ONLY requires a reviewed
-// isolated bench. It captures frames only; no motorcycle RPM profile is enabled.
+// DO NOT CHANGE WITHOUT VERIFICATION: CAN_CAPTURE requires a reviewed isolated
+// bench and known bitrate. VEHICLE_RPM stays disabled until its entire profile
+// and electrical qualification are verified. Neither mode sends CAN frames.
 // PlatformIO bike/self-test environments force their own mode; see README.
 #define REVIX_OPERATING_MODE REVIX_USER_MODE_DEMO
 
-// DEFAULT: GPIO27 to the 74AHCT125 input, never directly to 5V.
+// DEFAULT: GPIO27 directly through 330 ohms to DIN; never connect it to +5V.
+// Direct 3.3V data at 5V LED power requires a compatible strip; verify physically.
 // CHANGE ONLY IF: LED wiring uses another verified output pin. Reserve 16/17 for CAN.
 #define REVIX_LED_DATA_GPIO 27
 // DEFAULT: 6 pixels. CHANGE ONLY IF: the physical chain differs; supported 1..32.
@@ -112,8 +116,9 @@
 
 // Internal compile-time validation below. These are not user settings.
 #if REVIX_OPERATING_MODE != REVIX_USER_MODE_DEMO && \
-    REVIX_OPERATING_MODE != REVIX_USER_MODE_BENCH_LISTEN_ONLY
-#error "REVIX_OPERATING_MODE must be DEMO or BENCH_LISTEN_ONLY"
+    REVIX_OPERATING_MODE != REVIX_USER_MODE_CAN_CAPTURE && \
+    REVIX_OPERATING_MODE != REVIX_USER_MODE_VEHICLE_RPM
+#error "REVIX_OPERATING_MODE must be DEMO, CAN_CAPTURE or VEHICLE_RPM"
 #endif
 
 #define REVIX_OUTPUT_GPIO_OK(pin) (((pin) >= 0 && (pin) <= 5) || \

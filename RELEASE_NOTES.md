@@ -1,21 +1,37 @@
-# REVIX LINK v0.2.0 preview candidate
+# REVIX LINK v0.2.0 preview release candidate
 
-Prepared locally for owner review. No tag or public release is created by this work.
+This candidate adds passive CAN capture, a gated vehicle RPM path and offline
+investigation tools while keeping the default six-LED demo and beginner guide.
+The existing v0.1.0 release and tag remain unchanged. No release tag is created.
 
-This preview improves the default full-frame Wokwi demonstration and isolated receive-only bench capture. It preserves visual styles, custom colors, direction, brightness, startup/smoothing, shift alerts with hysteresis, runtime controls and the optional OLED.
+- DEMO remains the default, including serial controls, all LED styles and the
+  20-second full-frame replay, malformed data, silence and recovery.
+- CAN_CAPTURE uses listen-only TWAI, GPIO16 RX, disconnected GPIO17 TX, bounded
+  machine-readable raw/status logs and explicit driver/log loss counters.
+- VEHICLE_RPM uses a qualified profile and the same RPM state and LED engine.
+  The NS125 profile is UNVERIFIED and empty; the controller stays disabled.
+- Profiles define bounded unsigned bit extraction, rational scale/offset,
+  freshness, optional validity/multiplex/counter/checksum rules and an explicit
+  custom-validator extension. Protocol and shift calibration evidence gates
+  must pass before a profile is usable.
+- Offline analysis compares raw logs with timestamped independent RPM, ranks
+  unsigned candidate fields and exports review vectors. It never enables a
+  firmware profile. Included capture/reference data is explicitly synthetic.
+- New tests cover protocol validation, stale/invalid blanking, resumed traffic,
+  timestamp rollover, driver routing/faults/overflow and UART backpressure.
 
-- Bench builds now honor the bitrate in UserConfig.h.
-- Bus-error warning output is aggregated while retaining observation and driver counters.
-- Malformed numbers, overlong commands and binary command input are rejected.
-- Stopping replay stops manual frames too; valid zero and above-range rejection remain distinguishable.
-- OLED traffic is capped at 10 Hz and unchanged screens are skipped.
-- Startup timing begins after peripheral setup and the OLED identifies STARTUP.
-- Supported pixel count is consistently 1..32; invalid classic-ESP32 GPIO selections are rejected.
-- Custom palettes support intentionally dark pixels.
-- Native, I/O and extracted-Arduino-package configuration coverage is expanded.
+Default hardware: original ESP32, six WS2812B GRB 800kHz pixels at GPIO27,
+direct GPIO27 data through 330 ohms, brightness 40/255, Classic/normal and OLED
+disabled in Arduino. Direct 3.3V data compatibility must be tested on the actual
+5V strip; a proper 74AHCT125 is an optional remedy, not standard hardware.
+The existing Wokwi environment retains its simulated OLED. CAN capture bitrate
+defaults to zero. Demo thresholds are separate from vehicle calibration.
 
-Default: synthetic full-frame replay, six WS2812B pixels on GPIO27, brightness 40/255, Classic/normal, red shift flash, 150 RPM hysteresis, demonstration start/shift/max 1500/5800/6500, serial 115200. Wokwi enables OLED; the downloadable Arduino sketch leaves it disabled. Receive-only capture defaults to bitrate 0 and has no enabled motorcycle RPM mapping.
+Software builds/tests are distinct from electrical or motorcycle validation.
+The exact 2025 Indian NS125 ABS connector, passive RPM protocol, shift
+calibration and actual module passivity remain pending. Hardware installation
+is not approved by this candidate. No motorcycle connection is performed.
 
-The 2025 Indian NS125 ABS connector, bitrate, RPM encoding and completed harness remain unverified. This preview is not a validated plug-and-play motorcycle release. Experimental TWAI remains separate from replay; an echoed frame is not transmission completion. No firmware was flashed or connected to a motorcycle.
-
-The source ZIP and matching SHA-256 are prepared through the existing deterministic packager. Installation and hardware instructions are in README.md and the packaged README.txt. Copyright (c) 2026 Aritra Saha. All rights reserved. Dependency notices/licenses remain separate.
+The reproducible Arduino ZIP is prepared and compiled from an extracted copy.
+See arduino/README.txt for setup, capture format, analysis and physical gates.
+Copyright (c) 2026 Aritra Saha. All rights reserved.

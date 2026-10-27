@@ -6,6 +6,7 @@ class FrameLog {
  public:
   void push(const CanFrame&, DecodeResult);
   void pump();
+  void status(const char* format, ...); // Bounded priority record; never waits for UART.
   uint32_t dropped() const { return dropped_; }
  private:
   struct Line { char text[112]; uint8_t size = 0; } lines_[64];

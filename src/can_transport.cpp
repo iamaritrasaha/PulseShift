@@ -4,13 +4,15 @@
 #include <sdkconfig.h>
 #include <driver/gpio.h>
 bool CanTransport::begin() {
+  if (beginAttempted_) return healthy();
+  beginAttempted_ = true;
   if (!configured()) {
 #if REVIX_SERIAL_DIAGNOSTICS
-    Serial.println("CAN DISABLED: set a verified REVIX_CAN_BITRATE for isolated bench capture");
+    Serial.println("CAN DISABLED: no verified bitrate/profile configured");
 #endif
     return false;
   }
-#if REVIX_MODE == REVIX_BIKE
+#if REVIX_MODE != REVIX_TWAI_TEST
   constexpr auto mode = TWAI_MODE_LISTEN_ONLY;
 #else
   constexpr auto mode = TWAI_MODE_NO_ACK;
@@ -24,7 +26,7 @@ bool CanTransport::begin() {
   general.alerts_enabled |= TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_TX_FAILED | TWAI_ALERT_TX_IDLE;
 #endif
   twai_timing_config_t timing{};
-  switch (REVIX_BITRATE) {
+  switch (bitrate_) {
     case 125000: timing = TWAI_TIMING_CONFIG_125KBITS(); break;
     case 250000: timing = TWAI_TIMING_CONFIG_250KBITS(); break;
     case 500000: timing = TWAI_TIMING_CONFIG_500KBITS(); break;
@@ -34,12 +36,12 @@ bool CanTransport::begin() {
   twai_filter_config_t filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
   auto err = twai_driver_install(&general, &timing, &filter);
   installed_ = err == ESP_OK;
-#if REVIX_MODE == REVIX_BIKE
+#if REVIX_MODE != REVIX_TWAI_TEST
   // Arduino 2.0.17's prebuilt SDK lacks LISTEN_ONLY_DOM workaround. Disconnect
   // the TX pad while the controller is still STOPPED. Keep it disconnected for
   // the entire passive capture; no code here ever re-enables that output.
   // Bench hardware must hold transceiver TXD recessive with an external pull-up
-  // and preferably assert the transceiver's silent mode as well.
+  // and hold RS high in hardware throughout reset and power transitions.
   if (err == ESP_OK) err = gpio_reset_pin(gpio_num_t(config::txPin));
   if (err == ESP_OK) err = gpio_set_direction(gpio_num_t(config::txPin), GPIO_MODE_INPUT);
   if (err == ESP_OK) err = gpio_set_pull_mode(gpio_num_t(config::txPin), GPIO_PULLUP_ONLY);
@@ -62,7 +64,8 @@ bool CanTransport::begin() {
 void CanTransport::fault(const char* reason) {
   if (!tracker_.halt()) return;
 #if REVIX_SERIAL_DIAGNOSTICS
-  Serial.printf("CAN HALTED: %s\r\n", reason);
+  if (log_) log_->status("CAN HALTED: %s", reason);
+  else Serial.printf("CAN HALTED: %s\r\n", reason);
   diagnostics();
 #else
   (void)reason;
@@ -70,7 +73,8 @@ void CanTransport::fault(const char* reason) {
   if (running_) {
     const auto err = twai_stop();
 #if REVIX_SERIAL_DIAGNOSTICS
-    Serial.printf("CAN STOP: %s\r\n", esp_err_to_name(err));
+    if (log_) log_->status("CAN STOP: %s", esp_err_to_name(err));
+    else Serial.printf("CAN STOP: %s\r\n", esp_err_to_name(err));
 #else
     (void)err;
 #endif
@@ -82,12 +86,25 @@ void CanTransport::diagnostics() const {
   if (!installed_) return;
   twai_status_info_t s{};
   auto err = twai_get_status_info(&s);
-  Serial.printf("CAN status=%s state=%d pendingTX=%lu pendingRX=%lu TEC=%lu REC=%lu failed=%lu busErrors=%lu missed=%lu overrun=%lu arbLost=%lu queued=%lu completed=%lu RX=%lu matched=%lu alerts=0x%08lX busErrorAlerts=%lu halted=%d\r\n",
+  if (log_) {
+    log_->status("CAN status=%s state=%d pendingTX=%lu pendingRX=%lu halted=%d",
+      esp_err_to_name(err), int(s.state), (unsigned long)s.msgs_to_tx,
+      (unsigned long)s.msgs_to_rx, tracker_.halted());
+    log_->status("CAN TEC=%lu REC=%lu failed=%lu busErrors=%lu",
+      (unsigned long)s.tx_error_counter, (unsigned long)s.rx_error_counter,
+      (unsigned long)s.tx_failed_count, (unsigned long)s.bus_error_count);
+    log_->status("CAN missed=%lu overrun=%lu arbLost=%lu",
+      (unsigned long)s.rx_missed_count, (unsigned long)s.rx_overrun_count, (unsigned long)s.arb_lost_count);
+    log_->status("CAN RX=%lu acceptedFrames=%lu busErrorAlerts=%lu",
+      (unsigned long)rx_, (unsigned long)acceptedRx_, (unsigned long)busErrorAlerts_.total());
+    return;
+  }
+  Serial.printf("CAN status=%s state=%d pendingTX=%lu pendingRX=%lu TEC=%lu REC=%lu failed=%lu busErrors=%lu missed=%lu overrun=%lu arbLost=%lu queued=%lu completed=%lu RX=%lu acceptedFrames=%lu matched=%lu alerts=0x%08lX busErrorAlerts=%lu halted=%d\r\n",
     esp_err_to_name(err), int(s.state), (unsigned long)s.msgs_to_tx, (unsigned long)s.msgs_to_rx,
     (unsigned long)s.tx_error_counter, (unsigned long)s.rx_error_counter, (unsigned long)s.tx_failed_count,
     (unsigned long)s.bus_error_count, (unsigned long)s.rx_missed_count, (unsigned long)s.rx_overrun_count,
     (unsigned long)s.arb_lost_count, (unsigned long)queued_, (unsigned long)completed_,
-    (unsigned long)rx_, (unsigned long)matched_, (unsigned long)alertsSeen_, (unsigned long)busErrorAlerts_.total(), tracker_.halted());
+    (unsigned long)rx_, (unsigned long)acceptedRx_, (unsigned long)matched_, (unsigned long)alertsSeen_, (unsigned long)busErrorAlerts_.total(), tracker_.halted());
 #endif
 }
 void CanTransport::poll(uint32_t now) {
@@ -99,14 +116,16 @@ void CanTransport::poll(uint32_t now) {
   if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
     fault("bus-off or RX overflow; inspect counters"); return;
   }
-#if REVIX_MODE == REVIX_BIKE
+#if REVIX_MODE != REVIX_TWAI_TEST
   // In listen-only mode, isolated bus errors are non-fatal: the CAN controller
   // recovers automatically and an automotive bus may produce transient errors at
   // startup or under electrical disturbance. Count them for diagnostics.
   if (alerts & TWAI_ALERT_BUS_ERROR) busErrorAlerts_.record();
   const auto warnings = busErrorAlerts_.take(now, 1000);
 #if REVIX_SERIAL_DIAGNOSTICS
-  if (warnings) Serial.printf("CAN WARNING: bus-error alerts=%lu total=%lu (last interval; see TEC/REC/busErrors)\r\n",
+  if (warnings && log_) log_->status("CAN WARNING busErrorAlerts=%lu total=%lu",
+    (unsigned long)warnings, (unsigned long)busErrorAlerts_.total());
+  else if (warnings) Serial.printf("CAN WARNING: bus-error alerts=%lu total=%lu (last interval; see TEC/REC/busErrors)\r\n",
     (unsigned long)warnings, (unsigned long)busErrorAlerts_.total());
 #else
   (void)warnings;
@@ -134,7 +153,10 @@ void CanTransport::poll(uint32_t now) {
   }
   if (tracker_.timedOut(now, config::txTimeoutMs)) fault(tracker_.txSeen() ? "RX timeout" : "TX completion timeout");
 #else
-  (void)now;
+  twai_status_info_t status{};
+  if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0 ||
+      status.rx_missed_count != 0 || status.rx_overrun_count != 0)
+    fault("controller status failure");
 #endif
 }
 bool CanTransport::receive(CanFrame& f, uint32_t now) {
@@ -146,7 +168,9 @@ bool CanTransport::receive(CanFrame& f, uint32_t now) {
   f = {}; f.id = msg.identifier; f.dlc = msg.data_length_code;
   f.extended = msg.extd; f.remote = msg.rtr; f.timestampMs = now;
   if (!f.remote) memcpy(f.data, msg.data, f.dlc <= 8 ? f.dlc : 8);
+  f.payloadSize = f.remote ? 0 : (f.dlc <= 8 ? f.dlc : 8);
   ++rx_;
+  if (validEnvelope(f)) ++acceptedRx_;
 #if REVIX_MODE == REVIX_TWAI_TEST
   if (!tracker_.onReceive(f)) { fault("RX payload/sequence mismatch"); return false; }
 #endif

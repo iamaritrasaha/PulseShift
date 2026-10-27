@@ -1,0 +1,111 @@
+{
+  "observed_date": "2026-10-27",
+  "environment": "Ubuntu WSL / Linux Chromium / Wokwi browser custom ELF",
+  "template": "https://wokwi.com/projects/305457271083631168",
+  "esp32_core": "2.0.17",
+  "sdk": "v4.4.7-dirty",
+  "probe_source_sha256": "e8b548abe5cfe1100668bd9307141f3545f7ececc45d1e113b5415b2cb034055",
+  "physical_can_validated": false,
+  "observations": [
+    {
+      "variant": "single-shot",
+      "loopback_connected": true,
+      "tx_completion_verified": false,
+      "elf_sha256": "d2b1f9ad4cee6a91e7032256d4d44bfbace16291576e050bf009522542f742e4",
+      "uart": [
+        "REVIX TWAI PROBE SDK=v4.4.7-dirty self=1 ss=1 queue=0 reference=0",
+        "PROBE init=ESP_OK",
+        "PROBE BEFORE t=227 err=ESP_OK state=1 pendingTX=0 RX=0 completed=0 alerts=0x00000000 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE enqueue=ESP_OK (not completion)",
+        "PROBE RX id=00000555 ext=0 rtr=0 dlc=8 data=0102030405060708",
+        "PROBE WAIT t=749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE FINAL t=2761 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE STOP=ESP_OK"
+      ]
+    },
+    {
+      "variant": "retry-enabled",
+      "loopback_connected": true,
+      "tx_completion_verified": false,
+      "elf_sha256": "a817812b566f5dcfb8b8c6c8d0f091ba10a0b2ee1a2c60152671b50a2e76a1c3",
+      "uart": [
+        "REVIX TWAI PROBE SDK=v4.4.7-dirty self=1 ss=0 queue=0 reference=0",
+        "PROBE init=ESP_OK",
+        "PROBE BEFORE t=227 err=ESP_OK state=1 pendingTX=0 RX=0 completed=0 alerts=0x00000000 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE enqueue=ESP_OK (not completion)",
+        "PROBE RX id=00000555 ext=0 rtr=0 dlc=8 data=0102030405060708",
+        "PROBE WAIT t=749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE FINAL t=2761 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE STOP=ESP_OK"
+      ]
+    },
+    {
+      "variant": "queued",
+      "loopback_connected": true,
+      "tx_completion_verified": false,
+      "elf_sha256": "ed11456d48b43d47062dea73b9fe065f8242cbfecd2a83a2cd48d620464ed1c6",
+      "uart": [
+        "REVIX TWAI PROBE SDK=v4.4.7-dirty self=1 ss=1 queue=5 reference=0",
+        "PROBE init=ESP_OK",
+        "PROBE BEFORE t=227 err=ESP_OK state=1 pendingTX=0 RX=0 completed=0 alerts=0x00000000 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE enqueue=ESP_OK (not completion)",
+        "PROBE RX id=00000555 ext=0 rtr=0 dlc=8 data=0102030405060708",
+        "PROBE WAIT t=749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE FINAL t=2761 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE STOP=ESP_OK"
+      ]
+    },
+    {
+      "variant": "reference-aligned",
+      "loopback_connected": true,
+      "tx_completion_verified": false,
+      "elf_sha256": "93d619bb53f3af750c19ec7e27bc5c73a345e030d9456d1b29d39617aeb19c78",
+      "uart": [
+        "REVIX TWAI PROBE SDK=v4.4.7-dirty self=1 ss=0 queue=5 reference=1",
+        "PROBE init=ESP_OK",
+        "PROBE BEFORE t=227 err=ESP_OK state=1 pendingTX=0 RX=0 completed=0 alerts=0x00000000 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE enqueue=ESP_OK (not completion)",
+        "PROBE RX id=00000555 ext=0 rtr=0 dlc=1 data=01",
+        "PROBE WAIT t=749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE FINAL t=2761 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE STOP=ESP_OK"
+      ]
+    },
+    {
+      "variant": "no-loop",
+      "loopback_connected": false,
+      "tx_completion_verified": false,
+      "elf_sha256": "d2b1f9ad4cee6a91e7032256d4d44bfbace16291576e050bf009522542f742e4",
+      "uart": [
+        "REVIX TWAI PROBE SDK=v4.4.7-dirty self=1 ss=1 queue=0 reference=0",
+        "PROBE init=ESP_OK",
+        "PROBE BEFORE t=227 err=ESP_OK state=1 pendingTX=0 RX=0 completed=0 alerts=0x00000000 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE enqueue=ESP_OK (not completion)",
+        "PROBE RX id=00000555 ext=0 rtr=0 dlc=8 data=0102030405060708",
+        "PROBE WAIT t=749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=1749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2249 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE WAIT t=2749 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE FINAL t=2761 err=ESP_OK state=1 pendingTX=1 RX=1 completed=0 alerts=0x00000004 TEC=0 REC=0 failed=0 busErrors=0 SR=0x00 TBS=0 TCS=0 MOD=0x0C IER=0xE7",
+        "PROBE STOP=ESP_OK"
+      ]
+    }
+  ]
+}

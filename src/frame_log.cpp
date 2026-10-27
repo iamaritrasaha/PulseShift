@@ -2,6 +2,7 @@
 #include "frame_log.h"
 #include "config.h"
 #include <Arduino.h>
+#include <stdarg.h>
 void FrameLog::push(const CanFrame& f, DecodeResult result) {
 #if REVIX_SERIAL_DIAGNOSTICS
   if (count_ == 64) { ++dropped_; return; }
@@ -9,7 +10,7 @@ void FrameLog::push(const CanFrame& f, DecodeResult result) {
   int n = snprintf(line.text, sizeof(line.text), "RX t=%lu id=%08lX ext=%d rtr=%d dlc=%u data=",
     (unsigned long)f.timestampMs, (unsigned long)f.id, f.extended, f.remote, f.dlc);
   if (n < 0) n = 0;
-  for (unsigned i = 0; !f.remote && i < f.dlc && i < 8; ++i) {
+  for (unsigned i = 0; !f.remote && i < f.dlc && i < f.payloadSize && i < 8; ++i) {
     const int rem = int(sizeof(line.text)) - n;
     if (rem <= 0) break;
     const int w = snprintf(line.text+n, size_t(rem), "%02X", f.data[i]);
@@ -39,5 +40,24 @@ void FrameLog::pump() {
   if (free < line.size) return;
   Serial.write(reinterpret_cast<const uint8_t*>(line.text), line.size);
   tail_ = (tail_+1) % 64; --count_;
+#endif
+}
+
+void FrameLog::status(const char* format, ...) {
+#if REVIX_SERIAL_DIAGNOSTICS
+  char text[112];
+  va_list args;
+  va_start(args, format);
+  const int n = vsnprintf(text, sizeof(text), format, args);
+  va_end(args);
+  // No partially formatted records. Count failures and evictions explicitly.
+  if (n < 0 || n > int(sizeof(text))-3) { ++dropped_; return; }
+  if (count_ == 64) { tail_ = (tail_+1)%64; --count_; ++dropped_; }
+  auto& line = lines_[head_];
+  memcpy(line.text, text, size_t(n));
+  line.text[n] = '\r'; line.text[n+1] = '\n'; line.size = uint8_t(n+2);
+  head_ = (head_+1)%64; ++count_;
+#else
+  (void)format;
 #endif
 }

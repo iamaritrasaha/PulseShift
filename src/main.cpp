@@ -7,7 +7,7 @@
 #include "frame_log.h"
 #include "dashboard.h"
 #include "demo_commands.h"
-#if REVIX_MODE != REVIX_BIKE
+#if REVIX_MODE == REVIX_REPLAY || REVIX_MODE == REVIX_TWAI_TEST
 #include "simulated_ecu.h"
 #endif
 #if REVIX_MODE != REVIX_REPLAY
@@ -17,18 +17,24 @@
 namespace {
 class Application {
  public:
-  Application() : rpm_(mapping()) {}
+  Application() : rpm_(initialState()) {}
 
   void begin() {
 #if REVIX_SERIAL_DIAGNOSTICS
     Serial.begin(config::serialBaud);
     Serial.printf("REVIX LINK mode=%s SDK=%s\r\n", config::modeName, ESP.getSdkVersion());
 #endif
-#if REVIX_MODE == REVIX_BIKE
+#if REVIX_MODE == REVIX_CAPTURE || REVIX_MODE == REVIX_VEHICLE
 #if REVIX_SERIAL_DIAGNOSTICS
     Serial.printf("TARGET: %s / %s / %u WS2812B LEDs\r\n",
       config::vehicle, config::transceiver, config::ledCount);
-    Serial.println("RPM mapping disabled; SN65HVD230 RS must be held HIGH for passive bench capture");
+    Serial.println("RECEIVE ONLY: actual module RS-high/TXD bias must be electrically verified");
+#if REVIX_MODE == REVIX_VEHICLE
+    Serial.printf("PROFILE id=%s status=%s ready=%d\r\n", selectedVehicleProfile().identifier,
+      profileStatusName(selectedVehicleProfile().status), rpm_.mapped());
+#else
+    Serial.println("CAN_CAPTURE: raw frames only; no motorcycle RPM decoding");
+#endif
 #endif
 #endif
 #if REVIX_MODE == REVIX_REPLAY
@@ -76,18 +82,32 @@ class Application {
 #if REVIX_MODE == REVIX_REPLAY
     constexpr bool healthy = true, configured = true;
 #else
-    const bool healthy = transport_.healthy(), configured = transport_.configured();
+    const bool healthy = transport_.healthy();
+    const bool configured = transport_.configured()
+#if REVIX_MODE == REVIX_VEHICLE
+      && rpm_.mapped()
 #endif
+      ;
+#endif
+    rpm_.expire(now, rpm_.timeoutMs(config::staleMs), config::staleMs);
     logger_.pump();
-    dashboard_.update(rpm_, now, healthy, configured);
+    dashboard_.update(rpm_, now, healthy, configured, rpm_.timeoutMs(config::staleMs));
 #if REVIX_SERIAL_DIAGNOSTICS
     if (!finalReportPrinted_ && uint32_t(now - lastReport_) >= 1000) {
       lastReport_ = now;
+#if REVIX_MODE == REVIX_CAPTURE || REVIX_MODE == REVIX_VEHICLE
+      logger_.status("APP mode=%s accepted=%lu rejected=%lu logDropped=%lu",
+        config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(), (unsigned long)logger_.dropped());
+      logger_.status("APP fresh=%d busFresh=%d rpm=%u configured=%d healthy=%d",
+        rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy,
+        rpm_.busFresh(now, config::staleMs), rpm_.rpm(), configured, healthy);
+#else
       Serial.printf("APP mode=%s accepted=%lu rejected=%lu fresh=%d busFresh=%d rpm=%u alert=%d startup=%d logDropped=%lu\r\n",
         config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
-        rpm_.fresh(now, config::staleMs) && healthy, rpm_.busFresh(now, config::staleMs), rpm_.rpm(),
+        rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy, rpm_.busFresh(now, config::staleMs), rpm_.rpm(),
         dashboard_.shiftLight().isAlertActive(), !dashboard_.shiftLight().isStartupComplete(),
         (unsigned long)logger_.dropped());
+#endif
 #if REVIX_MODE != REVIX_REPLAY
       transport_.diagnostics();
       // After a terminal fault, retain one final stopped-state report then
@@ -99,15 +119,25 @@ class Application {
   }
 
  private:
-  static RpmMapping mapping() {
-#if REVIX_MODE == REVIX_BIKE
-    return RpmMapping{};  // Deliberately disabled: no guessed motorcycle mapping.
+  static RpmState initialState() {
+#if REVIX_MODE == REVIX_VEHICLE
+    return RpmState(selectedVehicleProfile());
+#elif REVIX_MODE == REVIX_CAPTURE
+    return RpmState(RpmMapping{});
 #else
-    auto m = demonstrationMapping();
-    m.maxRpm = config::maxRpm;
-    return m;
+    return RpmState(demonstrationMapping());
 #endif
   }
+#if REVIX_MODE != REVIX_REPLAY
+  static uint32_t receiveBitrate() {
+#if REVIX_MODE == REVIX_VEHICLE
+    const auto& p = selectedVehicleProfile();
+    return vehicleProfileReady(p) ? p.bitrate : 0;
+#else
+    return REVIX_BITRATE;
+#endif
+  }
+#endif
 
 #if REVIX_MODE == REVIX_REPLAY && REVIX_SERIAL_DIAGNOSTICS
   void handleSerialInput() {
@@ -197,7 +227,11 @@ class Application {
   DemoCommandLine command_;
 #endif
 #else
-  CanTransport transport_;
+  CanTransport transport_{receiveBitrate()
+#if REVIX_MODE == REVIX_CAPTURE || REVIX_MODE == REVIX_VEHICLE
+    , &logger_
+#endif
+  };
 #endif
   uint32_t lastReport_ = 0;
   bool finalReportPrinted_ = false;

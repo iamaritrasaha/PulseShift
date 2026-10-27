@@ -1,24 +1,23 @@
 # REVIX LINK
 
-A six-LED ESP32 demonstration that turns simulated engine speed into a rising light bar and a flashing shift alert.
+Six ESP32-controlled LEDs show simulated engine speed and flash at the shift point.
 
 ## What this does
 
-The LEDs run a repeating demonstration without a motorcycle, CAN module or screen. **The standard build needs no settings changed:** GPIO27, six WS2812B LEDs, brightness 40/255 and Classic colors. OLED is off by default.
+**No settings need changing** for six compatible WS2812B LEDs: GPIO27, brightness 40/255, Classic colors and OLED off. The repeating demo needs no motorcycle, CAN module or screen.
 
 **[Download the current release: v0.1.0 Arduino Preview](https://github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.1.0)**
 
-Choose **REVIX-LINK-Arduino-v0.1.0.zip** under Assets, not the GitHub source-code ZIP. This is a standalone demo, not motorcycle-ready firmware.
+Choose **REVIX-LINK-Arduino-v0.1.0.zip** under Assets, not the GitHub source-code ZIP. Its bundled guide predates this direct-drive wiring. Follow the wiring below; motorcycle use remains unverified.
 
 ## What you need
 
-![Nine labeled parts for the standard REVIX LINK build](assets/readme/hardware-overview.svg)
+![Standard parts for the standard REVIX LINK build](assets/readme/hardware-overview.svg)
 
 - ESP32 DevKit V1 and a USB **data** cable.
 - One six-LED **5V WS2812B strip**, GRB / 800kHz.
-- **SN74AHCT125N** DIP-14 level shifter.
-- One **330Ω** resistor and one **10kΩ** resistor.
-- One **1000µF, 10V** electrolytic capacitor and one **100nF** ceramic capacitor.
+- One **330Ω** series resistor.
+- One **1000µF, 10V** electrolytic capacitor.
 - Regulated **5V supply rated at least 1A**, secure wires and a breadboard or soldered board.
 - A multimeter to check voltage and polarity.
 
@@ -26,19 +25,19 @@ The optional SN65HVD230 is **not needed or connected** for this demo.
 
 ## How to wire it
 
-Disconnect all power before wiring. Follow the pin numbers on the **SN74AHCT125N**, not guessed ESP32 header positions. Viewed from above with its notch up, DIP pins 1..7 run down the left side and 8..14 up the right. The diagram is a connection map; all **GND** labels must connect together.
+With both supplies disconnected, wire **GPIO27 → 330Ω → DIN**. Keep data wiring short and join all grounds.
 
-![Complete demo wiring: GPIO27 through the shifter and 330-ohm resistor to DIN, input pull-down, capacitor connections and common ground](assets/readme/main-wiring.svg)
+![Direct demo wiring: GPIO27 through 330 ohms to DIN, separate 5V LED power, bulk capacitor and common ground](assets/readme/main-wiring.svg)
 
-Connect the signal to **DIN**, following the strip's printed arrow. Leave **DOUT** empty. Keep the 330Ω resistor close to the first LED and the 100nF capacitor close to shifter pins 14 and 7.
+Connect the signal to **DIN**, following the strip's printed arrow. Leave **DOUT** empty. Put the 330Ω resistor close to the first LED.
 
 ![LED data enters DIN and follows the arrow toward unused DOUT](assets/readme/led-direction.svg)
 
-**USB powers the ESP32. External 5V powers only the LEDs and shifter.** Share ground, but never join external +5V to the USB-powered ESP32's 5V, VIN or 3V3 pins. Never power the strip from a GPIO.
+**USB powers the ESP32. External 5V powers only the LEDs.** Share ground, but never join external +5V to the USB-powered ESP32's 5V, VIN or 3V3 pins. Never power the strip from a GPIO.
 
 ![Separate USB and external 5V supplies, common ground, capacitor polarity and safe power order](assets/readme/power-safety.svg)
 
-Check voltage and capacitor polarity before power-on. Switch on LED/shifter power first, then connect ESP32 USB. Disconnect USB first when switching off. Let the capacitor discharge before rewiring. [Full wiring and power details](arduino/README.txt) are available if you need them. Tap any diagram to enlarge it.
+Check voltage and polarity first. Power the LEDs before connecting USB; disconnect USB first when switching off. Let the capacitor discharge before rewiring. Tap diagrams to enlarge them. [Detailed wiring](arduino/README.txt).
 
 ## How to install it
 
@@ -63,9 +62,9 @@ Expect a short startup animation, then a growing light bar. All six LEDs flash r
 
 - **Connecting DOUT instead of DIN.** Follow the printed arrow into the first LED.
 - **Reversing the large capacitor.** Positive goes to +5V; the striped negative side goes to GND.
-- **Forgetting common ground.** Join ESP32, strip, shifter and supply negative.
+- **Forgetting common ground.** Join ESP32, strip and supply negative.
 - **Joining the two positive supplies.** Keep external +5V away from the USB-powered ESP32's power pins.
-- **Skipping the shifter or using the wrong chip.** Use SN74AHCT125N, not 74HC125 or an I2C level-shifter board.
+- **Using long data leads.** Keep GPIO27-to-DIN wiring short.
 - **Changing wires while powered.** Disconnect both supplies first; check wiring and power before blaming the code.
 
 ## What you can change
@@ -80,8 +79,12 @@ Rebuild and upload after changing a setting. [Advanced options](arduino/README.t
 
 ## Important note
 
-**The default demo works without CAN.** GPIO16 and GPIO17 remain reserved for later receiver work. The CAN bitrate defaults to 0, and motorcycle RPM decoding is not enabled.
+REVIX LINK's standard demo sends data directly from GPIO27 to the LED strip through a 330Ω resistor. This works with compatible WS2812B strips, but some 5V strips require a level shifter for reliable operation.
 
-The **2025 Indian Bajaj Pulsar NS125 ABS is not yet verified for plug-and-play RPM integration**. SN65HVD230 is reserved for later verified CAN work. Even a six-pin breakout needs its actual RS wiring, termination and electrical passivity checked before bus connection. Isolated bench CAN testing is a separate setup, described in the detailed guide.
+Separate LED power does not change the 3.3V data level. Keep the LED supply at its rated 5V. If testing shows unreliable data recognition, an optional proper 74AHCT125 buffer can be added.
+
+**The default demo works without CAN.** GPIO16 and GPIO17 remain reserved for receiver work. Advanced **CAN_CAPTURE** and **VEHICLE_RPM** modes are available in the [detailed guide](arduino/README.txt). Capture logs frames; vehicle mode requires a qualified profile. The NS125 profile is UNVERIFIED, its bitrate is 0, and its decoding stays disabled.
+
+**2025 Indian Bajaj Pulsar NS125 ABS plug-and-play RPM integration remains unverified.** Keep SN65HVD230 disconnected until its RS wiring, termination and electrical passivity are checked. The detailed guide covers the separate isolated CAN bench setup.
 
 Copyright (c) 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="825" viewBox="0 0 720 825" role="img" aria-labelledby="title desc">
-<title id="title">Two supplies. One common ground.</title><desc id="desc">USB powers only the ESP32. Regulated external 5V powers the LEDs and shifter. Their grounds join. Capacitor positive connects to 5V, striped negative to ground. Check polarity before power.</desc>
+<title id="title">Two supplies. One common ground.</title><desc id="desc">USB powers only the ESP32. Regulated external 5V powers only the LEDs. Their grounds join. Capacitor positive connects to 5V, striped negative to ground. Check polarity before power.</desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>
 <rect width="720" height="825" fill="#ffffff"/>
 <text x="28" y="44" font-size="30" fill="#142b3b" font-weight="700" text-anchor="start">Two supplies. One common ground.</text>
@@ -9,7 +9,7 @@
 <text x="52" y="197" font-size="22" fill="#142b3b" font-weight="400" text-anchor="start">ESP32 USB socket only</text>
 <rect x="405" y="125" width="285" height="92" rx="14" fill="#fff2f0" stroke="#c5d4dd" stroke-width="2"/>
 <text x="425" y="164" font-size="25" fill="#ba2e34" font-weight="700" text-anchor="start">Regulated 5V ≥1A</text>
-<text x="425" y="197" font-size="23" fill="#142b3b" font-weight="400" text-anchor="start">To LEDs + shifter only</text>
+<text x="425" y="197" font-size="23" fill="#142b3b" font-weight="400" text-anchor="start">To LED strip only</text>
 <path d="M 172,217 L 172,288" fill="none" stroke="#7652ac" stroke-width="4"/>
 <path d="M 164,276 L 172,288 L 180,276" fill="none" stroke="#7652ac" stroke-width="4"/>
 <path d="M 548,217 L 548,288" fill="none" stroke="#ba2e34" stroke-width="4"/>
@@ -18,7 +18,7 @@
 <text x="90" y="327" font-size="28" fill="#142b3b" font-weight="700" text-anchor="start">ESP32</text>
 <text x="90" y="360" font-size="23" fill="#142b3b" font-weight="400" text-anchor="start">USB-powered</text>
 <rect x="405" y="288" width="285" height="94" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
-<text x="425" y="327" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">LEDs + 74AHCT125</text>
+<text x="425" y="327" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">6 × WS2812B LEDs</text>
 <text x="425" y="360" font-size="22" fill="#142b3b" font-weight="400" text-anchor="start">External 5V-powered</text>
 <path d="M 172,382 L 172,434 L 548,434 L 548,382" fill="none" stroke="#334155" stroke-width="5"/>
 <circle cx="360" cy="434" r="5" fill="#334155"/>
@@ -26,7 +26,7 @@
 <path d="M 344,446 L 376,446" fill="none" stroke="#334155" stroke-width="4"/>
 <path d="M 350,454 L 370,454" fill="none" stroke="#334155" stroke-width="4"/>
 <path d="M 356,462 L 364,462" fill="none" stroke="#334155" stroke-width="4"/>
-<text x="40" y="488" font-size="23" fill="#142b3b" font-weight="700" text-anchor="start">Join GND: ESP32 + LEDs + shifter + supply negative</text>
+<text x="40" y="488" font-size="23" fill="#142b3b" font-weight="700" text-anchor="start">Join GND: ESP32 + LEDs + supply negative</text>
 <rect x="30" y="515" width="660" height="122" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
 <rect x="66" y="537" width="66" height="77" rx="7" fill="#334155" stroke="#334155" stroke-width="2"/>
 <rect x="108" y="541" width="18" height="69" rx="2" fill="#e3eaf0" stroke="#e3eaf0" stroke-width="2"/>
@@ -34,7 +34,7 @@
 <text x="155" y="550" font-size="25" fill="#142b3b" font-weight="700" text-anchor="start">1000µF / 10V electrolytic</text>
 <text x="155" y="587" font-size="24" fill="#ba2e34" font-weight="400" text-anchor="start">+ lead → LED +5V</text>
 <text x="155" y="620" font-size="24" fill="#142b3b" font-weight="400" text-anchor="start">− striped side → GND</text>
-<text x="30" y="680" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">ON: LED/shifter supply first, then ESP32 USB.</text>
+<text x="30" y="680" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">ON: LED supply first, then ESP32 USB.</text>
 <text x="30" y="720" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">OFF: unplug ESP32 USB first, then LED supply.</text>
 <text x="30" y="764" font-size="26" fill="#ba2e34" font-weight="700" text-anchor="start">Never join the two positive power rails.</text>
 <text x="30" y="799" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">No live rewiring. Keep common ground connected.</text>
