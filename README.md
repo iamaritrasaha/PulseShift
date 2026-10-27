@@ -6,9 +6,9 @@ Six ESP32-controlled LEDs show simulated engine speed and flash at the shift poi
 
 **No settings need changing** for six compatible WS2812B LEDs: GPIO27, brightness 40/255, Classic colors and OLED off. The repeating demo needs no motorcycle, CAN module or screen.
 
-**[Download the current release: v0.1.0 Arduino Preview](https://github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.1.0)**
+**[Download the current release: v0.2.0 Arduino Software Prerelease](https://github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.2.0)**
 
-Choose **REVIX-LINK-Arduino-v0.1.0.zip** under Assets, not the GitHub source-code ZIP. Its bundled guide predates this direct-drive wiring. Follow the wiring below; motorcycle use remains unverified.
+Choose **REVIX-LINK-Arduino-v0.2.0.zip** under Assets, not the GitHub source-code ZIP. Verify its SHA-256 checksum and follow the included guide. Motorcycle use remains unverified.
 
 ## What you need
 
