@@ -110,8 +110,10 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
   }
 
   display_.drawRect(0, 58, 128, 6, SSD1306_WHITE);
-  if (live && config::maxRpm > 0) {
-    uint32_t barWidth = uint32_t(shownRpm) * 126 / config::maxRpm;
+  // Share the LED engine calibration: vehicle mode must never use demo bounds.
+  const uint16_t maximum = shiftLight_.config().rpmMax;
+  if (live && maximum > 0) {
+    uint32_t barWidth = uint32_t(shownRpm) * 126 / maximum;
     if (barWidth > 126) barWidth = 126;
     display_.fillRect(1, 59, barWidth, 4, SSD1306_WHITE);
   }
