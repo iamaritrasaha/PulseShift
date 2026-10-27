@@ -4,15 +4,24 @@ import serial,time,re,json,hashlib
 import argparse
 root=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description='Verify a running Remote WSL Wokwi demo over its optional RFC2217 bridge.')
+parser.add_argument('--browser-cli',type=Path,help='Optional WSL playwright-cli for an already running Wokwi browser UART')
+parser.add_argument('--browser-session',default='revix')
+parser.add_argument('--timeout-scale',type=float,default=1)
 parser.add_argument('--url',default='rfc2217://127.0.0.1:4000')
 parser.add_argument('--output-dir',type=Path,default=root/'.pio/wokwi-runtime')
 args=parser.parse_args()
+if not 0<args.timeout_scale<=10:parser.error('--timeout-scale must be positive and <=10')
+initial_elf_hash=hashlib.sha256((root/'.pio/build/esp32dev_wokwi/firmware.elf').read_bytes()).hexdigest()
 work=args.output_dir.resolve(); work.mkdir(parents=True,exist_ok=True)
 results=[]; start=time.monotonic()
 log=(work/'serial.log').open('w',buffering=1)
-ser=serial.serial_for_url(args.url,baudrate=115200,timeout=.25)
+if args.browser_cli:
+ from browser_serial import BrowserSerial
+ ser=BrowserSerial(args.browser_cli,args.browser_session)
+else:
+ ser=serial.serial_for_url(args.url,baudrate=115200,timeout=.25)
 def wait(predicate,label,timeout=55):
- deadline=time.monotonic()+timeout
+ deadline=time.monotonic()+timeout*args.timeout_scale
  while time.monotonic()<deadline:
   line=ser.readline().decode('utf-8',errors='replace').strip()
   if not line:continue
@@ -32,6 +41,7 @@ def app(rpm=None,fresh=1,alert=None):
   return fields.get('fresh')==str(fresh) and (rpm is None or fields.get('rpm')==str(rpm)) and (alert is None or fields.get('alert')==str(alert))
  return pred
 try:
+ if args.browser_cli:contains('REVIX LINK mode=DEMO_SIMULATED','custom demo firmware is actually loaded',12)
  contains('WRONG_DLC','automatic wrong-DLC rejection')
  contains('OUT_OF_RANGE','automatic above-range rejection')
  wait(app(fresh=0),'automatic stale indication during silence')
@@ -55,7 +65,8 @@ try:
  command('brightness 100');contains('Brightness set to 100','runtime brightness change',12)
  command('rpm 4200');contains('[SYNTHETIC MANUAL RPM] 4200',timeout=12)
  wait(app(4200,1,0),'prepared stable progressive LED view',12)
- result={'status':'passed','checks':results,'elf_sha256':hashlib.sha256((root/'.pio/build/esp32dev_wokwi/firmware.elf').read_bytes()).hexdigest(),'transport':'Remote WSL Wokwi serial forwarding; full-frame replay, not TWAI','log':str(work/'serial.log')}
+ if hashlib.sha256((root/'.pio/build/esp32dev_wokwi/firmware.elf').read_bytes()).hexdigest()!=initial_elf_hash:raise RuntimeError('ELF changed during the runtime test')
+ result={'status':'passed','checks':results,'elf_sha256':initial_elf_hash,'transport':('Wokwi browser UART through WSL Chromium' if args.browser_cli else 'Remote WSL Wokwi serial forwarding')+'; full-frame replay, not TWAI','log':str(work/'serial.log')}
  (work/'wokwi-results.json').write_text(json.dumps(result,indent=2)+'\n')
  print('WOKWI RUNTIME PASS',len(results),'checks',flush=True)
 except Exception as e:

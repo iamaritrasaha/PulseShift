@@ -6,6 +6,7 @@ inline ViewStatus viewStatus(const RpmState& s, uint32_t now, uint32_t timeout, 
   if (!configured) return ViewStatus::Unconfigured;
   if (!healthy) return ViewStatus::Fault;
   if (s.fresh(now, timeout)) return ViewStatus::Live;
+  if (s.signalInvalid()) return ViewStatus::Invalid;
   if (s.hasValue()) return ViewStatus::Stale;
   if (!s.busFresh(now, timeout)) return ViewStatus::Disconnected;
   return s.mapped() ? ViewStatus::Invalid : ViewStatus::Unmapped;

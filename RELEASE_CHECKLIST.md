@@ -1,7 +1,7 @@
 # Release checklist
 
 - Confirm that all local tests pass inside Ubuntu WSL (`bash test/run.sh`).
-- Confirm that all PlatformIO environments build cleanly (`esp32dev_wokwi`, `esp32dev_twai_test`, `esp32dev_bike`).
+- Confirm that all PlatformIO environments build cleanly (`esp32dev_wokwi`, `esp32dev_twai_test`, `esp32dev_bike`, `esp32dev_vehicle`).
 - Confirm that GitHub Actions CI passes for the exact commit across all configuration variants.
 - Confirm that the generated Arduino source ZIP passes verification (`scripts/verify_arduino_package.py`) and matches its SHA-256 checksum.
 - Confirm that `UserConfig.h` compile-time validations correctly reject out-of-range settings.
@@ -14,3 +14,8 @@
 - Confirm that the final firmware hash matches the recorded Wokwi runtime test, and actual pixels/OLED were observed.
 - Confirm the temporary RFC2217 test port is removed from the normal configuration.
 - Keep stable publication gated until target-variant wiring, RPM mapping and physical passivity are verified.
+
+- Verify the NS125 profile remains UNVERIFIED with no bitrate or signal mapping.
+- Run offline analysis and vehicle/driver regression tests with synthetic fixtures.
+- Verify both receive-only ELF images exclude transmit and synthetic ECU symbols.
+- Verify direct-drive LED compatibility on the actual strip before hardware claims.

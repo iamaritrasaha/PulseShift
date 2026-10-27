@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="390" viewBox="0 0 720 390" role="img" aria-labelledby="title desc">
-<title id="title">Find the strip INPUT</title><desc id="desc">Buffered ESP32 data through the resistor connects to DIN. Follow the printed arrow toward DOUT, which is unused.</desc>
+<title id="title">Find the strip INPUT</title><desc id="desc">Direct 3.3V ESP32 data through 330 ohms connects to DIN. Follow the printed arrow toward DOUT, which is unused.</desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>
 <rect width="720" height="390" fill="#ffffff"/>
 <text x="28" y="44" font-size="30" fill="#142b3b" font-weight="700" text-anchor="start">Find the strip INPUT</text>
-<text x="28" y="86" font-size="25" fill="#0969aa" font-weight="400" text-anchor="start">Signal from GPIO27 via shifter + 330Ω</text>
+<text x="28" y="86" font-size="25" fill="#0969aa" font-weight="400" text-anchor="start">GPIO27 → 330Ω → DIN (3.3V data)</text>
 <path d="M 44,110 L 44,192 L 108,192" fill="none" stroke="#0969aa" stroke-width="4"/>
 <path d="M 96,184 L 108,192 L 96,200" fill="none" stroke="#0969aa" stroke-width="4"/>
 <rect x="108" y="158" width="480" height="70" rx="8" fill="#244238" stroke="#244238" stroke-width="2"/>

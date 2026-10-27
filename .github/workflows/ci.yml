@@ -11,7 +11,7 @@ on:
         description: Version string to embed in the tested Arduino ZIP
         required: false
         type: string
-        default: v0.0.0
+        default: v0.2.0
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      PACKAGE_VERSION: ${{ inputs.package_version || 'v0.0.0' }}
+      PACKAGE_VERSION: ${{ inputs.package_version || 'v0.2.0' }}
       ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
       ESP32_FQBN: esp32:esp32:esp32
     steps:
@@ -54,8 +54,18 @@ jobs:
       - name: Build receive-only target
         run: pio run -e esp32dev_bike
 
+      - name: Build gated vehicle target
+        run: pio run -e esp32dev_vehicle
+
+      - name: Check receive-only binary isolation
+        run: python scripts/verify_firmware_isolation.py
+
       - name: Run host-side C++ tests
         run: bash test/run.sh
+
+      - name: Exercise offline synthetic investigation
+        run: |
+          python tools/can_investigate.py test/fixtures/synthetic_capture.log --reference test/fixtures/synthetic_rpm.csv --max-skew-ms 30 --output "$RUNNER_TEMP/can-analysis"
 
       - name: Set up Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -121,49 +131,11 @@ jobs:
 
       - name: Compile extracted Arduino configuration variants
         run: |
-          set -euo pipefail
-          for variant in demo-oled-off demo-oled-on bench-oled-off bench-oled-on demo-serial-off demo-style-racing demo-startup-off; do
-            work="$RUNNER_TEMP/revix-$variant"
-            python scripts/verify_arduino_package.py \
-              --zip "${{ steps.package.outputs.zip }}" \
-              --version "$PACKAGE_VERSION" \
-              --extract-to "$work"
-            config="$work/REVIX_LINK/UserConfig.h"
-            python - "$config" "$variant" <<'PY'
-          from pathlib import Path
-          import sys
-
-          config = Path(sys.argv[1])
-          variant = sys.argv[2]
-          text = config.read_text(encoding="utf-8")
-          mode = "REVIX_USER_MODE_DEMO" if variant.startswith("demo-") else "REVIX_USER_MODE_BENCH_LISTEN_ONLY"
-          oled = "1" if variant.endswith("oled-on") else "0"
-          text = text.replace(
-              "#define REVIX_OPERATING_MODE REVIX_USER_MODE_DEMO",
-              f"#define REVIX_OPERATING_MODE {mode}",
-          )
-          text = text.replace("#define REVIX_OLED_ENABLED 0", f"#define REVIX_OLED_ENABLED {oled}")
-          if variant.endswith("serial-off"):
-              text = text.replace("#define REVIX_SERIAL_DIAGNOSTICS 1", "#define REVIX_SERIAL_DIAGNOSTICS 0")
-          if variant == "demo-style-racing":
-              text = text.replace(
-                  "#define REVIX_SHIFT_LIGHT_STYLE REVIX_STYLE_CLASSIC",
-                  "#define REVIX_SHIFT_LIGHT_STYLE REVIX_STYLE_RACING",
-              )
-          elif variant == "demo-startup-off":
-              text = text.replace(
-                  "#define REVIX_STARTUP_ANIMATION_ENABLED 1",
-                  "#define REVIX_STARTUP_ANIMATION_ENABLED 0",
-              )
-          config.write_text(text, encoding="utf-8")
-          PY
-            arduino-cli compile \
-              --fqbn "$ESP32_FQBN" \
-              --warnings all \
-              --build-property "runtime.tools.ctags.path=$CTAGS_PATH" \
-              --build-path "$RUNNER_TEMP/build-$variant" \
-              "$work/REVIX_LINK"
-          done
+          python scripts/verify_arduino_matrix.py \
+            --zip "${{ steps.package.outputs.zip }}" \
+            --version "$PACKAGE_VERSION" \
+            --work-dir "$RUNNER_TEMP/arduino-matrix" \
+            --ctags "$CTAGS_PATH"
 
       - name: Reject invalid user configuration
         run: |

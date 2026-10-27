@@ -114,11 +114,11 @@ resume when valid frames return. The deliberate dark interval is expected.
 
 ISOLATED BENCH CAPTURE
 ----------------------
-Select REVIX_USER_MODE_BENCH_LISTEN_ONLY and configure REVIX_CAN_BITRATE only
+Select REVIX_USER_MODE_CAN_CAPTURE and configure REVIX_CAN_BITRATE only
 for a known bench rate. Default bitrate 0 leaves TWAI stopped. RPM mapping is
 disabled; this mode logs frames and cannot report genuine NS125 engine RPM.
 
-SN65HVD230: regulated 3.3V VCC, GND to logic ground, R/RXD to GPIO16,
+SN65HVD230: regulated 3.3V VCC with local 100nF transceiver bypassing,\nGND to logic ground, R/RXD to GPIO16,
 D/TXD to GPIO17 with external recessive pull-up, RS held high including reset.
 A six-pin breakout is not automatically safe for motorcycle connection.
 Its RS pin may be hidden or tied low; module header positions differ from IC
@@ -130,44 +130,62 @@ acknowledge a normal transmitter; this passive device does not ACK frames.
 
 STANDARD STANDALONE LED WIRING
 ------------------------------
+The owner's preferred standard uses direct GPIO27 data. It does not include a
+level shifter, a shifter bypass capacitor or a shifter-input pull-down resistor.
+No settings need editing for six compatible WS2812B pixels. Keep CAN disconnected.
 
-No CAN transceiver, motorcycle or OLED is needed for this demonstration. Keep GPIO16 and GPIO17 unconnected and reserved for CAN. Use an original ESP32 DevKit V1 and a six-pixel 5V WS2812B GRB / 800kHz strip. No setting needs editing.
-
-Parts in addition to the ESP32 and strip:
-
-- One 74AHCT125, preferably the breadboard-friendly SN74AHCT125N DIP-14. Do not substitute a 74HC125 or a bidirectional I2C level-shifter board.
-- One 330-ohm series data resistor, one 10k-ohm input pull-down resistor, one 1000uF 10V electrolytic capacitor, and one 100nF (0.1uF) ceramic bypass capacitor.
-- One regulated 5V supply rated at least 1A for the strip and shifter, a USB data cable for the ESP32, secure wiring/connectors and a breadboard or soldered assembly. Use a multimeter to check supply voltage and polarity before connecting the electronics.
-
-The table uses DIP-14 IC pin numbers, not breakout-board header positions. Viewed from above with the notch upward, pin 1 is top left; pins 1..7 run down the left side and 8..14 run up the right side. Check the actual package marking.
+Required: ESP32 DevKit V1, six 5V WS2812B GRB/800kHz pixels, USB data cable,
+330-ohm resistor, 1000uF 10V electrolytic capacitor, regulated 5V supply rated
+at least 1A, secure wires/connectors and a way to check voltage/polarity.
 
 | From | To |
 | --- | --- |
-| Regulated external +5V | Strip +5V and 74AHCT125 VCC pin 14 |
-| External supply negative | Strip GND, ESP32 GND and shifter GND pin 7, all joined |
-| ESP32 GPIO27 | Shifter 1A pin 2; also connect a 10k-ohm resistor from pin 2 to GND |
-| Shifter 1OE pin 1 | GND, enabling the first buffer |
-| Shifter 1Y pin 3 | 330-ohm resistor, then first pixel DIN; put the resistor close to DIN |
-| 1000uF 10V capacitor | Across strip +5V and GND near the input; positive lead to +5V, negative striped side to GND |
-| 100nF ceramic capacitor | Between shifter pins 14 and 7, with short leads close to the IC |
-| Unused shifter OE pins 4, 10, 13 | +5V to disable the unused buffers |
-| Unused shifter A pins 5, 9, 12 | GND; leave unused output pins 6, 8, 11 unconnected |
+| ESP32 GPIO27 (3.3V data) | 330-ohm resistor, then first LED DIN; resistor near DIN |
+| External regulated +5V | Strip +5V only |
+| External supply negative | Strip GND and ESP32 GND, joined |
+| 1000uF 10V capacitor | Across LED +5V/GND, near strip input; + lead to +5V, striped negative to GND |
+| ESP32 USB socket | Separate USB power and upload |
 | Last pixel DOUT | Unconnected |
+| GPIO16/17 and CAN module | Reserved, unconnected during this LED test |
 
-Follow the strip's printed arrow: data travels from DIN -> pixel 1 -> pixel 6 -> DOUT. Never feed DOUT. Verify labels instead of trusting wire colors. Reversed software direction changes the visual fill order only. Keep signal wiring short and route a ground wire alongside it. The pull-down holds the shifter input low while the ESP32 pin is not driving it. The 5V shifter output goes only to LED DIN, never to an ESP32 GPIO.
+Follow the printed arrow: DIN -> pixel 1 -> pixel 6 -> DOUT. Do not feed
+DOUT. Verify actual pin labels instead of trusting wire colors. Keep data
+wiring short, with a ground wire alongside it. Software direction reversal
+changes only the displayed pattern, not the input end of the strip.
 
 POWER AND CONNECTION ORDER
 --------------------------
+1. Disconnect both supplies before assembling/checking/rewiring. Join ground
+   first and keep it connected. Check voltage, polarity and absence of shorts.
+2. External +5V powers the LEDs only. USB powers the ESP32. Do not join external
+   +5V to the USB-powered board's 5V/VIN/3V3 pins. Positive rails stay separate.
+3. Apply regulated LED 5V first, then connect ESP32 USB. Do not hot-plug data.
+4. Disconnect USB first, then LED power. Let the capacitor discharge before
+   rewiring; do not short its leads. Remove ground last on the unpowered setup.
 
-1. Disconnect USB and external power before assembling or changing wiring. Connect common ground first and keep it connected throughout operation. Check capacitor polarity, connections and absence of shorts before powering up.
-2. For this standard setup, power the ESP32 through USB only. External 5V powers only the strip and shifter. Do not join external +5V to the ESP32 5V/VIN/3V3 pins while USB is connected. The two supplies share ground, not their positive rails.
-3. Switch on the regulated strip/shifter 5V supply first, then connect ESP32 USB. This avoids sending data into an unpowered strip. Do not hot-plug the data wire or lose common ground while powered.
-4. Disconnect ESP32 USB first, then switch off strip/shifter power. Let the bulk capacitor discharge before rewiring; do not short its leads. Remove ground last when dismantling the unpowered circuit.
+At a conservative 60mA/pixel, six pixels need up to 360mA. A regulated supply
+rated at least 1A serves the LEDs; USB separately serves the ESP32. Brightness
+40/255 is not a hardware current limiter. Never power LEDs from GPIO or 3V3.
+This standalone power arrangement is not a protected automotive installation.
 
-At a conservative 60mA per pixel, six pixels need up to 360mA before other loads. The 1A minimum here is for the separate LED/shifter supply; USB powers the ESP32. Brightness 40/255 is not a current limiter. More pixels or another power arrangement require a new current budget and board power-path check. Never power the strip from a GPIO or the ESP32 3V3 regulator. This bench 5V supply arrangement is not an automotive power system.
+DIRECT-DATA COMPATIBILITY
+-------------------------
+REVIX LINK's standard demo sends data directly from GPIO27 to the LED strip
+through a 330-ohm resistor. This works with compatible WS2812B strips, but some
+5V strips require a level shifter for reliable operation.
 
-Wiring references: [TI 74AHCT125 pinout and logic levels](https://www.ti.com/lit/ds/symlink/sn74ahct125.pdf), [Adafruit NeoPixel wiring and power sequence](https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices). This specifies the intended assembly; physical operation still needs checking on your actual parts.
+Some strip revisions specify a logic-HIGH minimum above 3.3V. A separate 5V
+supply does not correct that mismatch. Do not lower/change the LED supply to
+force recognition. Check the actual strip specification and physical behavior.
+If data remains unreliable with correct short wiring and stable power, a
+proper 74AHCT125 buffer powered at regulated 5V is an optional remedy requiring
+a correctly designed enable/bypass/ground circuit. It is not part of the
+standard BOM or diagrams. No software data conversion replaces logic levels.
+The actual direct-drive assembly still needs validation before reliability
+claims, especially before any proposed motorcycle installation.
 
+Wiring reference:
+https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices
 
 For vehicle integration, a fused automotive power converter with reverse-
 polarity/transient protection, verified grounding/termination, connectors and
@@ -203,7 +221,7 @@ That environment enables its simulated OLED. The Arduino default keeps it off.
 
 From the repository root in WSL:
 bash test/run.sh
-~/.platformio/penv/bin/pio run -e esp32dev_wokwi -e esp32dev_twai_test -e esp32dev_bike
+~/.platformio/penv/bin/pio run -e esp32dev_wokwi -e esp32dev_twai_test -e esp32dev_bike -e esp32dev_vehicle
 
 The replay demo tests complete frames through the shared decoder and state.
 It does not test physical CAN. esp32dev_twai_test transmits experimental

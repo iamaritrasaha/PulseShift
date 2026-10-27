@@ -40,8 +40,8 @@ bool Dashboard::begin() {
 #endif
 }
 
-void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool configured) {
-  const auto status = viewStatus(s, now, config::staleMs, healthy, configured);
+void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout) {
+  const auto status = viewStatus(s, now, timeout, healthy, configured);
   const bool live = (status == ViewStatus::Live);
   const uint16_t shownRpm = live ? s.rpm() : 0;
 
