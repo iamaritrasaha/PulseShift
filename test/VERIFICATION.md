@@ -152,3 +152,51 @@ recorded UART evidence for source references, exact settings and limits.
 The beginner README, direct GPIO27 wiring diagrams, UserConfig defaults,
 COPYRIGHT, original simulator circuit and release tags are unchanged by this
 follow-up. No vehicle connection or physical firmware upload was performed.
+
+## v0.2.0 release preparation
+
+This follow-up changes release notes, publication validation, tests and the
+packaged text guide. Firmware, UserConfig defaults, beginner README, all five
+SVG diagrams, simulator circuit and CAN fixtures remain byte-identical to the
+merged 07cfce3331903b9da67823016182ac8f36f0df47 baseline. The existing local
+demo ELF still matches the recorded 24-check Wokwi runtime result. No new
+physical CAN validation or simulator TX success is claimed.
+
+The packaged guide now explicitly covers DEMO, CAN_CAPTURE and VEHICLE_RPM, direct GPIO27/330-ohm/DIN wiring and all
+three unqualified hardware areas. Its literal escaped newline in transceiver
+wiring is corrected. No display, animation or transport code changes.
+
+Exact local verification commands, executed in Ubuntu WSL:
+
+~~~sh
+bash test/run.sh
+~/.platformio/penv/bin/pio run -j 4 -e esp32dev_wokwi -e esp32dev_twai_test -e esp32dev_bike -e esp32dev_vehicle
+python3 scripts/verify_firmware_isolation.py
+python3 scripts/package_arduino.py --version v0.2.0 --output-dir .pio/v0.2.0/candidate
+python3 scripts/verify_arduino_package.py --version v0.2.0 --zip .pio/v0.2.0/candidate/REVIX-LINK-Arduino-v0.2.0.zip
+python3 scripts/verify_arduino_matrix.py --version v0.2.0 --zip .pio/v0.2.0/candidate/REVIX-LINK-Arduino-v0.2.0.zip --work-dir .pio/v0.2.0/arduino-matrix --arduino-cli /home/hrik/.local/bin/arduino-cli
+python3 scripts/prepare_release_notes.py --tag v0.2.0 --notes RELEASE_NOTES.md
+bash -n scripts/publish_prerelease.sh
+.pio/v0.2.0/actionlint/actionlint -shellcheck= .github/workflows/release.yml .github/workflows/ci.yml
+git apply --unidiff-zero --check scripts/release/README-v0.2.0.patch
+~~~
+
+All native/sanitizer checks, four PlatformIO builds, linked-symbol checks,
+package verification and 15 extracted Arduino builds passed. The native runner
+also executes 10 release-boundary tests. They substitute a recording gh binary:
+bad tags, mismatched notes, missing physical/TWAI qualifications, corrupt ZIPs
+and extra checksum records cannot reach publication. A successful mock call
+must use exact notes, an existing remote tag and prerelease flags; an existing
+release error cannot trigger overwrite/retry. The deferred README patch is
+tested in both prepublication and postpublication states.
+
+Workflow syntax was checked with checksum-verified official actionlint v1.7.12.
+Its shellcheck integration was disabled; the publisher is independently parsed
+by bash and exercised by the recording-stub tests. Actual tag-triggered GitHub
+publication is deliberately not executed before owner approval.
+
+Candidate ZIP SHA256:
+3c4063eb1db18e79f894b730b53f3cd8d593fc6920fe966a68af8c86bb1bbca4
+
+See RELEASE_PROCEDURE.md for the approval boundary and public-download,
+checksum, extracted compilation and deferred link update procedure.

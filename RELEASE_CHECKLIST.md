@@ -9,7 +9,7 @@
 - Confirm that local `docs` remains intact while no `docs` paths or generated artifacts are tracked or packaged.
 - Confirm public attribution matches COPYRIGHT and all dependency notices are preserved.
 - Decide whether to grant redistribution and modification rights. `COPYRIGHT` currently reserves all rights, and there is no explicit `LICENSE` file. Do not describe the project as open-source unless an approved license supports that statement.
-- Push a semantic-version tag such as `v0.2.0` only when the release is explicitly approved by the owner. The tag workflow publishes the verified ZIP and checksum.
+- Follow [RELEASE_PROCEDURE.md](RELEASE_PROCEDURE.md). Stop before creating or pushing the annotated v0.2.0 tag until the exact candidate commit is explicitly approved. The tag workflow validates version-specific notes and publishes only a prerelease with the verified ZIP/checksum.
 
 - Confirm that the final firmware hash matches the recorded Wokwi runtime test, and actual pixels/OLED were observed.
 - Confirm the temporary RFC2217 test port is removed from the normal configuration.
@@ -19,3 +19,7 @@
 - Run offline analysis and vehicle/driver regression tests with synthetic fixtures.
 - Verify both receive-only ELF images exclude transmit and synthetic ECU symbols.
 - Verify direct-drive LED compatibility on the actual strip before hardware claims.
+
+- Preserve the v0.1.0 README/About links until public v0.2.0 assets pass checksum and extracted compilation checks.
+- Run release guard tests with the fake GitHub CLI; never execute the publisher locally with real credentials during preparation.
+- Confirm release notes explicitly retain all three unqualified hardware areas and the known Wokwi TWAI completion failure.

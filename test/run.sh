@@ -27,3 +27,6 @@ for mode in 1 4; do
     .pio/host/test_dashboard-$mode-$diagnostics
   done
 done
+
+# Release tests replace gh with a local recording stub; no publication occurs.
+python3 -m unittest discover -s test -p "test_release_*.py"

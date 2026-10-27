@@ -84,6 +84,43 @@ Leave every setting unchanged for the standard LED demonstration. UserConfig.h l
 GRB / 800kHz is fixed in the existing LED driver, not a UserConfig.h option. A different RGB order, RGBW strip or protocol requires a reviewed driver change. Do not change the RGB order of palette triples to compensate. CAN bitrate does not select a motorcycle protocol; no verified vehicle mapping is supplied.
 
 
+FIRMWARE MODES
+---------------
+DEMO: REVIX_USER_MODE_DEMO is the default. It needs no CAN module. Synthetic
+complete CAN frames pass through the common decoder and expiring RPM state into
+the existing ShiftLightEngine. Demo thresholds are not motorcycle calibration.
+
+CAN_CAPTURE: REVIX_USER_MODE_CAN_CAPTURE logs raw passive CAN frames only.
+Set a verified isolated bench bitrate explicitly; 0 leaves TWAI stopped.
+No transmit, ACK, diagnostic request or ECU command is added. Serial records
+include timestamp, ID, standard/extended format, RTR, DLC, data and decode status.
+Processing and logging are bounded; inspect driver overflow and dropped logs.
+
+VEHICLE_RPM: REVIX_USER_MODE_VEHICLE_RPM uses the same receive-only transport,
+profile decoder, RPM state and LED engine. The selected NS125 profile in
+src/vehicle_profile.cpp remains UNVERIFIED with no bitrate or signal mapping.
+It cannot produce guessed vehicle RPM or fall back to the demo. A VERIFIED
+profile needs corroborated captures, independent RPM references, reviewed
+signal/checksum/counter rules, electrical qualification and shift calibration.
+Invalid/stale/faulted RPM blanks the LEDs. Unrelated traffic cannot refresh it.
+The optional OLED bar uses the same calibrated maximum as the LED engine.
+
+Advanced profiles live in src/vehicle_profile.h/.cpp; keep bitfields out of
+beginner settings. Unsigned LE LSB0 and BE MSB0 stream fields are supported;
+BE start bits are not DBC Motorola numbering. Protocol-specific proprietary
+rules require an explicitly reviewed validator. Simple Sum8/Xor8 checksums
+are not a universal vehicle checksum implementation.
+
+In the repository, tools/can_investigate.py reads raw logs and an independent
+timestamp_ms,rpm CSV, reports frequencies/changing fields, ranks numerical
+candidates and exports UNVERIFIED review vectors. It never enables firmware
+profiles. Clock alignment, counters, multiplexing, checksums and false
+correlations need independent review. The analysis tools and synthetic fixtures
+are repository development tools, not additional Arduino dependencies.
+
+Motorcycle RPM integration, the actual transceiver's electrical passivity and
+direct 3.3V LED compatibility have not been physically qualified.
+
 SERIAL CONTROLS
 ---------------
 UserConfig.h contains mode, pins, 1..32 pixels, brightness, style, direction,
@@ -106,7 +143,7 @@ there is no direct RPM-to-LED assignment. Startup is a separate animation.
 OPTIONAL OLED
 -------------
 SSD1306 128x64, address 0x3C, SDA21/SCL22 with ESP32-safe pull-ups. The display
-shows REVIX LINK, simulated mode, validated RPM or --, CAN status and a bar.
+shows REVIX LINK, operating mode, validated RPM or --, CAN status and a bar.
 The 20-second automated cycle includes malformed/out-of-range frames, silence
 and recovery, with or without an OLED. After the startup sweep, the LEDs show
 progression and shift flashing, then go dark when valid RPM becomes stale, and
@@ -118,7 +155,8 @@ Select REVIX_USER_MODE_CAN_CAPTURE and configure REVIX_CAN_BITRATE only
 for a known bench rate. Default bitrate 0 leaves TWAI stopped. RPM mapping is
 disabled; this mode logs frames and cannot report genuine NS125 engine RPM.
 
-SN65HVD230: regulated 3.3V VCC with local 100nF transceiver bypassing,\nGND to logic ground, R/RXD to GPIO16,
+SN65HVD230: regulated 3.3V VCC with local 100nF transceiver bypassing,
+GND to logic ground, R/RXD to GPIO16,
 D/TXD to GPIO17 with external recessive pull-up, RS held high including reset.
 A six-pin breakout is not automatically safe for motorcycle connection.
 Its RS pin may be hidden or tied low; module header positions differ from IC
