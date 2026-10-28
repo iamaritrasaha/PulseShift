@@ -1,8 +1,34 @@
-# REVIX LINK v0.2.0 | Arduino IDE software prerelease
+# REVIX LINK v0.2.1 | Arduino IDE software prerelease
 
 This is an Arduino IDE software prerelease for standalone demonstration and
 controlled development. It is not a stable or plug-and-play motorcycle release.
 The intended 2025 Indian Bajaj Pulsar NS125 ABS remains an unverified target.
+
+## Changes since v0.2.0
+
+This maintenance prerelease incorporates the verified safety and reliability
+corrections from [PR #4](https://github.com/iamaritrasaha/REVIX-LINK/pull/4).
+It is a software update, not a declaration of motorcycle compatibility.
+
+- Non-live states (fault, invalid, stale, disconnected and unconfigured) blank
+  LED pixels immediately instead of waiting up to 250 ms for visual throttling;
+  valid input can recover without the unnecessary delay.
+- Throttled updates no longer report an unchanged LED buffer as modified,
+  preventing redundant LED strip writes.
+- Offline CAN investigation rejects explicit reboot/session banners after
+  recorded frames, preventing silent cross-session RPM correlation.
+- Firmware isolation and Arduino matrix gates use explicit runtime failures,
+  so `python -O` cannot remove safety checks.
+- Enabled UART0 diagnostics reserve GPIO1/GPIO3 and reject conflicting LED,
+  CAN and enabled-OLED pin assignments at compile time.
+- CAN capture analysis counts malformed RX records against its resource budget
+  and rejects log lines longer than 4096 characters.
+
+Regression tests were added for each issue. All four firmware targets, the
+15 Arduino compile variants, native sanitizer suites, binary isolation and
+24 Wokwi demo checks passed on the audited source (PR #4). The exact tagged
+v0.2.1 source must pass release CI before publication. No physical upload or
+electrical validation is implied.
 
 ## What is included
 
@@ -56,7 +82,7 @@ mode isolation and native tests with warnings as errors, ASan and UBSan.
 
 The native suite preserves 33 cases / 638788 assertions, 7186 vehicle checks,
 162 driver checks per receive-only mode, 202 OLED calibration assertions and
-12 CAN-tool/configuration Python tests. Additional release-guard tests validate
+expanded CAN-tool/configuration and isolation Python tests. Additional release-guard tests validate
 version-specific notes, asset checksums and publication failure behavior without
 contacting GitHub.
 
@@ -68,7 +94,7 @@ It does not validate the TWAI controller, a physical bus or electrical levels.
 receives one frame but leaves TX pending, reports no completion and halts once.
 Four minimal probes reproduce this failure; a disconnected-loopback control
 still self-receives a frame. The test remains enabled. No fake TX success or
-recovery loop is used. See the [investigation and recorded evidence](https://github.com/iamaritrasaha/REVIX-LINK/blob/v0.2.0/test/TWAI_WOKWI.md).
+recovery loop is used. See the [investigation and recorded evidence](https://github.com/iamaritrasaha/REVIX-LINK/blob/v0.2.1/test/TWAI_WOKWI.md).
 
 Motorcycle RPM integration has not been physically qualified.
 The actual SN65HVD230 transceiver's electrical passivity has not been physically qualified.
@@ -84,7 +110,7 @@ connection or physical firmware upload is performed by this software release.
 
 ## Arduino IDE installation
 
-Download **REVIX-LINK-Arduino-v0.2.0.zip** and its **.sha256** asset. Verify the
+Download **REVIX-LINK-Arduino-v0.2.1.zip** and its **.sha256** asset. Verify the
 checksum, extract under Ubuntu WSL, keep the REVIX_LINK folder intact and open
 REVIX_LINK.ino in Arduino IDE 2.x for Linux/WSLg. Install ESP32 by Espressif Systems
 2.0.17 and Adafruit NeoPixel 1.12.3. OLED-disabled defaults need no display library.
