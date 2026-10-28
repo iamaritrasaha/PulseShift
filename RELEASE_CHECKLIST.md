@@ -1,25 +1,11 @@
 # Release checklist
 
-- Confirm that all local tests pass inside Ubuntu WSL (`bash test/run.sh`).
-- Confirm that all PlatformIO environments build cleanly (`esp32dev_wokwi`, `esp32dev_twai_test`, `esp32dev_bike`, `esp32dev_vehicle`).
-- Confirm that GitHub Actions CI passes for the exact commit across all configuration variants.
-- Confirm that the generated Arduino source ZIP passes verification (`scripts/verify_arduino_package.py`) and matches its SHA-256 checksum.
-- Confirm that `UserConfig.h` compile-time validations correctly reject out-of-range settings.
-- Confirm that demo mode remains the default and that no NS125 CAN bitrate or RPM mapping is claimed as verified.
-- Confirm that local `docs` remains intact while no `docs` paths or generated artifacts are tracked or packaged.
-- Confirm public attribution matches COPYRIGHT and all dependency notices are preserved.
-- Decide whether to grant redistribution and modification rights. `COPYRIGHT` currently reserves all rights, and there is no explicit `LICENSE` file. Do not describe the project as open-source unless an approved license supports that statement.
-- Follow [RELEASE_PROCEDURE.md](RELEASE_PROCEDURE.md). Stop before creating or pushing the annotated v0.2.0 tag until the exact candidate commit is explicitly approved. The tag workflow validates version-specific notes and publishes only a prerelease with the verified ZIP/checksum.
-
-- Confirm that the final firmware hash matches the recorded Wokwi runtime test, and actual pixels/OLED were observed.
-- Confirm the temporary RFC2217 test port is removed from the normal configuration.
-- Keep stable publication gated until target-variant wiring, RPM mapping and physical passivity are verified.
-
-- Verify the NS125 profile remains UNVERIFIED with no bitrate or signal mapping.
-- Run offline analysis and vehicle/driver regression tests with synthetic fixtures.
-- Verify both receive-only ELF images exclude transmit and synthetic ECU symbols.
-- Verify direct-drive LED compatibility on the actual strip before hardware claims.
-
-- Preserve the v0.1.0 README/About links until public v0.2.0 assets pass checksum and extracted compilation checks.
-- Run release guard tests with the fake GitHub CLI; never execute the publisher locally with real credentials during preparation.
-- Confirm release notes explicitly retain all three unqualified hardware areas and the known Wokwi TWAI completion failure.
+- Use Ubuntu WSL and a clean, synchronized main branch.
+- Pass [software verification](test/VERIFICATION.md), all four firmware builds and all 15 Arduino configurations.
+- Validate the versioned ZIP, checksum and byte-for-byte reproducibility.
+- Require successful CI on the exact candidate commit.
+- Keep DEMO as default and the NS125 profile UNVERIFIED.
+- Obtain owner approval of the exact commit and ZIP SHA-256 before creating a tag.
+- Follow [the release procedure](RELEASE_PROCEDURE.md); never overwrite existing tags or assets.
+- Verify public downloads and an extracted Arduino compile before updating the About homepage.
+- Preserve COPYRIGHT, receive-only restrictions and all hardware qualification limits.
