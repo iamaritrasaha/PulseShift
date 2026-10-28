@@ -10,3 +10,7 @@ REVIX-LINK-Arduino-v*.zip
 REVIX-LINK-Arduino-v*.sha256
 /docs/
 /logs/
+
+# Detailed reports stay on this machine.
+/.local-notes/
+/AUDIT_REPORT.md
