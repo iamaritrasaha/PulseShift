@@ -217,3 +217,15 @@
 #if REVIX_SERIAL_BAUD < 1 || REVIX_SERIAL_BAUD > 2000000
 #error "REVIX_SERIAL_BAUD must be between 1 and 2000000"
 #endif
+
+
+// UART0 is used by Serial diagnostics on the original ESP32 DevKit V1.
+// CHANGE ONLY IF: disabling diagnostics also requires checking USB-UART wiring.
+#if REVIX_SERIAL_DIAGNOSTICS && \
+    (REVIX_LED_DATA_GPIO == 1 || REVIX_LED_DATA_GPIO == 3 || \
+     REVIX_CAN_RX_GPIO == 1 || REVIX_CAN_RX_GPIO == 3 || \
+     REVIX_CAN_TX_GPIO == 1 || REVIX_CAN_TX_GPIO == 3 || \
+     (REVIX_OLED_ENABLED && (REVIX_OLED_SDA_GPIO == 1 || REVIX_OLED_SDA_GPIO == 3 || \
+                            REVIX_OLED_SCL_GPIO == 1 || REVIX_OLED_SCL_GPIO == 3)))
+#error "Enabled Serial diagnostics reserve UART0 GPIO1 and GPIO3"
+#endif

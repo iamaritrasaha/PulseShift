@@ -30,6 +30,9 @@ int main() {
   RpmState rpm(demonstrationMapping());
   auto frame=demonstrationFrame(100,0); rpm.ingest(frame);
   dashboard.update(rpm,100,true,true); const auto first=testOledWrites;
+  const auto ledFirst=testLedWrites;
+  dashboard.update(rpm,101,true,true);
+  CHECK(testLedWrites==ledFirst); // unchanged throttled animation must not show again
   CHECK(first==1);
   for(unsigned now=101;now<200;++now) {
     frame.timestampMs=now; frame.data[0]=uint8_t(now); rpm.ingest(frame);

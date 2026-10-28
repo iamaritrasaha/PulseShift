@@ -209,10 +209,13 @@ void ShiftLightEngine::renderActive(uint32_t nowMs, uint16_t rpm) {
 }
 
 bool ShiftLightEngine::update(uint32_t nowMs, uint16_t rpm, ViewStatus status) {
-  if (lastUpdateMs_ != 0 && uint32_t(nowMs - lastUpdateMs_) < cfg_.animationIntervalMs) {
-    return dirty_;
+  // Safety blanking must bypass the visual refresh interval.
+  if (status == ViewStatus::Live && lastUpdateMs_ != 0 &&
+      uint32_t(nowMs - lastUpdateMs_) < cfg_.animationIntervalMs) {
+    return false;
   }
-  lastUpdateMs_ = nowMs;
+  // Resume valid data immediately after blanking instead of throttling recovery.
+  lastUpdateMs_ = status == ViewStatus::Live ? nowMs : 0;
 
   if (status == ViewStatus::Fault || status == ViewStatus::Unconfigured) {
     startupComplete_ = true;
