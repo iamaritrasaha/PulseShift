@@ -16,7 +16,9 @@ for environment in ("esp32dev_wokwi","esp32dev_bike","esp32dev_vehicle","esp32de
         forbidden=("twai_transmit","CanTransport::sendTest","demonstrationFrame","ReplayTransport")
     else:
         forbidden=()
-        assert "twai_transmit" in symbols and "CanTransport::sendTest" in symbols, "Self-test lost its isolated transmitter"
-    assert not any(name in symbols for name in forbidden),f"Forbidden symbol in {environment}"
+        if "twai_transmit" not in symbols or "CanTransport::sendTest" not in symbols:
+            raise RuntimeError("Self-test lost its isolated transmitter")
+    if any(name in symbols for name in forbidden):
+        raise RuntimeError(f"Forbidden symbol in {environment}")
     results.append({"environment":environment,"sha256":hashlib.sha256(elf.read_bytes()).hexdigest(),"forbidden":forbidden,"passed":True})
 print(json.dumps(results,indent=2))

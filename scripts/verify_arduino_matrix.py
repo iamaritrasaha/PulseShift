@@ -41,7 +41,8 @@ for name,changes in variants.items():
     config=work/"REVIX_LINK/UserConfig.h";text=config.read_text()
     for key,value in changes.items():
         text,count=re.subn(rf"(?m)^(#define {re.escape(key)} )[^\n]*",rf"\g<1>{value}",text)
-        assert count==1,key
+        if count != 1:
+            raise RuntimeError(f"Expected one configuration definition: {key}")
     config.write_text(text)
     command=[args.arduino_cli,"compile","--fqbn","esp32:esp32:esp32","--warnings","all",
         "--build-path",str((work/"build").resolve())]
@@ -52,10 +53,12 @@ for name,changes in variants.items():
         result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
     if result.returncode==0:
         elves=list((work/"build").glob("*.elf"))
-        assert len(elves)==1,f"Expected one linked Arduino ELF for {name}"
+        if len(elves) != 1:
+            raise RuntimeError(f"Expected one linked Arduino ELF for {name}")
         symbols=subprocess.check_output([str(nm),"-C",str(elves[0])],text=True)
         forbidden=("twai_transmit","CanTransport::sendTest","demonstrationFrame","ReplayTransport") if not name.startswith("demo-") else ("twai_transmit","CanTransport::","twai_driver_install")
-        assert not any(symbol in symbols for symbol in forbidden),f"Arduino mode isolation failed: {name}"
+        if any(symbol in symbols for symbol in forbidden):
+            raise RuntimeError(f"Arduino mode isolation failed: {name}")
     results.append({"variant":name,"changes":changes,"returncode":result.returncode,"binary_isolation":result.returncode==0,"seconds":round(time.monotonic()-start,2),"command":command})
     (args.work_dir/"results.json").write_text(json.dumps(results,indent=2)+"\n")
     print(f"{name}: {'PASS' if result.returncode==0 else 'FAIL'}",flush=True)

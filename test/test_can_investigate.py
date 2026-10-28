@@ -53,6 +53,35 @@ class InvestigationTests(unittest.TestCase):
             self.assertEqual(frames[1].timestamp_ms-frames[0].timestamp_ms,10)
             p.write_text("RX t=100 id=100 ext=0 rtr=0 dlc=1 data=00 VALID\nRX t=4 id=100 ext=0 rtr=0 dlc=1 data=01 VALID\n")
             with self.assertRaises(ValueError):can.read_log(p)
+    def test_startup_banner_splits_sessions_even_near_wrap(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"input.log"
+            banner="REVIX LINK mode=CAN_CAPTURE SDK=v4.4.7-dirty\n"
+            frame="RX t={} id=100 ext=0 rtr=0 dlc=1 data=00 UNMAPPED\n"
+            p.write_text(banner+frame.format(1))
+            self.assertEqual(len(can.read_log(p)[0]),1)
+            for before,after in ((4294967200,10),(100,10),(100,200)):
+                p.write_text(banner+frame.format(before)+banner+frame.format(after))
+                with self.subTest(before=before,after=after):
+                    with self.assertRaisesRegex(ValueError,"session boundary"):can.read_log(p)
+
+    def test_rx_budget_includes_invalid_records(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"input.log"
+            valid="RX t=1 id=100 ext=0 rtr=0 dlc=1 data=00 UNMAPPED\n"
+            invalid="RX malformed\n"
+            for text in (invalid*3, valid+invalid*2):
+                p.write_text(text)
+                with self.assertRaisesRegex(ValueError,"RX records"):can.read_log(p,2)
+            p.write_text(valid+invalid)
+            frames,issues,*_=can.read_log(p,2)
+            self.assertEqual((len(frames),len(issues)),(1,1))
+
+    def test_log_line_length_is_bounded(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"input.log";p.write_text("RX "+("0"*10000))
+            with self.assertRaisesRegex(ValueError,"4096"):can.read_log(p)
+
     def test_alignment_caps_density_and_rejects_large_skew(self):
         frames=[can.Frame(t,t,1,False,False,1,b"\0",i) for i,t in enumerate((90,99,100,101,110,300))]
         aligned=can.align(frames,[(100,1400)],20)
