@@ -32,9 +32,14 @@ def read_log(path: Path, limit: int = 500000):
     epoch = 0
     previous = None
     synthetic = False
+    records = 0
     with path.open(encoding="utf-8", errors="strict") as source:
-        for number, line in enumerate(source, 1):
+        for number, line in enumerate(iter(lambda: source.readline(4097), ""), 1):
+            if len(line) > 4096:
+                raise ValueError(f"Log line {number} exceeds 4096 characters.")
             line = line.strip()
+            if line.startswith("REVIX LINK mode=") and previous is not None:
+                raise ValueError(f"Startup banner at line {number}; split logs at a reboot/session boundary.")
             if "SYNTHETIC" in line or "DEMO_SIMULATED" in line:
                 synthetic = True
             if not line.startswith("RX "):
@@ -43,6 +48,9 @@ def read_log(path: Path, limit: int = 500000):
                         if key in ("missed","overrun","busErrors","TEC","REC","RX","acceptedFrames","logDropped","dropped"):
                             counters[key] = max(counters.get(key, 0), int(value))
                 continue
+            records += 1
+            if records > limit:
+                raise ValueError(f"More than {limit} RX records including malformed records; split the capture or increase --max-frames.")
             match = RX.fullmatch(line)
             if not match:
                 issues.append({"line": number, "reason": "invalid RX syntax"})
@@ -60,8 +68,6 @@ def read_log(path: Path, limit: int = 500000):
                     raise ValueError(f"Timestamp moved backward at line {number}; split logs at a reboot/session boundary.")
             previous = t
             frames.append(Frame(t + epoch, t, ident, ext, remote, dlc, bytes.fromhex(data), number))
-            if len(frames) > limit:
-                raise ValueError(f"More than {limit} frames; split the capture or explicitly increase --max-frames.")
     return frames, issues, counters, synthetic
 
 def read_reference(path: Path, offset: float):

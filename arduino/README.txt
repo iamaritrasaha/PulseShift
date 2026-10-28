@@ -288,3 +288,17 @@ https://www.bajajauto.com/customer-service/owners-manual
 
 Third-party libraries retain their respective notices/licenses. REVIX LINK
 is governed by the included COPYRIGHT notice; no new license is granted.
+
+
+AUDIT SAFEGUARDS FOR ADVANCED SETTINGS
+With Serial diagnostics enabled, UART0 GPIO1 and GPIO3 are reserved. LED,
+reserved CAN pins and enabled OLED pins cannot share them. Default pins do not
+change. Disabling diagnostics does not prove a custom pin assignment safe:
+the DevKit USB-UART hardware and its wiring must still be checked.
+
+Capture analysis expects one boot/session per log file. An explicit REVIX LINK
+startup banner after received frames is rejected, including near timer rollover.
+Split recordings at each reboot. A rollover without a restart marker is accepted;
+a missing marker cannot reliably distinguish reboot from rollover. --max-frames
+counts all RX records, including malformed records. Lines over 4096 characters
+are rejected. These limits prevent malformed inputs from bypassing the budget.

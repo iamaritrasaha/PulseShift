@@ -24,6 +24,21 @@ class ConfigurationTests(unittest.TestCase):
         for changes in cases:
             with self.subTest(changes=changes):self.assertNotEqual(self.compile_config(changes).returncode,0)
 
+    def test_uart0_pin_conflicts(self):
+        for key in ("REVIX_LED_DATA_GPIO","REVIX_CAN_RX_GPIO","REVIX_CAN_TX_GPIO",
+                    "REVIX_OLED_SDA_GPIO","REVIX_OLED_SCL_GPIO"):
+            for pin in ("1","3"):
+                for diagnostics in ("0","1"):
+                    changes={key:pin,"REVIX_SERIAL_DIAGNOSTICS":diagnostics,"REVIX_OLED_ENABLED":"1"}
+                    with self.subTest(changes=changes):
+                        result=self.compile_config(changes)
+                        if diagnostics=="1":
+                            self.assertNotEqual(result.returncode,0)
+                            self.assertIn("reserve UART0",result.stderr)
+                        else:self.assertEqual(result.returncode,0,result.stderr)
+        for key in ("REVIX_OLED_SDA_GPIO","REVIX_OLED_SCL_GPIO"):
+            self.assertEqual(self.compile_config({key:"1","REVIX_OLED_ENABLED":"0"}).returncode,0)
+
     def test_synthetic_ecu_is_not_even_compiled_in_receive_only_modes(self):
         with tempfile.TemporaryDirectory() as td:
             for mode in (3,4):
