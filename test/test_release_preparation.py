@@ -121,12 +121,33 @@ sys.exit(int(os.environ.get('STUB_GH_EXIT','0')))
     def test_readme_points_to_published_releases_not_future_tag(self):
         readme=(ROOT/"README.md").read_text()
         self.assertIn("https://github.com/iamaritrasaha/PulseShift/releases)",readme)
-        self.assertIn("v0.2.1 or newer",readme)
+        self.assertIn("PulseShift-Arduino-v0.3.0.zip",readme)
+        self.assertIn("PulseShift-Arduino-v0.3.0.sha256",readme)
         self.assertIn("PulseShift/PulseShift.ino",readme)
-        self.assertIn("REVIX_LINK/REVIX_LINK.ino",readme)
-        self.assertIn("v0.3.0 is proposed, not published",readme)
-        # Do not send beginners to a tag that has not been published.
-        self.assertNotIn("github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.2.1",readme)
+        self.assertIn("Until v0.3.0 is listed, wait for publication.",readme)
+        # Prepublication docs must not claim an unpublished release or asset exists.
+        self.assertNotIn("/releases/tag/v0.3.0",readme)
+        self.assertNotIn("/releases/download/v0.3.0",readme)
+
+    def test_current_readme_has_exclusive_brand_and_preserves_diagrams(self):
+        readme=(ROOT/"README.md").read_text()
+        self.assertTrue(readme.startswith("# PulseShift\n"))
+        self.assertNotRegex(readme,r"(?i)revix(?:[ _-]*link)?")
+        for image in ("hardware-overview","main-wiring","led-direction",
+                      "power-safety","expected-behavior"):
+            path=f"assets/readme/{image}.svg"
+            self.assertIn(path,readme)
+            self.assertTrue((ROOT/path).is_file())
+        for safety in ("GPIO27", "330Ω", "1000µF", "UNVERIFIED", "bitrate **0**"):
+            self.assertIn(safety,readme)
+        self.assertIn("Copyright (c) 2026 Aritra Saha. All rights reserved.",readme)
+
+    def test_release_notes_are_concise_and_describe_passive_discovery(self):
+        self.assertGreaterEqual(len(self.text.split()),100)
+        self.assertLessEqual(len(self.text.split()),150)
+        self.assertIn("independent-session",self.text)
+        self.assertIn("profile evidence gates",self.text)
+        self.assertNotIn("proposed",self.text.lower())
 
     def test_historical_v0_2_0_patch_roundtrip_in_isolated_directory(self):
         # Preserve the historical release-patch regression without assuming the
