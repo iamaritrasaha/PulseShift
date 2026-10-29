@@ -21,6 +21,9 @@ struct ProfileEvidence {
   const char* reference = ""; // Reviewed service/capture/measurement references.
   bool repeatedCaptures = false, independentRpm = false, electricalQualification = false;
   bool shiftCalibrationVerified = false;
+  // Reviewed passive traffic without a scanner, plus unseen-session validation.
+  // Missing evidence keeps even a numerically complete profile disabled.
+  bool passiveBroadcastVerified = false, independentHoldoutVerified = false;
 };
 struct VehicleProfile {
   const char* identifier = "";

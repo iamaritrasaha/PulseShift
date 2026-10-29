@@ -316,3 +316,85 @@ If both prefixes define a setting, values must agree. For custom palettes use
 one prefix, or identical entries. Prefer the new UserConfig.h and copy your
 settings into it. New capture logs start with PulseShift; old REVIX LINK logs
 retain their reboot/session-boundary protection.
+
+Passive broadcast RPM discovery (advanced, not motorcycle installation approval)
+-----------------------------------------------------------------------------
+PulseShift only listens to existing CAN traffic. It sends no OBD/UDS requests,
+scanner commands or ECU messages. The owner reports that a diagnostic scanner
+showed RPM immediately on the 2025 Indian NS125 ABS. This does not prove passive
+broadcasting or independently establish the scanner's physical transport.
+
+A qualified technician must first establish the connector, transport and bitrate
+from vehicle-specific evidence. Never guess pins or probe bitrates on the bike.
+Qualify the actual SN65HVD230 board: RS access/wiring and hardware driver-disable,
+TXD recessive bias, 3.3V supply, reset/unpowered behavior, common-mode limits,
+termination, protected automotive power and transient protection. A six-pin
+breakout may hide RS. Software listen-only and GPIO17 input isolation do not
+qualify it. Do not add 120 ohms to an established bus without network evidence.
+Actual motorcycle wiring remains blocked until these checks pass.
+
+After qualification, record separate passive sessions with the scanner absent:
+ignition on/engine off, idle, several independently measured stable speeds,
+return to idle and engine off. Include repeated rises and falls. Use independent
+RPM references and documented clock alignment. Operate safely under technician
+control. A scanner attached during capture can cause requested responses that
+are not broadcast evidence. Keep each power cycle/recording in its own log and
+CSV. Never concatenate sessions, including those with apparently increasing time.
+
+Logs use RX t=<dequeue ms> id=<hex> ext=<0/1> rtr=<0/1> dlc=<0..8>
+data=<hex> <decoder result>. Preserve the startup banner and CAN/APP records:
+controller state, TEC/REC, bus errors, missed/overrun counts and logDropped.
+Timestamp is dequeue time, not hardware arrival time. Capture uses a 64-frame
+receive queue, at most 16 reads per application iteration and a bounded UART
+queue at 115200 baud. High traffic can lose records. Bus-off/overflow/status
+faults stop reception; isolated bus-error alerts are counted. No automatic
+recovery, bitrate scan or simulated fallback runs in receiver modes. Bitrate
+zero disables reception. Restart only after the fault is investigated.
+
+Run offline commands from the Git repository root in WSL. The upload ZIP does
+not include tools/ or test/; use the repository checkout for investigation.
+Offline example, entirely synthetic fixture data:
+python3 tools/can_investigate.py test/fixtures/synthetic_capture.log \
+  --reference test/fixtures/synthetic_rpm.csv --max-skew-ms 30 \
+  --output .local-notes/candidate-review
+
+Reference CSV header: timestamp_ms,rpm. Timestamp offset is ADDED to reference
+times. Set --reference-offset-ms from an independent synchronization event.
+For real separate recordings, append one or more:
+  --validation heldout.log heldout.csv 0
+The last value is that session's documented reference offset in milliseconds.
+Do not tune offsets by maximizing correlation. Use --max-frames, --top and
+--max-vectors-per-candidate to bound analysis (at most 16 validation sessions).
+
+The analyzer searches unsigned byte-aligned 8/16/24/32-bit fields in both byte
+orders. Training samples choose scale/offset; chronological validation ranks
+fields. Independent files score frozen candidates without refitting/reranking.
+Duplicate paths/content are rejected; different files alone cannot prove actual
+independence. Reports include frequency/gaps, changing masks, counter-like bytes,
+small-domain selector hints, seed-zero sum/XOR hypotheses, alignment/missing
+samples and holdout errors. These are UNVERIFIED hypotheses. Arbitrary bitfields,
+signed/compressed fields and proprietary checksums need explicit expert review.
+Consider throttle, speed, load and counters as alternative explanations. A good
+fit or zero error never proves RPM, validity, checksum rules or electrical safety.
+
+Review engine-off/idle and multiple speed ranges across unseen sessions before
+preparing a profile. Review raw payloads, losses and false correlations. Candidate
+JSON/regression vectors never write firmware configuration. Keep detailed review
+reports local. No NS125 rate, ID, signal or calibration has been supplied.
+
+VehicleProfile contains format/ID/DLC, bounded bit extraction, scale/offset,
+validity/multiplexer rules, optional Sum8/Xor8/counter or reviewed custom rule,
+RPM range, timeout and separate verified shift calibration. In addition to a
+VERIFIED status and reviewed evidence reference, all ProfileEvidence gates must
+be true: repeatedCaptures, independentRpm, electricalQualification,
+shiftCalibrationVerified, passiveBroadcastVerified, independentHoldoutVerified.
+The last two gates are new; old aggregate initializers omit them and safely
+remain disabled until reviewed. Do not set evidence flags merely to enable it.
+The selected NS125 profile stays UNVERIFIED with bitrate zero and no mapping.
+Verified frames pass through the existing RpmState and ShiftLightEngine. Invalid,
+stale, missing-profile or fault states keep LEDs dark with no demo substitution.
+Demo thresholds 1500/5800/6500 RPM are synthetic, not NS125 specifications.
+
+References: Espressif TWAI listen-only documentation and TI transceiver datasheet:
+https://docs.espressif.com/projects/esp-idf/en/v4.4.2/esp32/api-reference/peripherals/can.html
+https://www.ti.com/lit/gpn/SN65HVD230

@@ -23,7 +23,7 @@ VehicleProfile fixture() {
   p.checksum={ChecksumKind::Sum8,0,7,7,0};
   p.counter={true,{32,4,SignalOrder::LittleEndianLsb0},16};
   p.lights={1500,6000,10000,150};
-  p.evidence={"SYNTHETIC FIXTURE ONLY: not vehicle qualification",true,true,true,true};
+  p.evidence={"SYNTHETIC FIXTURE ONLY: not vehicle qualification",true,true,true,true,true,true};
   return p;
 }
 void checksum(CanFrame& f) { f.data[7]=0; for (unsigned i=0;i<7;++i) f.data[7]=uint8_t(f.data[7]+f.data[i]); }
@@ -43,14 +43,19 @@ void decoding() {
     auto q=p;q.status=s;VehicleDecoder d(q);uint16_t out=33;
     CHECK(d.decode(frame(),out)==DecodeResult::ProfileUnconfigured && out==33);
   }
-  for (unsigned missing=0;missing<5;++missing) {
+  for (unsigned missing=0;missing<7;++missing) {
     auto q=p;
     if(missing==0)q.evidence.reference="";
     if(missing==1)q.evidence.repeatedCaptures=false;
     if(missing==2)q.evidence.independentRpm=false;
     if(missing==3)q.evidence.electricalQualification=false;
     if(missing==4)q.evidence.shiftCalibrationVerified=false;
+    if(missing==5)q.evidence.passiveBroadcastVerified=false;
+    if(missing==6)q.evidence.independentHoldoutVerified=false;
     CHECK(!vehicleProfileReady(q));
+    RpmState blocked(q); CHECK(!blocked.mapped());
+    CHECK(blocked.ingest(frame())==DecodeResult::ProfileUnconfigured);
+    CHECK(!blocked.fresh(100,q.timeoutMs));
   }
   auto expect=[&](CanFrame f,DecodeResult result) {
     VehicleDecoder d(p);uint16_t out=33;CHECK(d.decode(f,out)==result);

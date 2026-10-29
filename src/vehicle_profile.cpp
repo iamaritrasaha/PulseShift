@@ -54,7 +54,8 @@ bool vehicleProfileReady(const VehicleProfile& p) {
   const auto& e = p.evidence;
   return p.status == ProfileStatus::VERIFIED && e.reference && *e.reference &&
     e.repeatedCaptures && e.independentRpm && e.electricalQualification &&
-    e.shiftCalibrationVerified && validProfileDefinition(p);
+    e.shiftCalibrationVerified && e.passiveBroadcastVerified &&
+    e.independentHoldoutVerified && validProfileDefinition(p);
 }
 const char* profileStatusName(ProfileStatus s) {
   switch (s) {
@@ -69,7 +70,8 @@ const VehicleProfile& selectedVehicleProfile() {
     VehicleProfile p;
     p.identifier = "ns125-india-2025-abs";
     p.description = "2025 Indian Bajaj Pulsar NS125 ABS; mapping and electrical qualification pending";
-    // Owner reports RPM at the interface. No passive capture/pinout/rate is supplied.
+    // Owner reports a scanner displayed RPM. Requests or another transport may
+    // explain it; passive broadcasting, pinout and rate remain unverified.
     // Leave protocol fields empty rather than populated with demonstration guesses.
     return p;
   }();
