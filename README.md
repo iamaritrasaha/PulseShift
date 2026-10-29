@@ -1,98 +1,92 @@
 # PulseShift
 
-Customizable ESP32 motorcycle shift-light firmware with WS2812B effects, a standalone RPM demo and experimental receive-only CAN.
+Customizable ESP32 motorcycle shift-light firmware with six WS2812B LEDs, a standalone RPM demonstration and experimental receive-only CAN.
 
-## What this does
+## Main features
 
-**No settings need changing** for six compatible WS2812B LEDs: GPIO27, brightness 40/255, Classic colors and OLED off. The repeating demo needs no motorcycle, CAN module or screen.
+- A repeating RPM demo with startup animation, progressive lighting and flashing shift alerts.
+- Classic, Racing, Minimal and Custom styles, adjustable brightness and LED direction.
+- Arduino IDE support, Wokwi simulation and passive CAN investigation tools.
 
-**[Download the latest published Arduino Software Prerelease](https://github.com/iamaritrasaha/PulseShift/releases)**
-
-Published **v0.1.0 to v0.2.1** are historical REVIX LINK releases. Download the
-matching **REVIX-LINK-Arduino-vX.Y.Z.zip** and .sha256 from Assets; those sketches
-still open as **REVIX_LINK/REVIX_LINK.ino**. Choose v0.2.1 or newer for the audit fixes.
-
-**v0.3.0 is proposed, not published.** Future PulseShift packages will use
-**PulseShift-Arduino-vX.Y.Z.zip** and **PulseShift/PulseShift.ino**. Use a published
-release, not GitHub's automatic source ZIP.
+**No settings need changing for the standard demo:** six LEDs, GPIO27, brightness 40/255, Classic style and OLED off. No motorcycle or CAN connection is needed.
 
 ## What you need
 
-![Standard parts for the standard PulseShift build](assets/readme/hardware-overview.svg)
+![Standard parts for the PulseShift build](assets/readme/hardware-overview.svg)
 
 - ESP32 DevKit V1 and a USB **data** cable.
 - One six-LED **5V WS2812B strip**, GRB / 800kHz.
-- One **330Ω** series resistor.
-- One **1000µF, 10V** electrolytic capacitor.
-- Regulated **5V supply rated at least 1A**, secure wires and a breadboard or soldered board.
-- A multimeter to check voltage and polarity.
+- A **330Ω resistor** and **1000µF, 10V electrolytic capacitor**.
+- A regulated **5V supply rated at least 1A**, secure wires and a multimeter.
 
-The optional SN65HVD230 is **not needed or connected** for this demo.
+The optional SN65HVD230 CAN module stays disconnected for the demo.
 
 ## How to wire it
 
-With both supplies disconnected, wire **GPIO27 → 330Ω → DIN**. Keep data wiring short and join all grounds.
+Disconnect both supplies before assembly. Connect **GPIO27 → 330Ω → DIN**, with the resistor near the first LED. Keep the data lead short.
 
-![Direct demo wiring: GPIO27 through 330 ohms to DIN, separate 5V LED power, bulk capacitor and common ground](assets/readme/main-wiring.svg)
+![Direct demo wiring with separate LED power and common ground](assets/readme/main-wiring.svg)
 
-Connect the signal to **DIN**, following the strip's printed arrow. Leave **DOUT** empty. Put the 330Ω resistor close to the first LED.
+Connect to **DIN**, following the strip's printed arrow. Leave **DOUT** unconnected.
 
-![LED data enters DIN and follows the arrow toward unused DOUT](assets/readme/led-direction.svg)
+![LED data direction from DIN toward unused DOUT](assets/readme/led-direction.svg)
 
-**USB powers the ESP32. External 5V powers only the LEDs.** Share ground, but never join external +5V to the USB-powered ESP32's 5V, VIN or 3V3 pins. Never power the strip from a GPIO.
+**USB powers the ESP32. External regulated 5V powers the LEDs.** Join the supply negative, LED GND and ESP32 GND. Never join external +5V to the USB-powered ESP32's 5V, VIN or 3V3 pins. Never power the strip from a GPIO.
 
-![Separate USB and external 5V supplies, common ground, capacitor polarity and safe power order](assets/readme/power-safety.svg)
+Place the capacitor across LED +5V and GND: **positive to +5V, striped negative to GND**.
 
-Check voltage and polarity first. Power the LEDs before connecting USB; disconnect USB first when switching off. Let the capacitor discharge before rewiring. Tap diagrams to enlarge them. [Detailed wiring](arduino/README.txt).
+![Separate power supplies, common ground and capacitor polarity](assets/readme/power-safety.svg)
 
-## How to install it
+Check voltage, polarity and all connections before power-on. Power the LEDs before connecting USB; disconnect USB first when switching off. Let the capacitor discharge before rewiring. [Detailed wiring and power guidance](arduino/README.txt).
 
-Keep the motorcycle disconnected. Use **Arduino IDE 2.x for Linux inside Ubuntu WSL2/WSLg**. Keep the project, board core and libraries inside WSL, not Windows.
+## Install with Arduino IDE
 
-1. Download and extract the release ZIP into your WSL home folder. Keep the sketch folder intact and open its matching .ino file (historical REVIX_LINK or future PulseShift).
-2. In IDE Preferences, add the [Espressif board-manager URL](https://espressif.github.io/arduino-esp32/package_esp32_index.json) to **Additional Boards Manager URLs**. In Boards Manager, install **esp32 by Espressif Systems 2.0.17**.
-3. In Library Manager, install **Adafruit NeoPixel 1.12.3**. The default demo does not need OLED libraries.
-4. Select **Tools → Board → ESP32 Arduino → ESP32 Dev Module**. Leave `UserConfig.h` unchanged.
-5. Follow the power order above, then select your board under **Tools → Port**. USB must be available inside WSL; if no port appears, resolve that before continuing.
-6. Click **Verify**, then **Upload**. After upload, the demonstration starts automatically.
+Keep the motorcycle disconnected. Use **Arduino IDE 2.x for Linux inside Ubuntu WSL2/WSLg**. Keep the project, ESP32 core and libraries inside WSL.
 
-Need the Linux IDE or command-line setup? See [Arduino's IDE installation guide](https://docs.arduino.cc/software/ide-v2/tutorials/getting-started/ide-v2-downloading-and-installing/) and the [included WSL guide](arduino/README.txt). Repository development and Wokwi instructions are also in that guide.
+1. Extract the versioned Arduino ZIP into your WSL home folder. Open **PulseShift/PulseShift.ino** and keep the sketch folder intact.
+2. Add the [Espressif board-manager URL](https://espressif.github.io/arduino-esp32/package_esp32_index.json) in IDE Preferences. Install **esp32 by Espressif Systems 2.0.17** through Boards Manager.
+3. Install **Adafruit NeoPixel 1.12.3** through Library Manager. The default demo needs no OLED libraries.
+4. Select **ESP32 Dev Module** and the board's USB port. USB access must be available inside WSL. Leave **UserConfig.h** unchanged.
+5. Click **Verify**, then **Upload**. The demo starts automatically.
 
-## What happens after upload
+[Arduino IDE installation](https://docs.arduino.cc/software/ide-v2/tutorials/getting-started/ide-v2-downloading-and-installing/) · [WSL, Arduino CLI and Wokwi guide](arduino/README.txt)
 
-![Startup sweep, progressive Classic fill, flashing red shift alert and planned dark interval with recovery](assets/readme/expected-behavior.svg)
+## Download
 
-Expect a short startup animation, then a growing light bar. All six LEDs flash red at the simulated shift point. The test also deliberately stops valid data, so a dark interval followed by recovery is normal. It is not measuring real engine RPM.
+**[Published software prereleases](https://github.com/iamaritrasaha/PulseShift/releases)**
 
-## Common mistakes
+For v0.3.0, download **PulseShift-Arduino-v0.3.0.zip** and **PulseShift-Arduino-v0.3.0.sha256** from Assets. Check the ZIP against its SHA-256 before extracting. Use the packaged Arduino ZIP, not GitHub's automatic source archive.
 
-- **Connecting DOUT instead of DIN.** Follow the printed arrow into the first LED.
-- **Reversing the large capacitor.** Positive goes to +5V; the striped negative side goes to GND.
-- **Forgetting common ground.** Join ESP32, strip and supply negative.
-- **Joining the two positive supplies.** Keep external +5V away from the USB-powered ESP32's power pins.
-- **Using long data leads.** Keep GPIO27-to-DIN wiring short.
-- **Changing wires while powered.** Disconnect both supplies first; check wiring and power before blaming the code.
+**Until v0.3.0 is listed, wait for publication.** A direct download link will be added after the public assets are verified.
 
-## What you can change
+## After upload
 
-These are optional. The standard hardware works with the defaults in [UserConfig.h](UserConfig.h).
-Historical packages use REVIX_ setting names; PulseShift source uses PULSESHIFT_.
+![Startup sweep, progressive fill, shift alert and missing-data blanking](assets/readme/expected-behavior.svg)
 
+Expect a startup animation followed by a growing light bar and red flashing at the simulated shift point. Deliberate gaps in valid data make the LEDs go dark, then recover. **This demonstration does not measure engine RPM.**
 
-- **Brightness:** `PULSESHIFT_LED_BRIGHTNESS`, default **40**, range 0..255. Brightness is not a hardware current limiter.
-- **Style:** `PULSESHIFT_SHIFT_LIGHT_STYLE`, default **Classic**; Racing, Minimal and Custom are also available.
-- **LED direction:** `PULSESHIFT_LED_DIRECTION`, default **Normal**. Reversed changes the light pattern, not which end is DIN.
+## Configuration
 
-Rebuild and upload after changing a setting. [Advanced options](arduino/README.txt) stay in the detailed guide.
+Optional settings in [UserConfig.h](UserConfig.h):
 
-## Important note
+- **Brightness:** PULSESHIFT_LED_BRIGHTNESS, default **40**, range 0..255. This is not a hardware current limiter.
+- **Style:** PULSESHIFT_SHIFT_LIGHT_STYLE, default **Classic**.
+- **Direction:** PULSESHIFT_LED_DIRECTION, default **Normal**. Reversal changes the pattern, not the DIN connection.
 
-PulseShift's standard demo sends data directly from GPIO27 to the LED strip through a 330Ω resistor. This works with compatible WS2812B strips, but some 5V strips require a level shifter for reliable operation.
+Rebuild and upload after edits. [Advanced settings](arduino/README.txt).
 
-Separate LED power does not change the 3.3V data level. Keep the LED supply at its rated 5V. If testing shows unreliable data recognition, an optional proper 74AHCT125 buffer can be added.
+## Experimental CAN
 
-**The default demo works without CAN.** GPIO16 and GPIO17 remain reserved for receiver work. Advanced **CAN_CAPTURE** and **VEHICLE_RPM** modes are available in the [detailed guide](arduino/README.txt). Capture logs frames; vehicle mode requires a qualified profile. The NS125 profile is UNVERIFIED, its bitrate is 0, and its decoding stays disabled.
+**CAN_CAPTURE** records existing CAN frames without diagnostic requests. **VEHICLE_RPM** requires an independently verified profile and never substitutes demo RPM for missing data. GPIO16 and GPIO17 remain reserved for receiver work.
 
-**2025 Indian Bajaj Pulsar NS125 ABS plug-and-play RPM integration remains unverified.** Keep SN65HVD230 disconnected until its RS wiring, termination and electrical passivity are checked. The detailed guide covers the separate isolated CAN bench setup.
+The **2025 Indian Bajaj Pulsar NS125 ABS** profile remains **UNVERIFIED**, with bitrate **0** and live decoding disabled. A scanner displaying RPM does not prove passive broadcasts or establish the diagnostic transport. [Qualified capture and offline discovery workflow](arduino/README.txt).
+
+## Safety limitations
+
+- Common ground, correct DIN direction and capacitor polarity are essential. Never change wiring while powered.
+- PulseShift's standard demo sends data directly from GPIO27 through a 330Ω resistor. Some 5V WS2812B strips need a proper 74AHCT125 level shifter for reliable 3.3V data recognition. Separate LED power does not fix the signal-level mismatch; do not lower the rated LED supply voltage to compensate.
+- Keep the CAN module disconnected until a qualified technician verifies the connector, transport, RS wiring, TXD bias, reset/unpowered passivity, termination and automotive protection. Software listen-only alone does not qualify the hardware.
+- Motorcycle RPM integration and shift calibration are unverified. The demo's RPM thresholds are synthetic. This is a **software prerelease**, not a physically qualified motorcycle accessory.
+- Wokwi DEMO does not validate physical CAN. The isolated TWAI test still has an unresolved transmission-completion limitation.
 
 Copyright (c) 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).
