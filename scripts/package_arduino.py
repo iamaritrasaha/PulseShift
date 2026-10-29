@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKETCH_NAME = "REVIX_LINK"
+SKETCH_NAME = "PulseShift"
 VERSION_RE = re.compile(r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 SOURCE_FILES = (
     "src/main.cpp",
@@ -43,6 +43,7 @@ SOURCE_FILES = (
 REQUIRED_PACKAGE_FILES = {
     f"{SKETCH_NAME}/{SKETCH_NAME}.ino",
     f"{SKETCH_NAME}/UserConfig.h",
+    f"{SKETCH_NAME}/ConfigCompat.h",
     f"{SKETCH_NAME}/README.txt",
     f"{SKETCH_NAME}/COPYRIGHT",
     *(f"{SKETCH_NAME}/src/{Path(name).name}" for name in SOURCE_FILES),
@@ -74,6 +75,10 @@ def stage_sketch(destination: Path, version: str) -> None:
     if not user_config.is_file() or user_config.is_symlink():
         fail("required user configuration is missing or is a symlink: UserConfig.h")
     shutil.copyfile(user_config, destination / "UserConfig.h")
+    compat = ROOT / "ConfigCompat.h"
+    if not compat.is_file() or compat.is_symlink():
+        fail("required configuration compatibility header is missing or a symlink")
+    shutil.copyfile(compat, destination / "ConfigCompat.h")
     copyright_file = ROOT / "COPYRIGHT"
     if not copyright_file.is_file() or copyright_file.is_symlink():
         fail("required copyright notice is missing or is a symlink: COPYRIGHT")
@@ -137,11 +142,11 @@ def main() -> int:
     version = normalized_version(args.version)
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    asset_stem = f"REVIX-LINK-Arduino-{version}"
+    asset_stem = f"PulseShift-Arduino-{version}"
     zip_path = output_dir / f"{asset_stem}.zip"
     checksum_path = output_dir / f"{asset_stem}.sha256"
 
-    with tempfile.TemporaryDirectory(prefix="revix-arduino-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="pulseshift-arduino-") as temp_dir:
         stage_root = Path(temp_dir)
         sketch_dir = stage_root / SKETCH_NAME
         stage_sketch(sketch_dir, version)

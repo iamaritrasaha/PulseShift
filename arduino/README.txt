@@ -1,4 +1,4 @@
-REVIX LINK @VERSION@ - Arduino source preview
+PulseShift @VERSION@ - Arduino source preview
 ============================================
 Copyright (c) 2026 Aritra Saha. All rights reserved.
 
@@ -11,19 +11,19 @@ GPIO16 and GPIO17 stay unconnected and reserved for the CAN receiver.
 These values are demonstrations, not a motorcycle calibration.
 
 Source entry point: src/main.cpp. User settings: UserConfig.h.
-Keep this folder intact. REVIX_LINK.ino supplies the Arduino sketch identity;
+Keep this folder intact. PulseShift.ino supplies the Arduino sketch identity;
 setup()/loop() are defined once in src/main.cpp.
 
 BUILD INSIDE UBUNTU WSL
 ----------------------
 Extract the ZIP under your WSL home directory, not /mnt/c or /mnt/d.
-Open a WSL terminal in the extracted REVIX_LINK folder. Use Arduino CLI
+Open a WSL terminal in the extracted PulseShift folder. Use Arduino CLI
 1.5.1 with Espressif ESP32 core 2.0.17. Skip installation if already present.
 
 To install the CLI in WSL (requires curl):
 mkdir -p "$HOME/.local/bin"
-curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh -o /tmp/revix-arduino-cli-install.sh
-BINDIR="$HOME/.local/bin" sh /tmp/revix-arduino-cli-install.sh 1.5.1
+curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh -o /tmp/pulseshift-arduino-cli-install.sh
+BINDIR="$HOME/.local/bin" sh /tmp/pulseshift-arduino-cli-install.sh 1.5.1
 export PATH="$HOME/.local/bin:$PATH"
 arduino-cli version
 
@@ -38,12 +38,12 @@ arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
 arduino-cli compile --fqbn esp32:esp32:esp32 --warnings all --output-dir build .
 
 Only NeoPixel is required with OLED disabled. For OLED, set
-REVIX_OLED_ENABLED to 1 in UserConfig.h and install:
+PULSESHIFT_OLED_ENABLED to 1 in UserConfig.h and install:
 arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"
 arduino-cli lib install --no-deps "Adafruit GFX Library@1.11.11"
 arduino-cli lib install --no-deps "Adafruit BusIO@1.17.0"
 
-Arduino IDE 2.x can also run inside WSL2/WSLg. Open REVIX_LINK.ino, install
+Arduino IDE 2.x can also run inside WSL2/WSLg. Open PulseShift.ino, install
 those same pinned dependencies in Boards/Library Manager and select
 Tools > Board > ESP32 Arduino > ESP32 Dev Module. Do not install board cores
 or libraries on Windows for this project.
@@ -72,31 +72,31 @@ Leave every setting unchanged for the standard LED demonstration. UserConfig.h l
 
 | Reason to customize | Setting and limits |
 | --- | --- |
-| Different LED wiring or count | REVIX_LED_DATA_GPIO, REVIX_LED_COUNT (1..32); check wiring and current budget; reserve GPIO16/17 |
-| Personal appearance | REVIX_LED_BRIGHTNESS (0..255), REVIX_SHIFT_LIGHT_STYLE (Classic/Racing/Minimal/Custom), REVIX_CUSTOM_COLORS (RGB triples, channels 0..255), REVIX_LED_DIRECTION (normal/reversed) |
-| Animation or alert preference | REVIX_STARTUP_ANIMATION_ENABLED, REVIX_SMOOTH_TRANSITIONS_ENABLED (0/1), REVIX_SHIFT_ALERT_MODE (off/solid red/flashing red/flashing white), REVIX_ANIMATION_INTERVAL_MS (5..250ms) |
-| Synthetic scale only | REVIX_DEMO_START_RPM, REVIX_DEMO_SHIFT_RPM, REVIX_DEMO_MAX_RPM (maximum 1..20000; start < shift <= maximum), REVIX_ALERT_HYSTERESIS_RPM (0 to less than shift minus start) |
-| Optional idle effect | REVIX_IDLE_EFFECT_ENABLED (0/1), REVIX_IDLE_MAX_RPM (0..shift RPM) |
-| Add an OLED | REVIX_OLED_ENABLED (0/1), REVIX_OLED_SDA_GPIO, REVIX_OLED_SCL_GPIO; use a 128x64 SSD1306 at 0x3C, safe 3.3V pull-ups and the display libraries |
-| Serial preference | REVIX_SERIAL_DIAGNOSTICS (0/1), REVIX_SERIAL_BAUD (1..2000000); match the serial monitor rate; diagnostics off also removes runtime demo commands |
-| Verified isolated CAN bench only | REVIX_OPERATING_MODE, REVIX_CAN_RX_GPIO, REVIX_CAN_TX_GPIO, REVIX_CAN_BITRATE; read the bench requirements before changing them |
+| Different LED wiring or count | PULSESHIFT_LED_DATA_GPIO, PULSESHIFT_LED_COUNT (1..32); check wiring and current budget; reserve GPIO16/17 |
+| Personal appearance | PULSESHIFT_LED_BRIGHTNESS (0..255), PULSESHIFT_SHIFT_LIGHT_STYLE (Classic/Racing/Minimal/Custom), PULSESHIFT_CUSTOM_COLORS (RGB triples, channels 0..255), PULSESHIFT_LED_DIRECTION (normal/reversed) |
+| Animation or alert preference | PULSESHIFT_STARTUP_ANIMATION_ENABLED, PULSESHIFT_SMOOTH_TRANSITIONS_ENABLED (0/1), PULSESHIFT_SHIFT_ALERT_MODE (off/solid red/flashing red/flashing white), PULSESHIFT_ANIMATION_INTERVAL_MS (5..250ms) |
+| Synthetic scale only | PULSESHIFT_DEMO_START_RPM, PULSESHIFT_DEMO_SHIFT_RPM, PULSESHIFT_DEMO_MAX_RPM (maximum 1..20000; start < shift <= maximum), PULSESHIFT_ALERT_HYSTERESIS_RPM (0 to less than shift minus start) |
+| Optional idle effect | PULSESHIFT_IDLE_EFFECT_ENABLED (0/1), PULSESHIFT_IDLE_MAX_RPM (0..shift RPM) |
+| Add an OLED | PULSESHIFT_OLED_ENABLED (0/1), PULSESHIFT_OLED_SDA_GPIO, PULSESHIFT_OLED_SCL_GPIO; use a 128x64 SSD1306 at 0x3C, safe 3.3V pull-ups and the display libraries |
+| Serial preference | PULSESHIFT_SERIAL_DIAGNOSTICS (0/1), PULSESHIFT_SERIAL_BAUD (1..2000000); match the serial monitor rate; diagnostics off also removes runtime demo commands |
+| Verified isolated CAN bench only | PULSESHIFT_OPERATING_MODE, PULSESHIFT_CAN_RX_GPIO, PULSESHIFT_CAN_TX_GPIO, PULSESHIFT_CAN_BITRATE; read the bench requirements before changing them |
 
 GRB / 800kHz is fixed in the existing LED driver, not a UserConfig.h option. A different RGB order, RGBW strip or protocol requires a reviewed driver change. Do not change the RGB order of palette triples to compensate. CAN bitrate does not select a motorcycle protocol; no verified vehicle mapping is supplied.
 
 
 FIRMWARE MODES
 ---------------
-DEMO: REVIX_USER_MODE_DEMO is the default. It needs no CAN module. Synthetic
+DEMO: PULSESHIFT_USER_MODE_DEMO is the default. It needs no CAN module. Synthetic
 complete CAN frames pass through the common decoder and expiring RPM state into
 the existing ShiftLightEngine. Demo thresholds are not motorcycle calibration.
 
-CAN_CAPTURE: REVIX_USER_MODE_CAN_CAPTURE logs raw passive CAN frames only.
+CAN_CAPTURE: PULSESHIFT_USER_MODE_CAN_CAPTURE logs raw passive CAN frames only.
 Set a verified isolated bench bitrate explicitly; 0 leaves TWAI stopped.
 No transmit, ACK, diagnostic request or ECU command is added. Serial records
 include timestamp, ID, standard/extended format, RTR, DLC, data and decode status.
 Processing and logging are bounded; inspect driver overflow and dropped logs.
 
-VEHICLE_RPM: REVIX_USER_MODE_VEHICLE_RPM uses the same receive-only transport,
+VEHICLE_RPM: PULSESHIFT_USER_MODE_VEHICLE_RPM uses the same receive-only transport,
 profile decoder, RPM state and LED engine. The selected NS125 profile in
 src/vehicle_profile.cpp remains UNVERIFIED with no bitrate or signal mapping.
 It cannot produce guessed vehicle RPM or fall back to the demo. A VERIFIED
@@ -143,7 +143,7 @@ there is no direct RPM-to-LED assignment. Startup is a separate animation.
 OPTIONAL OLED
 -------------
 SSD1306 128x64, address 0x3C, SDA21/SCL22 with ESP32-safe pull-ups. The display
-shows REVIX LINK, operating mode, validated RPM or --, CAN status and a bar.
+shows PulseShift, operating mode, validated RPM or --, CAN status and a bar.
 The 20-second automated cycle includes malformed/out-of-range frames, silence
 and recovery, with or without an OLED. After the startup sweep, the LEDs show
 progression and shift flashing, then go dark when valid RPM becomes stale, and
@@ -151,7 +151,7 @@ resume when valid frames return. The deliberate dark interval is expected.
 
 ISOLATED BENCH CAPTURE
 ----------------------
-Select REVIX_USER_MODE_CAN_CAPTURE and configure REVIX_CAN_BITRATE only
+Select PULSESHIFT_USER_MODE_CAN_CAPTURE and configure PULSESHIFT_CAN_BITRATE only
 for a known bench rate. Default bitrate 0 leaves TWAI stopped. RPM mapping is
 disabled; this mode logs frames and cannot report genuine NS125 engine RPM.
 
@@ -208,7 +208,7 @@ This standalone power arrangement is not a protected automotive installation.
 
 DIRECT-DATA COMPATIBILITY
 -------------------------
-REVIX LINK's standard demo sends data directly from GPIO27 to the LED strip
+PulseShift's standard demo sends data directly from GPIO27 to the LED strip
 through a 330-ohm resistor. This works with compatible WS2812B strips, but some
 5V strips require a level shifter for reliable operation.
 
@@ -250,7 +250,7 @@ No OLED: default is OFF; enable it, install libraries, verify wiring/address.
 REPOSITORY DEVELOPMENT AND WOKWI (OPTIONAL)
 -------------------------------------------
 These steps use the repository, not the downloaded Arduino sketch folder.
-Open /home/hrik/projects/REVIX_LINK_ESP32 in VS Code through Remote WSL.
+Open /home/hrik/projects/PulseShift in VS Code through Remote WSL.
 Use PlatformIO and the licensed Wokwi extension in that WSL environment.
 Press Ctrl+Shift+B, wait for SUCCESS, then F1 > Wokwi: Start Simulator.
 Stop the simulator, rebuild and restart after code changes. Root wokwi.toml
@@ -269,7 +269,7 @@ self-reception alone is not proof of completed transmission.
 
 esp32dev_bike forces listen-only mode, honors the verified bench bitrate in
 UserConfig.h, and excludes the synthetic ECU. It keeps motorcycle decoding
-disabled. The optional VS Code task "REVIX: Record bench CAN log" captures
+disabled. The optional VS Code task "PulseShift: Record bench CAN log" captures
 serial logs from already installed bench firmware; it does not flash a board.
 Do not upload either CAN target as the standard standalone demonstration.
 
@@ -286,7 +286,7 @@ https://www.ti.com/lit/ds/symlink/sn65hvd230.pdf
 https://learn.adafruit.com/adafruit-neopixel-uberguide/basic-connections
 https://www.bajajauto.com/customer-service/owners-manual
 
-Third-party libraries retain their respective notices/licenses. REVIX LINK
+Third-party libraries retain their respective notices/licenses. PulseShift
 is governed by the included COPYRIGHT notice; no new license is granted.
 
 
@@ -296,9 +296,23 @@ reserved CAN pins and enabled OLED pins cannot share them. Default pins do not
 change. Disabling diagnostics does not prove a custom pin assignment safe:
 the DevKit USB-UART hardware and its wiring must still be checked.
 
-Capture analysis expects one boot/session per log file. An explicit REVIX LINK
-startup banner after received frames is rejected, including near timer rollover.
+Capture analysis expects one boot/session per log file. A PulseShift or legacy
+REVIX LINK startup banner after received frames is rejected, including near timer rollover.
 Split recordings at each reboot. A rollover without a restart marker is accepted;
 a missing marker cannot reliably distinguish reboot from rollover. --max-frames
 counts all RX records, including malformed records. Lines over 4096 characters
 are rejected. These limits prevent malformed inputs from bypassing the budget.
+
+
+NAME MIGRATION
+PulseShift v0.3.0 is the proposed first renamed software prerelease.
+Published v0.1.0 through v0.2.1 retain their REVIX-LINK-Arduino filenames and
+REVIX_LINK/REVIX_LINK.ino sketch layout. Never rename or overwrite their assets.
+
+New settings use PULSESHIFT_ with the same values and defaults. Saved v0.2.1
+UserConfig.h files and legacy build defines remain supported by ConfigCompat.h.
+Keep ConfigCompat.h beside UserConfig.h when using a saved configuration.
+If both prefixes define a setting, values must agree. For custom palettes use
+one prefix, or identical entries. Prefer the new UserConfig.h and copy your
+settings into it. New capture logs start with PulseShift; old REVIX LINK logs
+retain their reboot/session-boundary protection.

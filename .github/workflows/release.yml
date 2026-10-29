@@ -50,7 +50,7 @@ jobs:
       - name: Download verified Arduino assets
         uses: actions/download-artifact@v4
         with:
-          name: revix-arduino-release-assets
+          name: pulseshift-arduino-release-assets
           path: release-assets
       - name: Publish with version-specific notes
         env:

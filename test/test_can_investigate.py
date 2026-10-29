@@ -56,7 +56,7 @@ class InvestigationTests(unittest.TestCase):
     def test_startup_banner_splits_sessions_even_near_wrap(self):
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/"input.log"
-            banner="REVIX LINK mode=CAN_CAPTURE SDK=v4.4.7-dirty\n"
+            banner="PulseShift mode=CAN_CAPTURE SDK=v4.4.7-dirty\n"
             frame="RX t={} id=100 ext=0 rtr=0 dlc=1 data=00 UNMAPPED\n"
             p.write_text(banner+frame.format(1))
             self.assertEqual(len(can.read_log(p)[0]),1)
@@ -64,6 +64,20 @@ class InvestigationTests(unittest.TestCase):
                 p.write_text(banner+frame.format(before)+banner+frame.format(after))
                 with self.subTest(before=before,after=after):
                     with self.assertRaisesRegex(ValueError,"session boundary"):can.read_log(p)
+
+    def test_both_brands_and_mixed_session_boundaries(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"input.log"
+            frame="RX t={} id=100 ext=0 rtr=0 dlc=1 data=00 UNMAPPED\n"
+            banners=("PulseShift mode=CAN_CAPTURE SDK=test\n",
+                     "REVIX LINK mode=CAN_CAPTURE SDK=test\n")
+            for first in banners:
+                p.write_text(first+frame.format(10))
+                self.assertEqual(len(can.read_log(p)[0]),1)
+                for second in banners:
+                    p.write_text(first+frame.format(4294967200)+second+frame.format(10))
+                    with self.subTest(first=first,second=second):
+                        with self.assertRaisesRegex(ValueError,"session boundary"):can.read_log(p)
 
     def test_rx_budget_includes_invalid_records(self):
         with tempfile.TemporaryDirectory() as td:

@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <stdarg.h>
 void FrameLog::push(const CanFrame& f, DecodeResult result) {
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
   if (count_ == 64) { ++dropped_; return; }
   auto& line = lines_[head_];
   int n = snprintf(line.text, sizeof(line.text), "RX t=%lu id=%08lX ext=%d rtr=%d dlc=%u data=",
@@ -32,7 +32,7 @@ void FrameLog::push(const CanFrame& f, DecodeResult result) {
 #endif
 }
 void FrameLog::pump() {
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
   if (!count_) return;
   auto& line = lines_[tail_];
   const int free = Serial.availableForWrite();
@@ -44,7 +44,7 @@ void FrameLog::pump() {
 }
 
 void FrameLog::status(const char* format, ...) {
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
   char text[112];
   va_list args;
   va_start(args, format);

@@ -1,20 +1,24 @@
-# REVIX LINK
+# PulseShift
 
-Six ESP32-controlled LEDs show simulated engine speed and flash at the shift point.
+Customizable ESP32 motorcycle shift-light firmware with WS2812B effects, a standalone RPM demo and experimental receive-only CAN.
 
 ## What this does
 
 **No settings need changing** for six compatible WS2812B LEDs: GPIO27, brightness 40/255, Classic colors and OLED off. The repeating demo needs no motorcycle, CAN module or screen.
 
-**[Download the latest published Arduino Software Prerelease](https://github.com/iamaritrasaha/REVIX-LINK/releases)**
+**[Download the latest published Arduino Software Prerelease](https://github.com/iamaritrasaha/PulseShift/releases)**
 
-Open the newest **published** `v0.x.y` software prerelease. Under **Assets**, choose `REVIX-LINK-Arduino-v0.x.y.zip` with the same version as the release tag, not GitHub's automatically generated source-code ZIP. Verify the matching `.sha256` checksum and follow the bundled guide. Motorcycle use remains unverified.
+Published **v0.1.0 to v0.2.1** are historical REVIX LINK releases. Download the
+matching **REVIX-LINK-Arduino-vX.Y.Z.zip** and .sha256 from Assets; those sketches
+still open as **REVIX_LINK/REVIX_LINK.ino**. Choose v0.2.1 or newer for the audit fixes.
 
-**Safety update:** The v0.2.0 prerelease predates the six audit fixes in [PR #4](https://github.com/iamaritrasaha/REVIX-LINK/pull/4). Use **v0.2.1 or newer** for those fixes once published. The [verified post-merge CI run](https://github.com/iamaritrasaha/REVIX-LINK/actions/runs/40713221258) also provides the audited Arduino source as an Actions artifact (GitHub sign-in may be required and artifacts expire).
+**v0.3.0 is proposed, not published.** Future PulseShift packages will use
+**PulseShift-Arduino-vX.Y.Z.zip** and **PulseShift/PulseShift.ino**. Use a published
+release, not GitHub's automatic source ZIP.
 
 ## What you need
 
-![Standard parts for the standard REVIX LINK build](assets/readme/hardware-overview.svg)
+![Standard parts for the standard PulseShift build](assets/readme/hardware-overview.svg)
 
 - ESP32 DevKit V1 and a USB **data** cable.
 - One six-LED **5V WS2812B strip**, GRB / 800kHz.
@@ -45,7 +49,7 @@ Check voltage and polarity first. Power the LEDs before connecting USB; disconne
 
 Keep the motorcycle disconnected. Use **Arduino IDE 2.x for Linux inside Ubuntu WSL2/WSLg**. Keep the project, board core and libraries inside WSL, not Windows.
 
-1. Download and extract the release ZIP into your WSL home folder. Keep the `REVIX_LINK` folder intact and open `REVIX_LINK.ino`.
+1. Download and extract the release ZIP into your WSL home folder. Keep the sketch folder intact and open its matching .ino file (historical REVIX_LINK or future PulseShift).
 2. In IDE Preferences, add the [Espressif board-manager URL](https://espressif.github.io/arduino-esp32/package_esp32_index.json) to **Additional Boards Manager URLs**. In Boards Manager, install **esp32 by Espressif Systems 2.0.17**.
 3. In Library Manager, install **Adafruit NeoPixel 1.12.3**. The default demo does not need OLED libraries.
 4. Select **Tools → Board → ESP32 Arduino → ESP32 Dev Module**. Leave `UserConfig.h` unchanged.
@@ -72,16 +76,18 @@ Expect a short startup animation, then a growing light bar. All six LEDs flash r
 ## What you can change
 
 These are optional. The standard hardware works with the defaults in [UserConfig.h](UserConfig.h).
+Historical packages use REVIX_ setting names; PulseShift source uses PULSESHIFT_.
 
-- **Brightness:** `REVIX_LED_BRIGHTNESS`, default **40**, range 0..255. Brightness is not a hardware current limiter.
-- **Style:** `REVIX_SHIFT_LIGHT_STYLE`, default **Classic**; Racing, Minimal and Custom are also available.
-- **LED direction:** `REVIX_LED_DIRECTION`, default **Normal**. Reversed changes the light pattern, not which end is DIN.
+
+- **Brightness:** `PULSESHIFT_LED_BRIGHTNESS`, default **40**, range 0..255. Brightness is not a hardware current limiter.
+- **Style:** `PULSESHIFT_SHIFT_LIGHT_STYLE`, default **Classic**; Racing, Minimal and Custom are also available.
+- **LED direction:** `PULSESHIFT_LED_DIRECTION`, default **Normal**. Reversed changes the light pattern, not which end is DIN.
 
 Rebuild and upload after changing a setting. [Advanced options](arduino/README.txt) stay in the detailed guide.
 
 ## Important note
 
-REVIX LINK's standard demo sends data directly from GPIO27 to the LED strip through a 330Ω resistor. This works with compatible WS2812B strips, but some 5V strips require a level shifter for reliable operation.
+PulseShift's standard demo sends data directly from GPIO27 to the LED strip through a 330Ω resistor. This works with compatible WS2812B strips, but some 5V strips require a level shifter for reliable operation.
 
 Separate LED power does not change the 3.3V data level. Keep the LED supply at its rated 5V. If testing shows unreliable data recognition, an optional proper 74AHCT125 buffer can be added.
 

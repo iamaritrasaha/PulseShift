@@ -30,7 +30,7 @@ def main():
         sketch=folder/"twai_probe"
         sketch.mkdir(parents=True,exist_ok=True)
         (sketch/"twai_probe.ino").write_bytes((ROOT/"test/wokwi_twai_probe.cpp").read_bytes())
-        flags=f"-DREVIX_WOKWI_TWAI_PROBE=1 -DPROBE_SINGLE_SHOT={single} -DPROBE_TX_QUEUE={queue} -DPROBE_REFERENCE={reference}"
+        flags=f"-DPULSESHIFT_WOKWI_TWAI_PROBE=1 -DPROBE_SINGLE_SHOT={single} -DPROBE_TX_QUEUE={queue} -DPROBE_REFERENCE={reference}"
         cmd=[args.arduino_cli,"compile","--fqbn","esp32:esp32:esp32","--warnings","all",
              "--build-property","compiler.cpp.extra_flags="+flags,
              "--build-path",str(folder/"build"),str(sketch)]

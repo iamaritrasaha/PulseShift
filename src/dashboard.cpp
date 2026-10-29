@@ -2,7 +2,7 @@
 #include "dashboard.h"
 #include <Arduino.h>
 
-#if REVIX_OLED_ENABLED
+#if PULSESHIFT_OLED_ENABLED
 #include <Wire.h>
 namespace {
 const char* statusName(ViewStatus s) {
@@ -21,7 +21,7 @@ const char* statusName(ViewStatus s) {
 #endif
 
 bool Dashboard::begin() {
-#if REVIX_OLED_ENABLED
+#if PULSESHIFT_OLED_ENABLED
   Wire.begin(config::sda, config::scl);
   Wire.setTimeOut(20);
   ready_ = display_.begin(SSD1306_SWITCHCAPVCC, 0x3C, false, false);
@@ -33,7 +33,7 @@ bool Dashboard::begin() {
   leds_.show();
   // Start the boot animation clock after peripheral setup, not at reset time.
   shiftLight_.reset(millis());
-#if REVIX_OLED_ENABLED
+#if PULSESHIFT_OLED_ENABLED
   return ready_;
 #else
   return true;
@@ -56,7 +56,7 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
     leds_.show();
   }
 
-#if REVIX_OLED_ENABLED
+#if PULSESHIFT_OLED_ENABLED
   if (!ready_) return;
   const bool alertActive = shiftLight_.isAlertActive();
   // Cap I2C traffic at 10 Hz even while RPM/animation changes, and avoid
@@ -81,7 +81,7 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
   display_.setTextColor(SSD1306_WHITE);
   display_.setTextSize(1);
   display_.setCursor(0, 0);
-  display_.print("REVIX LINK");
+  display_.print("PulseShift");
   display_.setCursor(0, 10);
   display_.print(config::modeName);
 

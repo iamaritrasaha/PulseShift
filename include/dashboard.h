@@ -4,7 +4,7 @@
 #include "dashboard_model.h"
 #include "shift_light.h"
 #include <Adafruit_NeoPixel.h>
-#if REVIX_OLED_ENABLED
+#if PULSESHIFT_OLED_ENABLED
 #include <Adafruit_SSD1306.h>
 #endif
 
@@ -16,7 +16,7 @@ class Dashboard {
   const ShiftLightEngine& shiftLight() const { return shiftLight_; }
 
  private:
-#if REVIX_OLED_ENABLED
+#if PULSESHIFT_OLED_ENABLED
   Adafruit_SSD1306 display_{128, 64, &Wire, -1};
 #endif
   Adafruit_NeoPixel leds_{config::ledCount, config::ledPin, NEO_GRB + NEO_KHZ800};

@@ -5,7 +5,7 @@ import argparse
 root=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description='Verify a running Remote WSL Wokwi demo over its optional RFC2217 bridge.')
 parser.add_argument('--browser-cli',type=Path,help='Optional WSL playwright-cli for an already running Wokwi browser UART')
-parser.add_argument('--browser-session',default='revix')
+parser.add_argument('--browser-session',default='pulseshift')
 parser.add_argument('--timeout-scale',type=float,default=1)
 parser.add_argument('--url',default='rfc2217://127.0.0.1:4000')
 parser.add_argument('--output-dir',type=Path,default=root/'.pio/wokwi-runtime')
@@ -41,7 +41,7 @@ def app(rpm=None,fresh=1,alert=None):
   return fields.get('fresh')==str(fresh) and (rpm is None or fields.get('rpm')==str(rpm)) and (alert is None or fields.get('alert')==str(alert))
  return pred
 try:
- if args.browser_cli:contains('REVIX LINK mode=DEMO_SIMULATED','custom demo firmware is actually loaded',12)
+ if args.browser_cli:contains('PulseShift mode=DEMO_SIMULATED','custom demo firmware is actually loaded',12)
  contains('WRONG_DLC','automatic wrong-DLC rejection')
  contains('OUT_OF_RANGE','automatic above-range rejection')
  wait(app(fresh=0),'automatic stale indication during silence')

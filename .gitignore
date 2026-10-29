@@ -6,11 +6,18 @@ __pycache__/
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 *.tmp
-REVIX-LINK-Arduino-v*.zip
-REVIX-LINK-Arduino-v*.sha256
+PulseShift-Arduino-v*.zip
+PulseShift-Arduino-v*.sha256
 /docs/
 /logs/
 
 # Detailed reports stay on this machine.
 /.local-notes/
 /AUDIT_REPORT.md
+
+# Historical release downloads remain local.
+REVIX-LINK-Arduino-v*.zip
+REVIX-LINK-Arduino-v*.sha256
+
+# Local simulator browser captures.
+/.playwright-cli/

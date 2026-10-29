@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build REVIX LINK",
+      "label": "Build PulseShift",
       "type": "process",
       "command": "${env:HOME}/.platformio/penv/bin/pio",
       "args": ["run", "-e", "esp32dev_wokwi"],
@@ -11,7 +11,7 @@
       "problemMatcher": ["$gcc"]
     },
     {
-      "label": "REVIX: Record bench CAN log",
+      "label": "PulseShift: Record bench CAN log",
       "type": "process",
       "command": "${env:HOME}/.platformio/penv/bin/pio",
       "args": ["device", "monitor", "--project-dir", "${workspaceFolder}",

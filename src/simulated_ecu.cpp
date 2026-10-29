@@ -2,7 +2,7 @@
 #include "simulated_ecu.h"
 #include "config.h"
 
-#if REVIX_MODE == REVIX_REPLAY || REVIX_MODE == REVIX_TWAI_TEST
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
 RpmMapping demonstrationMapping() {
   RpmMapping m;
   m.enabled = true;

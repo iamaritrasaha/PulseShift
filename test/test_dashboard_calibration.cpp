@@ -7,7 +7,7 @@
 static unsigned checks=0;
 #define CHECK(x) do { ++checks; if(!(x)) { std::fprintf(stderr,"OLED FAIL %d: %s\n",__LINE__,#x); std::exit(1); } } while(0)
 
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
 static VehicleProfile fixture() {
   VehicleProfile p;
   p.identifier="synthetic-oled-only"; p.description="Artificial OLED regression calibration";
@@ -30,7 +30,7 @@ static CanFrame frame(uint16_t rpm,uint32_t at) {
   f.data[0]=uint8_t(rpm); f.data[1]=uint8_t(rpm>>8); return f;
 }
 static RpmState state() {
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
   return RpmState(selected);
 #else
   return RpmState(RpmMapping{true,0x612,false,2,0,true,1,1,12000});
@@ -42,13 +42,13 @@ static void blank() {
   for(auto pixel:testPixels) CHECK(pixel==0);
 }
 int main() {
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
   CHECK(vehicleProfileReady(selected));
 #endif
   Dashboard dashboard; CHECK(dashboard.begin());
   auto rpm=state();
   const uint16_t maximum=
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     10000;
 #else
     config::maxRpm;
@@ -74,7 +74,7 @@ int main() {
   CHECK(rpm.ingest(frame(5000,now))==DecodeResult::Valid);
   dashboard.update(rpm,now,true,true,rpm.timeoutMs(config::staleMs));
   CHECK(testOledBarWidth==int(uint32_t(5000)*126/maximum) && testOledBarFills==1);
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
   auto bad=frame(5000,now+100); bad.dlc=bad.payloadSize=1;
   CHECK(rpm.ingest(bad)==DecodeResult::WrongDlc);
   dashboard.update(rpm,now+100,true,true,selected.timeoutMs); blank();
@@ -88,5 +88,5 @@ int main() {
   CHECK(unconfigured.ingest(frame(5000,3000))==DecodeResult::ProfileUnconfigured);
   disabled.update(unconfigured,3000,false,false,300); blank();
 #endif
-  std::printf("PASS OLED calibrated maximum, clamping, blanking and recovery mode=%d: %u checks\n",REVIX_MODE,checks);
+  std::printf("PASS OLED calibrated maximum, clamping, blanking and recovery mode=%d: %u checks\n",PULSESHIFT_MODE,checks);
 }

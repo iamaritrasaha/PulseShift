@@ -4,6 +4,8 @@ Status on 2026-10-27: **TX completion FAILS in the tested Wokwi setup. Physical
 CAN has not been tested.** The existing esp32dev_twai_test environment, its
 transmitter and its completion checks remain enabled and unchanged.
 
+Recorded observations predate the PulseShift rename; original banners and hashes are retained.
+
 ## Reproduction
 
 Run these in Ubuntu WSL from the repository root:
