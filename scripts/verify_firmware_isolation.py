@@ -13,7 +13,7 @@ for environment in ("esp32dev_wokwi","esp32dev_bike","esp32dev_vehicle","esp32de
     if environment=="esp32dev_wokwi":
         forbidden=("twai_transmit","CanTransport::","twai_driver_install")
     elif environment in ("esp32dev_bike","esp32dev_vehicle"):
-        forbidden=("twai_transmit","CanTransport::sendTest","demonstrationFrame","ReplayTransport")
+        forbidden=("twai_transmit","twai_clear_transmit_queue","twai_initiate_recovery","CanTransport::sendTest","demonstrationFrame","ReplayTransport")
     else:
         forbidden=()
         if "twai_transmit" not in symbols or "CanTransport::sendTest" not in symbols:

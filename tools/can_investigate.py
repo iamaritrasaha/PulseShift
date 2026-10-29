@@ -9,11 +9,12 @@ from dataclasses import dataclass
 from collections import defaultdict
 from pathlib import Path
 import json
+import hashlib
 import math
 import re
 import statistics
 
-RX = re.compile(r"RX t=(\d+) id=([0-9A-Fa-f]{1,8}) ext=([01]) rtr=([01]) dlc=(\d+) data=([0-9A-Fa-f]*) ([A-Z_]+)")
+RX = re.compile(r"RX t=(\d{1,10}) id=([0-9A-Fa-f]{1,8}) ext=([01]) rtr=([01]) dlc=(\d{1,2}) data=([0-9A-Fa-f]*) ([A-Z_]+)")
 SCALES = (1, .25, .5, 2, 4, .125, .0625, .03125, .015625)
 
 @dataclass(frozen=True)
@@ -38,7 +39,9 @@ def read_log(path: Path, limit: int = 500000):
             if len(line) > 4096:
                 raise ValueError(f"Log line {number} exceeds 4096 characters.")
             line = line.strip()
-            if line.startswith(("PulseShift mode=", "REVIX LINK mode=")) and previous is not None:
+            if number > limit * 16:
+                raise ValueError("Total log record limit exceeded.")
+            if line.startswith(("PulseShift mode=", "REVIX LINK mode=", "CAPTURE_SESSION ")) and previous is not None:
                 raise ValueError(f"Startup banner at line {number}; split logs at a reboot/session boundary.")
             if "SYNTHETIC" in line or "DEMO_SIMULATED" in line:
                 synthetic = True
@@ -70,13 +73,17 @@ def read_log(path: Path, limit: int = 500000):
             frames.append(Frame(t + epoch, t, ident, ext, remote, dlc, bytes.fromhex(data), number))
     return frames, issues, counters, synthetic
 
-def read_reference(path: Path, offset: float):
+def read_reference(path: Path, offset: float, limit: int = 500000):
     rows = []
     with path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source)
         if not {"timestamp_ms", "rpm"} <= set(reader.fieldnames or []):
             raise ValueError("Reference CSV requires timestamp_ms,rpm columns.")
-        for row in reader:
+        for number, row in enumerate(reader, 1):
+            if number > limit:
+                raise ValueError("Reference sample limit exceeded.")
+            if row.get("timestamp_ms") is None or row.get("rpm") is None or None in row:
+                raise ValueError("Incomplete or extra reference CSV columns.")
             t, rpm = float(row["timestamp_ms"]) + offset, float(row["rpm"])
             if not math.isfinite(t) or not math.isfinite(rpm) or t < 0 or not 0 <= rpm <= 65535:
                 raise ValueError("Invalid reference timestamp/RPM.")
@@ -143,7 +150,8 @@ def rank_fields(group, references, max_skew):
                     validation_error = rmse(residuals[split:]) if validation else None
                     score = (validation_error if validation_error is not None else train_error)
                     scored.append((score, kind=="fitted_affine", scale, shift, kind, train_error, validation_error))
-                best = min(scored, key=lambda row:(round(row[0],8),row[1]))
+                # Holdout never selects or refits a scale.
+                best = min(scored, key=lambda row:(round(row[5],8),row[1]))
                 error, _, scale, shift, kind, train_error, validation_error = best
                 denominator = math.sqrt(sum((x-xm)**2 for x in xs)*sum((y-ym)**2 for y in ytrain))
                 correlation = sum((x-xm)*(y-ym) for x,y in zip(xs,ytrain))/denominator if denominator else 0
@@ -168,12 +176,99 @@ def rank_fields(group, references, max_skew):
                 candidates.append(candidate)
     return sorted(candidates,key=lambda c:(round(c["normalized_error"],10),c["fit"]=="fitted_affine",c["width_bits"],c["id"]))
 
-def investigate(log: Path, reference: Path | None, offset=0., skew=100., top=10, limit=500000, vector_limit=1000):
+
+def validate_sessions(candidates, training_log, training_reference, sessions, skew, limit):
+    """Score frozen candidates, never train on holdout data or certify a profile."""
+    if len(sessions) > 16:
+        raise ValueError("At most 16 independent sessions are supported.")
+    used_logs = {Path(training_log).resolve()}
+    used_refs = {Path(training_reference).resolve()} if training_reference else set()
+    results = []
+    for log_name, reference_name, offset_text in sessions:
+        log, reference = Path(log_name), Path(reference_name)
+        # Reject copies too: a second filename is not independent evidence.
+        def digest(p):
+            if p.stat().st_size > limit * 4097:
+                raise ValueError("Session file byte limit exceeded.")
+            value = hashlib.sha256()
+            with p.open("rb") as source:
+                for block in iter(lambda: source.read(65536), b""):
+                    value.update(block)
+            return value.digest()
+        if log.resolve() in used_logs or reference.resolve() in used_refs:
+            raise ValueError("Independent sessions cannot reuse training/validation files.")
+        if any(digest(log) == digest(p) for p in used_logs) or any(digest(reference) == digest(p) for p in used_refs):
+            raise ValueError("Independent session duplicates existing capture/reference content.")
+        offset = float(offset_text)
+        if not math.isfinite(offset):
+            raise ValueError("Invalid validation timestamp offset.")
+        frames, issues, counters, synthetic = read_log(log, limit)
+        refs = read_reference(reference, offset, limit)
+        used_logs.add(log.resolve()); used_refs.add(reference.resolve())
+        group = defaultdict(list)
+        for frame in frames:
+            if not frame.remote:
+                group[(frame.identifier, frame.extended, frame.dlc)].append(frame)
+        scores = []
+        for rank, c in enumerate(candidates, 1):
+            pairs = align(group[(int(c['id'], 16), c['extended'], c['dlc'])], refs, skew)
+            residuals = []
+            for frame, rpm, _skew, _index in pairs:
+                raw = int.from_bytes(frame.data[c['byte_offset']:c['byte_offset']+c['width_bits']//8], c['byte_order'])
+                residuals.append(raw*c['scale']+c['offset_rpm']-rpm)
+            rpms = [p[1] for p in pairs]
+            flags = []
+            if len(pairs) < 6: flags.append('insufficient_samples')
+            if not rpms or max(rpms)-min(rpms) < 500: flags.append('low_rpm_span')
+            if 0 not in rpms: flags.append('engine_off_not_observed')
+            loss_keys = ("missed", "overrun", "busErrors", "TEC", "REC", "logDropped", "dropped")
+            if issues or any(counters.get(key, 0) for key in loss_keys): flags.append('review_capture_errors_or_counters')
+            scores.append({'candidate_rank':rank, 'status':'UNVERIFIED', 'aligned_samples':len(pairs),
+                'missing_reference_samples':len(refs)-len(pairs),
+                'rmse_rpm':rmse(residuals) if residuals else None,
+                'maximum_error_rpm':max(map(abs,residuals)) if residuals else None,
+                'quality_flags':flags})
+        results.append({'log':str(log), 'reference':str(reference), 'reference_offset_ms':offset,
+            'status':'UNVERIFIED', 'synthetic_input':synthetic, 'invalid_records':len(issues),
+            'scores':scores})
+    return results
+
+def payload_hints(group):
+    """Structural observations only: no proprietary checksum/validity inference."""
+    if group[0].remote: return {}
+    dlc = group[0].dlc
+    counters, checksums, selectors = [], [], []
+    for byte in range(dlc):
+        values = [f.data[byte] for f in group]
+        if len(values) >= 6:
+            increments = sum((b-a) % 256 == 1 for a,b in zip(values,values[1:]))
+            if increments/(len(values)-1) > .9: counters.append(byte)
+        if 1 < len(set(values)) <= 4: selectors.append(byte)
+        if dlc > 1 and len(group) >= 6:
+            for kind in ('sum8', 'xor8'):
+                matches = 0
+                for f in group:
+                    others = [v for i,v in enumerate(f.data) if i != byte]
+                    value = sum(others) & 255
+                    if kind == 'xor8':
+                        value = 0
+                        for v in others: value ^= v
+                    matches += value == f.data[byte]
+                if matches == len(group): checksums.append({'byte':byte,'kind':kind,'seed':0})
+    return {'status':'UNVERIFIED','counter_like_bytes':counters,
+        'small_domain_bytes':selectors,'checksum_hypotheses':checksums,
+        'caution':'Small domains can be validity or multiplex selectors; checksum matches and counters can be accidental.'}
+
+def investigate(log: Path, reference: Path | None, offset=0., skew=100., top=10, limit=500000, vector_limit=1000, validation=()):
+    if not math.isfinite(offset) or not math.isfinite(skew) or skew < 0 or not 1 <= top <= 100 or limit < 1 or not 1 <= vector_limit <= 10000:
+        raise ValueError("Invalid analysis limits.")
+    if validation and reference is None:
+        raise ValueError("Independent validation requires a training reference CSV.")
     frames, issues, counters, synthetic = read_log(log,limit)
     grouped = defaultdict(list)
     for f in frames:
         grouped[(f.identifier,f.extended,f.dlc,f.remote)].append(f)
-    refs = read_reference(reference,offset) if reference else []
+    refs = read_reference(reference,offset,limit) if reference else []
     summary, ranked = [], []
     for key, group in sorted(grouped.items()):
         ident, ext, dlc, remote = key
@@ -189,10 +284,12 @@ def investigate(log: Path, reference: Path | None, offset=0., skew=100., top=10,
         summary.append({"id":f"{ident:08X}","extended":ext,"dlc":dlc,"remote":remote,
             "frames":len(group),"observed_hz":(len(group)-1)*1000/duration if duration else None,
             "median_gap_ms":statistics.median(intervals) if intervals else None,
-            "maximum_gap_ms":max(intervals) if intervals else None,"bytes":changes})
+            "maximum_gap_ms":max(intervals) if intervals else None,"bytes":changes,"structure_hints":payload_hints(group)})
         if refs and not remote:
             ranked.extend(rank_fields(group,refs,skew))
     ranked.sort(key=lambda c:(round(c["normalized_error"],10),c["fit"]=="fitted_affine",c["width_bits"],c["id"]))
+    # Freeze training selection before opening independent recordings.
+    independent = validate_sessions(ranked[:top], log, reference, validation, skew, limit)
     vectors=[]
     for rank, candidate in enumerate(ranked[:top],1):
         candidate["rank"]=rank
@@ -213,7 +310,7 @@ def investigate(log: Path, reference: Path | None, offset=0., skew=100., top=10,
     return {"schema_version":1,"status":"UNVERIFIED","synthetic_input":synthetic,
         "frames":len(frames),"invalid_log_records":issues,"observed_counters_max":counters,
         "alignment":{"reference_offset_ms":offset,"maximum_skew_ms":skew,"method":"nearest frame, one per reference sample, no interpolation"},
-        "messages":summary,"candidates":public},vectors
+        "messages":summary,"candidates":public,"independent_sessions":independent},vectors
 
 def write_report(out: Path, result, vectors):
     out.mkdir(parents=True,exist_ok=True)
@@ -229,16 +326,19 @@ def write_report(out: Path, result, vectors):
     for m in result["messages"]:
         changing=", ".join(f"{b['byte']}:0x{b['changing_mask']}" for b in m["bytes"] if b["distinct"]>1) or "none"
         lines.append(f"- {m['id']} ext={m['extended']} dlc={m['dlc']} changing byte:mask = {changing}")
+        lines.append("  UNVERIFIED structural hints: " + json.dumps(m["structure_hints"], sort_keys=True))
     lines+=["","## Ranked numerical candidates","",
         "| Rank | ID / ext | Field | Scale | Offset RPM | Train RMSE | Validation RMSE | Unique reference samples |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for c in result["candidates"]:
         val=f"{c['validation_rmse_rpm']:.3f}" if c["validation_rmse_rpm"] is not None else "NOT AVAILABLE"
         lines.append(f"| {c['rank']} | {c['id']} / {c['extended']} | byte {c['byte_offset']}, {c['width_bits']}bit {c['byte_order']} | {c['scale']:.9g} | {c['offset_rpm']:.9g} | {c['train_rmse_rpm']:.3f} | {val} | {c['aligned_reference_samples']} |")
-    lines+=["","## Limits and required review","",
+    lines+=["","## Independent sessions","", json.dumps(result["independent_sessions"], indent=2),
+        "", "Candidates remain UNVERIFIED. Separate sessions score frozen fits without refitting.",
+        "", "## Limits and required review","",
         "- Alignment uses local dequeue time, not the hardware CAN arrival time. Calibrate clock offset/latency using an independent event; do not choose offset just to maximize correlation.",
         "- Out-of-window samples are omitted. Dense frames sharing a reference timestamp count once. Check source gaps, the exported skews and the reference sample rate.",
-        "- The last third of samples is a chronological holdout when at least 12 align. This is not an independent capture session. Fewer samples have no holdout; constant/low-span traces cannot establish a mapping.",
+        "- The last third of samples is a chronological holdout when at least 12 align. This split ranks candidate fields and is not an independent capture session. Fewer samples have no holdout; constant/low-span traces cannot establish a mapping.",
         "- Only unsigned byte-aligned 8/16/24/32-bit fields are searched, with common fixed scales or a learned positive affine fit. Bitfields, signed fields, proprietary compression and DBC Motorola numbering need explicit investigation.",
         "- Counter, checksum and multiplexed bytes can correlate accidentally. Counter-like flags are hints only. No checksum algorithm or validity bit is proven by a good numeric fit.",
         "- Regression exports are representative review samples (default at most 1000 per candidate), not a full capture replacement.",
@@ -253,6 +353,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("log",type=Path)
     parser.add_argument("--reference",type=Path)
+    parser.add_argument("--validation",nargs=3,action="append",default=[],metavar=("LOG","REFERENCE_CSV","OFFSET_MS"),
+                        help="Independent capture/reference pair and documented offset; repeat for more sessions.")
     parser.add_argument("--reference-offset-ms",type=float,default=0)
     parser.add_argument("--max-skew-ms",type=float,default=100)
     parser.add_argument("--top",type=int,default=10)
@@ -263,7 +365,7 @@ def main():
     if not math.isfinite(args.reference_offset_ms) or not math.isfinite(args.max_skew_ms) or args.max_skew_ms<0 or not 1<=args.top<=100 or args.max_frames<1 or not 1<=args.max_vectors_per_candidate<=10000:
         parser.error("Invalid alignment, rank count or frame limit.")
     try:
-        result,vectors=investigate(args.log,args.reference,args.reference_offset_ms,args.max_skew_ms,args.top,args.max_frames,args.max_vectors_per_candidate)
+        result,vectors=investigate(args.log,args.reference,args.reference_offset_ms,args.max_skew_ms,args.top,args.max_frames,args.max_vectors_per_candidate,args.validation)
         write_report(args.output,result,vectors)
     except (ValueError,OSError,csv.Error) as error:
         parser.exit(2,f"CAN investigation failed: {error}\n")

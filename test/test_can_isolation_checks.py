@@ -24,6 +24,10 @@ if "esp32dev_twai_test" in path and case!="missing-test":
     symbols+="\\n000 T twai_transmit\\n000 T CanTransport::sendTest"
 if case=="forbidden" and "esp32dev_bike" in path:
     symbols+="\\n000 T twai_transmit"
+if case=="tx-queue" and "esp32dev_vehicle" in path:
+    symbols+="\\n000 T twai_clear_transmit_queue"
+if case=="recovery" and "esp32dev_bike" in path:
+    symbols+="\\n000 T twai_initiate_recovery"
 if case=="forbidden-matrix":symbols+="\\n000 T twai_transmit"
 print(symbols)
 """);nm.chmod(0o755)
@@ -66,7 +70,7 @@ if case=="extra-elf":(build/"extra.elf").write_bytes(b"fixture only")
 
     def test_pio_checks_cannot_be_optimized_away(self):
         for optimized in (False,True):
-            for case,error in (("valid",None),("forbidden","Forbidden symbol"),("missing-test","Self-test lost")):
+            for case,error in (("valid",None),("forbidden","Forbidden symbol"),("tx-queue","Forbidden symbol"),("recovery","Forbidden symbol"),("missing-test","Self-test lost")):
                 with self.subTest(optimized=optimized,case=case):
                     result=self.run_script("verify_firmware_isolation.py",optimized,case)
                     if error:

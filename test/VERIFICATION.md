@@ -29,3 +29,10 @@ work directory must not already exist.
 
 No compilation or simulation result qualifies the actual LED strip, CAN module
 or NS125 protocol. Keep detailed run logs and reports local.
+
+Passive discovery regressions cover frozen-fit independent sessions, duplicate
+capture rejection, missing references, clock offsets, malformed/oversized input,
+structural hints and mandatory broadcast/holdout evidence gates. Normal and
+optimized isolation checks also reject TX queue and recovery symbols. The
+[advanced Arduino guide](../arduino/README.txt) documents qualified collection
+and offline analysis; all candidate results remain UNVERIFIED.

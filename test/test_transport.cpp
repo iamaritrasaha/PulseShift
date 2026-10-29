@@ -32,6 +32,7 @@ void reset() { routing.clear();status={};next={};available=false;alerts=0;instal
 int main() {
   reset();FrameLog disabledLog;CanTransport disabled(0,&disabledLog);
   CHECK(!disabled.configured() && !disabled.begin());CHECK(installs==0);
+  reset();CanTransport unknown(333333);CHECK(!unknown.begin() && !unknown.healthy());CHECK(installs==0);
   for(uint32_t terminal:{TWAI_ALERT_BUS_OFF,TWAI_ALERT_RX_QUEUE_FULL,TWAI_ALERT_RX_FIFO_OVERRUN}) {
     reset();FrameLog log;CanTransport can(500000,&log);CHECK(can.begin());CHECK(can.healthy());const auto began=starts;CHECK(can.begin() && starts==began);
     next.identifier=0x123;next.data_length_code=2;next.data[0]=0xAA;next.data[1]=0xBB;available=true;

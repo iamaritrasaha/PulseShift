@@ -56,7 +56,7 @@ for name,changes in variants.items():
         if len(elves) != 1:
             raise RuntimeError(f"Expected one linked Arduino ELF for {name}")
         symbols=subprocess.check_output([str(nm),"-C",str(elves[0])],text=True)
-        forbidden=("twai_transmit","CanTransport::sendTest","demonstrationFrame","ReplayTransport") if not name.startswith("demo-") else ("twai_transmit","CanTransport::","twai_driver_install")
+        forbidden=("twai_transmit","twai_clear_transmit_queue","twai_initiate_recovery","CanTransport::sendTest","demonstrationFrame","ReplayTransport") if not name.startswith("demo-") else ("twai_transmit","CanTransport::","twai_driver_install")
         if any(symbol in symbols for symbol in forbidden):
             raise RuntimeError(f"Arduino mode isolation failed: {name}")
     results.append({"variant":name,"changes":changes,"returncode":result.returncode,"binary_isolation":result.returncode==0,"seconds":round(time.monotonic()-start,2),"command":command})

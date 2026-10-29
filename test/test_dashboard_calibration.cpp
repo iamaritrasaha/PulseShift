@@ -16,7 +16,7 @@ static VehicleProfile fixture() {
   p.maximumRpm=12000; p.timeoutMs=300;
   // Deliberately distinct from BOTH the demo maximum and decoder validity limit.
   p.lights={1000,9000,10000,150};
-  p.evidence={"SYNTHETIC native test only",true,true,true,true};
+  p.evidence={"SYNTHETIC native test only",true,true,true,true,true,true};
   return p;
 }
 static VehicleProfile selected=fixture();
