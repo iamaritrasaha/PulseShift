@@ -8,7 +8,7 @@
 #include <driver/twai.h>
 class CanTransport {
  public:
-  explicit CanTransport(uint32_t bitrate = REVIX_BITRATE, FrameLog* log = nullptr) : bitrate_(bitrate), log_(log) {}
+  explicit CanTransport(uint32_t bitrate = PULSESHIFT_BITRATE, FrameLog* log = nullptr) : bitrate_(bitrate), log_(log) {}
   bool begin();
   void poll(uint32_t now);
   bool receive(CanFrame& frame, uint32_t now);
@@ -16,7 +16,7 @@ class CanTransport {
   uint32_t acceptedFrames() const { return acceptedRx_; }
   bool healthy() const { return running_ && !tracker_.halted(); }
   bool configured() const { return bitrate_ != 0; }
-#if REVIX_MODE == REVIX_TWAI_TEST
+#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
   bool sendTest(const CanFrame& frame, uint32_t now);
   bool canSend() const { return healthy() && !tracker_.pending(); }
 #endif

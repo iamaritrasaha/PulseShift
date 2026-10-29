@@ -17,10 +17,10 @@ class Svg:
     def __init__(self, name, height, title, description):
         self.name = name
         self.parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="{height}" viewBox="0 0 720 {height}" role="img" aria-labelledby="title desc">',
-            f'<title id="title">{escape(title)}</title><desc id="desc">{escape(description)}</desc>',
+            f'<title id="title">{escape("PulseShift: "+title)}</title><desc id="desc">{escape(description)}</desc>',
             '<style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>',
             f'<rect width="720" height="{height}" fill="#ffffff"/>']
-        self.text(28,44,title,30,bold=True)
+        self.text(28,44,"PulseShift: "+title,24,bold=True)
     def text(self,x,y,s,size=24,color=INK,bold=False,anchor='start'):
         self.parts.append(f'<text x="{x}" y="{y}" font-size="{size}" fill="{color}" font-weight="{700 if bold else 400}" text-anchor="{anchor}">{escape(s)}</text>')
     def rect(self,x,y,w,h,fill='#f3f7fa',stroke=EDGE,r=14):

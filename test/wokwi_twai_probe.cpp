@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 // Isolated Wokwi investigation only. Actively transmits artificial CAN frames.
 // Never package or flash this probe for a motorcycle connection.
-#ifndef REVIX_WOKWI_TWAI_PROBE
-#error "Build this probe only with explicit REVIX_WOKWI_TWAI_PROBE"
+#ifndef PULSESHIFT_WOKWI_TWAI_PROBE
+#error "Build this probe only with explicit PULSESHIFT_WOKWI_TWAI_PROBE"
 #endif
 #include <Arduino.h>
 #include <driver/twai.h>
@@ -37,7 +37,7 @@ void report(const char* stage) {
 }
 void setup() {
   Serial.begin(115200);
-  Serial.printf("REVIX TWAI PROBE SDK=%s self=1 ss=%d queue=%d reference=%d\r\n",
+  Serial.printf("PulseShift TWAI PROBE SDK=%s self=1 ss=%d queue=%d reference=%d\r\n",
     ESP.getSdkVersion(),PROBE_SINGLE_SHOT,PROBE_TX_QUEUE,PROBE_REFERENCE);
   twai_general_config_t g=TWAI_GENERAL_CONFIG_DEFAULT(GPIO_NUM_17,GPIO_NUM_16,TWAI_MODE_NO_ACK);
   g.tx_queue_len=PROBE_TX_QUEUE; g.rx_queue_len=8;

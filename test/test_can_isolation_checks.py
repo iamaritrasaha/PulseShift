@@ -37,7 +37,7 @@ import os,sys
 from pathlib import Path
 build=Path(sys.argv[sys.argv.index("--build-path")+1]);build.mkdir(parents=True)
 case=os.environ.get("ISOLATION_CASE","valid")
-if case!="missing-elf":(build/"REVIX_LINK.ino.elf").write_bytes(b"fixture only")
+if case!="missing-elf":(build/"PulseShift.ino.elf").write_bytes(b"fixture only")
 if case=="extra-elf":(build/"extra.elf").write_bytes(b"fixture only")
 """);self.cli.chmod(0o755)
 
@@ -49,13 +49,13 @@ if case=="extra-elf":(build/"extra.elf").write_bytes(b"fixture only")
     def package(self,config_case="valid"):
         assets=self.root/"assets"
         subprocess.run([sys.executable,str(ROOT/"scripts/package_arduino.py"),
-            "--version","v0.2.0","--output-dir",str(assets)],check=True,capture_output=True)
-        archive=assets/"REVIX-LINK-Arduino-v0.2.0.zip"
+            "--version","v0.3.0","--output-dir",str(assets)],check=True,capture_output=True)
+        archive=assets/"PulseShift-Arduino-v0.3.0.zip"
         if config_case!="valid":
             with zipfile.ZipFile(archive) as z:files={name:z.read(name) for name in z.namelist()}
-            key="REVIX_LINK/UserConfig.h"
+            key="PulseShift/UserConfig.h"
             value=files[key].decode()
-            definition="#define REVIX_OLED_ENABLED 0"
+            definition="#define PULSESHIFT_OLED_ENABLED 0"
             self.assertEqual(value.count(definition),1)
             value=value.replace(definition,"" if config_case=="missing-config" else definition+"\n"+definition)
             files[key]=value.encode()
@@ -85,7 +85,7 @@ if case=="extra-elf":(build/"extra.elf").write_bytes(b"fixture only")
                     archive=self.package(case if "config" in case else "valid")
                     work=self.root/f"work-{optimized}-{case}"
                     result=self.run_script("verify_arduino_matrix.py",optimized,case,
-                        ("--zip",archive,"--version","v0.2.0","--work-dir",work,"--arduino-cli",self.cli))
+                        ("--zip",archive,"--version","v0.3.0","--work-dir",work,"--arduino-cli",self.cli))
                     if error:
                         self.assertNotEqual(result.returncode,0)
                         self.assertIn(error,result.stderr)

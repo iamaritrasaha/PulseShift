@@ -13,7 +13,7 @@ QUALIFICATIONS=(
 def validate(tag, text):
     if not re.fullmatch(r"v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)",tag):
         raise ValueError("Only exact v0.x.y software prerelease tags are permitted")
-    expected=f"# REVIX LINK {tag} | Arduino IDE software prerelease"
+    expected=f"# PulseShift {tag} | Arduino IDE software prerelease"
     if not text.splitlines() or text.splitlines()[0]!=expected:
         raise ValueError("RELEASE_NOTES.md heading must match the release tag exactly")
     normalized=" ".join(text.split())
@@ -22,7 +22,7 @@ def validate(tag, text):
             raise ValueError("Missing required qualification: "+statement)
     for mode in ("DEMO","CAN_CAPTURE","VEHICLE_RPM"):
         if mode not in text: raise ValueError("Missing firmware mode: "+mode)
-    if f"REVIX-LINK-Arduino-{tag}.zip" not in text:
+    if f"PulseShift-Arduino-{tag}.zip" not in text:
         raise ValueError("Release notes must identify the versioned Arduino ZIP")
     if "\u2014" in text:
         raise ValueError("Use plain punctuation in release notes")

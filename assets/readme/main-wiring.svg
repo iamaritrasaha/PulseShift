@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="1185" viewBox="0 0 720 1185" role="img" aria-labelledby="title desc">
-<title id="title">Direct GPIO27 LED wiring</title><desc id="desc">ESP32 GPIO27 at 3.3V through 330 ohms into LED DIN. USB powers ESP32, external regulated 5V powers the six LEDs. Grounds join and the 1000uF 10V capacitor is across LED power. No CAN module or level shifter is connected.</desc>
+<title id="title">PulseShift: Direct GPIO27 LED wiring</title><desc id="desc">ESP32 GPIO27 at 3.3V through 330 ohms into LED DIN. USB powers ESP32, external regulated 5V powers the six LEDs. Grounds join and the 1000uF 10V capacitor is across LED power. No CAN module or level shifter is connected.</desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>
 <rect width="720" height="1185" fill="#ffffff"/>
-<text x="28" y="44" font-size="30" fill="#142b3b" font-weight="700" text-anchor="start">Direct GPIO27 LED wiring</text>
+<text x="28" y="44" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">PulseShift: Direct GPIO27 LED wiring</text>
 <text x="28" y="84" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">Assemble and check with BOTH supplies disconnected.</text>
 <text x="28" y="116" font-size="23" fill="#425c6d" font-weight="400" text-anchor="start">BLUE = 3.3V data   RED = +5V   BLACK = GND</text>
 <text x="235" y="151" font-size="25" fill="#7652ac" font-weight="700" text-anchor="start">USB power</text>

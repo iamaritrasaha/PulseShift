@@ -28,7 +28,7 @@ def main() -> int:
 
     version = normalized_version(args.version)
     zip_path = args.zip.expanduser().resolve()
-    expected_name = f"REVIX-LINK-Arduino-{version}.zip"
+    expected_name = f"PulseShift-Arduino-{version}.zip"
     if zip_path.name != expected_name:
         fail(f"expected archive name {expected_name}, got {zip_path.name}")
     checksum_path = zip_path.with_suffix(".sha256")
@@ -52,7 +52,7 @@ def main() -> int:
         if unexpected:
             fail("archive contains unlisted files: " + ", ".join(unexpected))
         if any(not name.startswith(f"{SKETCH_NAME}/") for name in names):
-            fail("archive must contain only the REVIX_LINK sketch directory")
+            fail("archive must contain only the PulseShift sketch directory")
         if sum(name.endswith(".ino") for name in names) != 1:
             fail("archive must contain exactly one .ino file")
         for info in archive.infolist():

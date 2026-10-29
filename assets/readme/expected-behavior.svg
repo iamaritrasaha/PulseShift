@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="960" viewBox="0 0 720 960" role="img" aria-labelledby="title desc">
-<title id="title">What a working demo looks like</title><desc id="desc">Illustrative LED states: startup sweep and pulse, progressive classic colors, flashing red shift alert, then deliberate stale-data blanking and recovery. Not measured engine RPM.</desc>
+<title id="title">PulseShift: What a working demo looks like</title><desc id="desc">Illustrative LED states: startup sweep and pulse, progressive classic colors, flashing red shift alert, then deliberate stale-data blanking and recovery. Not measured engine RPM.</desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}</style>
 <rect width="720" height="960" fill="#ffffff"/>
-<text x="28" y="44" font-size="30" fill="#142b3b" font-weight="700" text-anchor="start">What a working demo looks like</text>
+<text x="28" y="44" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">PulseShift: What a working demo looks like</text>
 <text x="28" y="83" font-size="24" fill="#425c6d" font-weight="400" text-anchor="start">Illustrative snapshots • simulated RPM only</text>
 <rect x="28" y="113" width="664" height="177" rx="14" fill="#f3f7fa" stroke="#c5d4dd" stroke-width="2"/>
 <text x="49" y="149" font-size="26" fill="#142b3b" font-weight="700" text-anchor="start">1  STARTUP</text>

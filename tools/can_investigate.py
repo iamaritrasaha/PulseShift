@@ -38,7 +38,7 @@ def read_log(path: Path, limit: int = 500000):
             if len(line) > 4096:
                 raise ValueError(f"Log line {number} exceeds 4096 characters.")
             line = line.strip()
-            if line.startswith("REVIX LINK mode=") and previous is not None:
+            if line.startswith(("PulseShift mode=", "REVIX LINK mode=")) and previous is not None:
                 raise ValueError(f"Startup banner at line {number}; split logs at a reboot/session boundary.")
             if "SYNTHETIC" in line or "DEMO_SIMULATED" in line:
                 synthetic = True

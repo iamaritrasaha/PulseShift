@@ -7,10 +7,10 @@
 #include "frame_log.h"
 #include "dashboard.h"
 #include "demo_commands.h"
-#if REVIX_MODE == REVIX_REPLAY || REVIX_MODE == REVIX_TWAI_TEST
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
 #include "simulated_ecu.h"
 #endif
-#if REVIX_MODE != REVIX_REPLAY
+#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
 #include "can_transport.h"
 #endif
 
@@ -20,16 +20,16 @@ class Application {
   Application() : rpm_(initialState()) {}
 
   void begin() {
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.begin(config::serialBaud);
-    Serial.printf("REVIX LINK mode=%s SDK=%s\r\n", config::modeName, ESP.getSdkVersion());
+    Serial.printf("PulseShift mode=%s SDK=%s\r\n", config::modeName, ESP.getSdkVersion());
 #endif
-#if REVIX_MODE == REVIX_CAPTURE || REVIX_MODE == REVIX_VEHICLE
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("TARGET: %s / %s / %u WS2812B LEDs\r\n",
       config::vehicle, config::transceiver, config::ledCount);
     Serial.println("RECEIVE ONLY: actual module RS-high/TXD bias must be electrically verified");
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     Serial.printf("PROFILE id=%s status=%s ready=%d\r\n", selectedVehicleProfile().identifier,
       profileStatusName(selectedVehicleProfile().status), rpm_.mapped());
 #else
@@ -37,8 +37,8 @@ class Application {
 #endif
 #endif
 #endif
-#if REVIX_MODE == REVIX_REPLAY
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.println("SYNTHETIC FRAMES ONLY: does not validate TWAI or physical CAN");
     Serial.println("Type 'help' in Serial Monitor for interactive demo controls.");
 #endif
@@ -46,7 +46,7 @@ class Application {
     transport_.begin();
 #endif
     if (!dashboard_.begin()) {
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
       Serial.println("OLED INIT FAILED (CAN processing continues)");
 #endif
     }
@@ -54,15 +54,15 @@ class Application {
 
   void tick() {
     const uint32_t now = millis();
-#if REVIX_MODE == REVIX_REPLAY && REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY && PULSESHIFT_SERIAL_DIAGNOSTICS
     handleSerialInput();
 #endif
-#if REVIX_MODE != REVIX_REPLAY
+#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
     transport_.poll(now);
 #endif
     CanFrame f;
     for (unsigned i = 0; i < 32; ++i) {
-#if REVIX_MODE == REVIX_REPLAY
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
       const bool got = transport_.receive(now, f);
 #else
       const bool got = transport_.receive(f, now);
@@ -71,7 +71,7 @@ class Application {
       const auto result = rpm_.ingest(f);
       logger_.push(f, result);
     }
-#if REVIX_MODE == REVIX_TWAI_TEST
+#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
     // Consume completion after draining RX too; receive order is not assumed.
     transport_.poll(now);
     if (transport_.canSend() && uint32_t(now - lastSent_) >= config::framePeriodMs) {
@@ -79,12 +79,12 @@ class Application {
       lastSent_ = now;
     }
 #endif
-#if REVIX_MODE == REVIX_REPLAY
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
     constexpr bool healthy = true, configured = true;
 #else
     const bool healthy = transport_.healthy();
     const bool configured = transport_.configured()
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
       && rpm_.mapped()
 #endif
       ;
@@ -92,10 +92,10 @@ class Application {
     rpm_.expire(now, rpm_.timeoutMs(config::staleMs), config::staleMs);
     logger_.pump();
     dashboard_.update(rpm_, now, healthy, configured, rpm_.timeoutMs(config::staleMs));
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
     if (!finalReportPrinted_ && uint32_t(now - lastReport_) >= 1000) {
       lastReport_ = now;
-#if REVIX_MODE == REVIX_CAPTURE || REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
       logger_.status("APP mode=%s accepted=%lu rejected=%lu logDropped=%lu",
         config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(), (unsigned long)logger_.dropped());
       logger_.status("APP fresh=%d busFresh=%d rpm=%u configured=%d healthy=%d",
@@ -108,7 +108,7 @@ class Application {
         dashboard_.shiftLight().isAlertActive(), !dashboard_.shiftLight().isStartupComplete(),
         (unsigned long)logger_.dropped());
 #endif
-#if REVIX_MODE != REVIX_REPLAY
+#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
       transport_.diagnostics();
       // After a terminal fault, retain one final stopped-state report then
       // leave the terminal quiet. The dashboard still refreshes normally.
@@ -120,26 +120,26 @@ class Application {
 
  private:
   static RpmState initialState() {
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     return RpmState(selectedVehicleProfile());
-#elif REVIX_MODE == REVIX_CAPTURE
+#elif PULSESHIFT_MODE == PULSESHIFT_CAPTURE
     return RpmState(RpmMapping{});
 #else
     return RpmState(demonstrationMapping());
 #endif
   }
-#if REVIX_MODE != REVIX_REPLAY
+#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
   static uint32_t receiveBitrate() {
-#if REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     const auto& p = selectedVehicleProfile();
     return vehicleProfileReady(p) ? p.bitrate : 0;
 #else
-    return REVIX_BITRATE;
+    return PULSESHIFT_BITRATE;
 #endif
   }
 #endif
 
-#if REVIX_MODE == REVIX_REPLAY && REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY && PULSESHIFT_SERIAL_DIAGNOSTICS
   void handleSerialInput() {
     // Bound serial work so a continuous input stream cannot starve CAN or LEDs.
     for (unsigned i = 0; i < 32 && Serial.available() > 0; ++i) {
@@ -155,7 +155,7 @@ class Application {
     if (*cmd == '\0') return;
 
     if (strcmp(cmd, "help") == 0) {
-      Serial.println("=== REVIX LINK DEMO COMMANDS ===");
+      Serial.println("=== PulseShift DEMO COMMANDS ===");
       Serial.println("  help            : Show this help");
       Serial.println("  status          : Show shift-light status");
       Serial.println("  demo start      : Resume automated synthetic sweep");
@@ -221,21 +221,21 @@ class Application {
   RpmState rpm_;
   Dashboard dashboard_;
   FrameLog logger_;
-#if REVIX_MODE == REVIX_REPLAY
+#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
   ReplayTransport transport_;
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
   DemoCommandLine command_;
 #endif
 #else
   CanTransport transport_{receiveBitrate()
-#if REVIX_MODE == REVIX_CAPTURE || REVIX_MODE == REVIX_VEHICLE
+#if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     , &logger_
 #endif
   };
 #endif
   uint32_t lastReport_ = 0;
   bool finalReportPrinted_ = false;
-#if REVIX_MODE == REVIX_TWAI_TEST
+#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
   uint32_t lastSent_ = 0, sequence_ = 0;
 #endif
 };

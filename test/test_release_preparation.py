@@ -67,7 +67,12 @@ sys.exit(int(os.environ.get('STUB_GH_EXIT','0')))
                 self.assertIsNone(call)
 
     def test_wrong_version_notes_rejected(self):
-        result,call=self.invoke(text=self.text.replace(f"REVIX LINK {self.tag} |","REVIX LINK v0.1.0 |",1))
+        result,call=self.invoke(text=self.text.replace(f"PulseShift {self.tag} |","PulseShift v0.1.0 |",1))
+        self.assertNotEqual(result.returncode,0)
+        self.assertIsNone(call)
+
+    def test_legacy_brand_cannot_publish_a_new_release(self):
+        result,call=self.invoke(text=self.text.replace("PulseShift","REVIX LINK",1))
         self.assertNotEqual(result.returncode,0)
         self.assertIsNone(call)
 
@@ -82,7 +87,7 @@ sys.exit(int(os.environ.get('STUB_GH_EXIT','0')))
         corrupt=self.base/"corrupt"
         corrupt.mkdir(exist_ok=True)
         for path in self.assets.iterdir(): (corrupt/path.name).write_bytes(path.read_bytes())
-        with (corrupt/f"REVIX-LINK-Arduino-{self.tag}.zip").open("ab") as out: out.write(b"tampered")
+        with (corrupt/f"PulseShift-Arduino-{self.tag}.zip").open("ab") as out: out.write(b"tampered")
         result,call=self.invoke(assets=corrupt)
         self.assertNotEqual(result.returncode,0)
         self.assertIsNone(call)
@@ -91,7 +96,7 @@ sys.exit(int(os.environ.get('STUB_GH_EXIT','0')))
         corrupt=self.base/"extra-checksum"
         corrupt.mkdir(exist_ok=True)
         for path in self.assets.iterdir(): (corrupt/path.name).write_bytes(path.read_bytes())
-        checksum=corrupt/f"REVIX-LINK-Arduino-{self.tag}.sha256"
+        checksum=corrupt/f"PulseShift-Arduino-{self.tag}.sha256"
         checksum.write_text(checksum.read_text()+"0"*64+"  another-file.zip\n")
         result,call=self.invoke(assets=corrupt)
         self.assertNotEqual(result.returncode,0)
@@ -115,8 +120,11 @@ sys.exit(int(os.environ.get('STUB_GH_EXIT','0')))
 
     def test_readme_points_to_published_releases_not_future_tag(self):
         readme=(ROOT/"README.md").read_text()
-        self.assertIn("https://github.com/iamaritrasaha/REVIX-LINK/releases)",readme)
-        self.assertIn(f"v0.2.1 or newer",readme)
+        self.assertIn("https://github.com/iamaritrasaha/PulseShift/releases)",readme)
+        self.assertIn("v0.2.1 or newer",readme)
+        self.assertIn("PulseShift/PulseShift.ino",readme)
+        self.assertIn("REVIX_LINK/REVIX_LINK.ino",readme)
+        self.assertIn("v0.3.0 is proposed, not published",readme)
         # Do not send beginners to a tag that has not been published.
         self.assertNotIn("github.com/iamaritrasaha/REVIX-LINK/releases/tag/v0.2.1",readme)
 

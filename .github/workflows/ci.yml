@@ -11,7 +11,7 @@ on:
         description: Version string to embed in the tested Arduino ZIP
         required: false
         type: string
-        default: v0.2.0
+        default: v0.3.0
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      PACKAGE_VERSION: ${{ inputs.package_version || 'v0.2.0' }}
+      PACKAGE_VERSION: ${{ inputs.package_version || 'v0.3.0' }}
       ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
       ESP32_FQBN: esp32:esp32:esp32
     steps:
@@ -112,22 +112,22 @@ jobs:
       - name: Package and validate Arduino distribution
         id: package
         run: |
-          output="$RUNNER_TEMP/revix-arduino-package"
+          output="$RUNNER_TEMP/pulseshift-arduino-package"
           mkdir -p "$output"
           python scripts/package_arduino.py --version "$PACKAGE_VERSION" --output-dir "$output"
-          zip="$output/REVIX-LINK-Arduino-$PACKAGE_VERSION.zip"
+          zip="$output/PulseShift-Arduino-$PACKAGE_VERSION.zip"
           python scripts/verify_arduino_package.py --zip "$zip" --version "$PACKAGE_VERSION"
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
           echo "output=$output" >> "$GITHUB_OUTPUT"
 
       - name: Check deterministic package output
         run: |
-          repeat="$RUNNER_TEMP/revix-arduino-package-repeat"
+          repeat="$RUNNER_TEMP/pulseshift-arduino-package-repeat"
           mkdir -p "$repeat"
           python scripts/package_arduino.py --version "$PACKAGE_VERSION" --output-dir "$repeat"
-          cmp "${{ steps.package.outputs.zip }}" "$repeat/REVIX-LINK-Arduino-$PACKAGE_VERSION.zip"
-          cmp "${{ steps.package.outputs.output }}/REVIX-LINK-Arduino-$PACKAGE_VERSION.sha256" \
-            "$repeat/REVIX-LINK-Arduino-$PACKAGE_VERSION.sha256"
+          cmp "${{ steps.package.outputs.zip }}" "$repeat/PulseShift-Arduino-$PACKAGE_VERSION.zip"
+          cmp "${{ steps.package.outputs.output }}/PulseShift-Arduino-$PACKAGE_VERSION.sha256" \
+            "$repeat/PulseShift-Arduino-$PACKAGE_VERSION.sha256"
 
       - name: Compile extracted Arduino configuration variants
         run: |
@@ -139,30 +139,30 @@ jobs:
 
       - name: Reject invalid user configuration
         run: |
-          work="$RUNNER_TEMP/revix-invalid-config"
+          work="$RUNNER_TEMP/pulseshift-invalid-config"
           python scripts/verify_arduino_package.py \
             --zip "${{ steps.package.outputs.zip }}" \
             --version "$PACKAGE_VERSION" \
             --extract-to "$work"
-          sed -i 's/#define REVIX_LED_COUNT 6/#define REVIX_LED_COUNT 0/' "$work/REVIX_LINK/UserConfig.h"
+          sed -i 's/#define PULSESHIFT_LED_COUNT 6/#define PULSESHIFT_LED_COUNT 0/' "$work/PulseShift/UserConfig.h"
           log="$RUNNER_TEMP/invalid-config-build.log"
           if arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
             --build-property "runtime.tools.ctags.path=$CTAGS_PATH" \
             --build-path "$RUNNER_TEMP/build-invalid-config" \
-            "$work/REVIX_LINK" > "$log" 2>&1; then
+            "$work/PulseShift" > "$log" 2>&1; then
             cat "$log"
             echo "Invalid LED count unexpectedly compiled" >&2
             exit 1
           fi
-          grep -F "REVIX_LED_COUNT must be between 1 and 32" "$log"
+          grep -F "PULSESHIFT_LED_COUNT must be between 1 and 32" "$log"
 
       - name: Upload verified Arduino source assets
         uses: actions/upload-artifact@v4
         with:
-          name: revix-arduino-release-assets
+          name: pulseshift-arduino-release-assets
           path: |
             ${{ steps.package.outputs.zip }}
-            ${{ steps.package.outputs.output }}/REVIX-LINK-Arduino-${{ env.PACKAGE_VERSION }}.sha256
+            ${{ steps.package.outputs.output }}/PulseShift-Arduino-${{ env.PACKAGE_VERSION }}.sha256
           if-no-files-found: error
           retention-days: 90

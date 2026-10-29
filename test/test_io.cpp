@@ -12,7 +12,7 @@ int main() {
   f.id=0x1FFFFFFF; f.extended=true; f.dlc=255;
   Serial.capacity=0;
   for(unsigned i=0;i<10000;++i) { logger.push(f,DecodeResult::Malformed); logger.pump(); }
-#if REVIX_SERIAL_DIAGNOSTICS
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
   CHECK(logger.dropped()==10000-64); CHECK(Serial.output.empty());
   Serial.capacity=4096;
   for(unsigned i=0;i<64;++i) logger.pump();
@@ -25,7 +25,7 @@ int main() {
 #else
   CHECK(logger.dropped()==0); CHECK(Serial.output.empty());
 #endif
-#if REVIX_OLED_ENABLED
+#if PULSESHIFT_OLED_ENABLED
   Dashboard dashboard; CHECK(dashboard.begin());
   RpmState rpm(demonstrationMapping());
   auto frame=demonstrationFrame(100,0); rpm.ingest(frame);
