@@ -53,11 +53,13 @@ Keep the motorcycle disconnected. Use **Arduino IDE 2.x for Linux inside Ubuntu 
 
 ## Download
 
-**[Published software prereleases](https://github.com/iamaritrasaha/PulseShift/releases)**
+**[Download PulseShift v0.3.0](https://github.com/iamaritrasaha/PulseShift/releases/tag/v0.3.0)**
+
+[Arduino ZIP](https://github.com/iamaritrasaha/PulseShift/releases/download/v0.3.0/PulseShift-Arduino-v0.3.0.zip) · [SHA-256](https://github.com/iamaritrasaha/PulseShift/releases/download/v0.3.0/PulseShift-Arduino-v0.3.0.sha256) · [All releases](https://github.com/iamaritrasaha/PulseShift/releases)
 
 For v0.3.0, download **PulseShift-Arduino-v0.3.0.zip** and **PulseShift-Arduino-v0.3.0.sha256** from Assets. Check the ZIP against its SHA-256 before extracting. Use the packaged Arduino ZIP, not GitHub's automatic source archive.
 
-**Until v0.3.0 is listed, wait for publication.** A direct download link will be added after the public assets are verified.
+**v0.3.0 is the current verified software prerelease.** Physical motorcycle qualification remains pending.
 
 ## After upload
 

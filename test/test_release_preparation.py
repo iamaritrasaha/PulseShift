@@ -118,16 +118,17 @@ sys.exit(int(os.environ.get('STUB_GH_EXIT','0')))
         self.assertNotIn("edit",call["args"])
         self.assertNotIn("--clobber",call["args"])
 
-    def test_readme_points_to_published_releases_not_future_tag(self):
+    def test_readme_points_to_verified_published_release(self):
         readme=(ROOT/"README.md").read_text()
         self.assertIn("https://github.com/iamaritrasaha/PulseShift/releases)",readme)
         self.assertIn("PulseShift-Arduino-v0.3.0.zip",readme)
         self.assertIn("PulseShift-Arduino-v0.3.0.sha256",readme)
         self.assertIn("PulseShift/PulseShift.ino",readme)
-        self.assertIn("Until v0.3.0 is listed, wait for publication.",readme)
-        # Prepublication docs must not claim an unpublished release or asset exists.
-        self.assertNotIn("/releases/tag/v0.3.0",readme)
-        self.assertNotIn("/releases/download/v0.3.0",readme)
+        self.assertIn("v0.3.0 is the current verified software prerelease.",readme)
+        self.assertIn("/releases/tag/v0.3.0",readme)
+        self.assertIn("/releases/download/v0.3.0/PulseShift-Arduino-v0.3.0.zip",readme)
+        self.assertIn("/releases/download/v0.3.0/PulseShift-Arduino-v0.3.0.sha256",readme)
+        self.assertNotIn("wait for publication",readme)
 
     def test_current_readme_has_exclusive_brand_and_preserves_diagrams(self):
         readme=(ROOT/"README.md").read_text()
