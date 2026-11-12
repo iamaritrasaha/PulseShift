@@ -48,6 +48,7 @@
 #include "src/can_recorder.h"
 #include "src/button_handler.h"
 #include "src/serial_protocol.h"
+#include "src/rpm_candidate.h"
 
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
 #include "src/simulated_ecu.h"
@@ -155,7 +156,7 @@ public:
 
     // 4. Ingest incoming CAN frames
     CanFrame f;
-    for (unsigned i = 0; i < 32; ++i) {
+    for (unsigned i = 0; i < 64; ++i) {
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
       const bool got = transport_.receive(now, f);
 #else
@@ -165,6 +166,7 @@ public:
 
       dashboard_.notifyRxActivity(now);
       const auto result = rpm_.ingest(f);
+      candidateMonitor_.ingest(f, now);
 
       if (!firstFrameSeen_) {
         firstFrameSeen_ = true;
@@ -215,7 +217,17 @@ public:
     logger_.pump();
     dashboard_.update(rpm_, now, healthy, configured, rpm_.timeoutMs(config::staleMs));
 
+    // Handle shift-light bench test timeout
+    if (dashboard_.isTestRpmActive() && now >= rpmTestExpireMs_) {
+      dashboard_.setTestRpm(0, false);
+    }
+
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
+    // Rate-limited live RPM candidate streaming (10 Hz, 100 ms)
+    if (rpmMonitorStreaming_ && uint32_t(now - lastRpmMonitorPrint_) >= 100) {
+      lastRpmMonitorPrint_ = now;
+      candidateMonitor_.printStreamLine(now);
+    }
     // 7. Periodic concise live summary every 2 seconds
     if (!finalReportPrinted_ && uint32_t(now - lastLiveSummary_) >= 2000) {
       lastLiveSummary_ = now;
@@ -423,6 +435,36 @@ private:
       printHelp();
     } else if (strcmp(upper, "STATUS") == 0) {
       printStatus();
+    } else if (strcasecmp(cmd, "RPM STATUS") == 0) {
+      candidateMonitor_.printStatus(millis(), transport_.healthy(), transport_.bitrate(), transport_.hasTraffic(millis()));
+    } else if (strcasecmp(cmd, "RPM MONITOR ON") == 0) {
+      rpmMonitorStreaming_ = true;
+      Serial.println("[RPM] Rate-limited live candidate streaming ENABLED (10 Hz). Type 'RPM MONITOR OFF' to stop.");
+    } else if (strcasecmp(cmd, "RPM MONITOR OFF") == 0) {
+      rpmMonitorStreaming_ = false;
+      Serial.println("[RPM] Rate-limited live candidate streaming DISABLED.");
+    } else if (strcasecmp(cmd, "RPM MONITOR") == 0) {
+      candidateMonitor_.printStreamLine(millis());
+    } else if (strcasecmp(cmd, "RPM TEST OFF") == 0) {
+      dashboard_.setTestRpm(0, false);
+      Serial.println("[TEST] Shift-light bench test disabled. Returned to field capture status LEDs.");
+    } else if (strncasecmp(cmd, "RPM TEST ", 9) == 0) {
+      const int val = atoi(cmd + 9);
+      if (val >= 0 && val <= 20000) {
+        dashboard_.setTestRpm(static_cast<uint16_t>(val), true);
+        rpmTestExpireMs_ = millis() + 10000;
+        Serial.printf("[TEST] 6-LED shift-light bench test active: %u RPM for 10s (Physical CAN shift lights remain DISABLED)\r\n", (unsigned)val);
+      } else {
+        Serial.println("[ERROR] Test RPM must be 0..20000.");
+      }
+    } else if (strncasecmp(cmd, "RPM MULTIPLIER ", 15) == 0) {
+      const float m = static_cast<float>(atof(cmd + 15));
+      if (m > 0.0f && m < 1000.0f) {
+        candidateMonitor_.setMultiplier(m);
+        Serial.printf("[RPM] Candidate multiplier updated to %.1f (Calibration remains UNVERIFIED)\r\n", m);
+      } else {
+        Serial.println("[ERROR] Multiplier must be a positive number (e.g. 40.0).");
+      }
     } else if (strcmp(upper, "LOGS") == 0) {
       DiagLogger::instance().dumpToSerial();
     } else if (strcasecmp(cmd, "DUMP") == 0 || strcasecmp(cmd, "DUMP NEXT") == 0) {
@@ -526,6 +568,11 @@ private:
     Serial.println("=== PulseShift Command Interface ===");
     Serial.println("  STATUS          : Comprehensive system status & intelligent troubleshooting");
     Serial.println("  LOGS            : Dump persistent diagnostic event log");
+    Serial.println("  RPM STATUS      : Candidate 0x301 engine-speed monitor & calibration status");
+    Serial.println("  RPM MONITOR ON  : Enable rate-limited (10 Hz) 0x301 candidate streaming");
+    Serial.println("  RPM MONITOR OFF : Disable candidate streaming");
+    Serial.println("  RPM TEST <val>  : Bench test 6-LED shift lights with simulated RPM (0..20000)");
+    Serial.println("  RPM TEST OFF    : Turn off shift-light bench test");
     Serial.println("  DUMP            : Export recorded CAN frames in 500-record pages");
     Serial.println("  DUMP NEXT       : Export next 500-record page");
     Serial.println("  DUMP ALL        : Export all records continuously without pagination");
@@ -623,6 +670,42 @@ private:
                   rpm_.rpm(), rpm_.signalInvalid() ? "YES" : "NO",
                   rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) ? "YES" : "NO");
 
+    Serial.println("\n--- Live RPM Candidate Monitor (CAN ID 0x301) ---");
+    Serial.printf("Candidate ID: 0x%03lX (Standard 11-bit) | Byte: %u | Multiplier: %.1f\r\n",
+                  (unsigned long)candidateMonitor_.candidateId(),
+                  (unsigned)candidateMonitor_.byteIndex(),
+                  candidateMonitor_.multiplier());
+    if (candidateMonitor_.receivedCount() > 0 && candidateMonitor_.isFresh(now)) {
+      Serial.printf("Raw Value: %u (0x%02X) | Estimated RPM: %u | Signal Fresh: YES\r\n",
+                    (unsigned)candidateMonitor_.rawValue(),
+                    (unsigned)candidateMonitor_.rawValue(),
+                    (unsigned)candidateMonitor_.estimatedRpm(now));
+      Serial.printf("Last Update: %lu ms ago | Freshness Window: %lu ms\r\n",
+                    (unsigned long)candidateMonitor_.lastUpdateAgeMs(now),
+                    (unsigned long)candidateMonitor_.freshnessTimeoutMs());
+    } else if (candidateMonitor_.receivedCount() > 0) {
+      Serial.printf("Raw Value: %u (0x%02X) | Estimated RPM: INVALID (STALE) | Signal Fresh: NO (STALE)\r\n",
+                    (unsigned)candidateMonitor_.rawValue(),
+                    (unsigned)candidateMonitor_.rawValue());
+      Serial.printf("Last Update: %lu ms ago | Freshness Window: %lu ms\r\n",
+                    (unsigned long)candidateMonitor_.lastUpdateAgeMs(now),
+                    (unsigned long)candidateMonitor_.freshnessTimeoutMs());
+    } else {
+      Serial.println("Raw Value: -- | Estimated RPM: -- | Signal Fresh: NO (WAITING)");
+      Serial.println("Last Update: -- | Freshness Window: 250 ms");
+    }
+    Serial.printf("Frames Received: %lu | Rejected: %lu\r\n",
+                  (unsigned long)candidateMonitor_.receivedCount(),
+                  (unsigned long)candidateMonitor_.rejectedCount());
+    if (candidateMonitor_.receivedCount() > 0) {
+      Serial.printf("Observed Range: Min: %u | Max: %u\r\n",
+                    (unsigned)candidateMonitor_.minObservedRaw(),
+                    (unsigned)candidateMonitor_.maxObservedRaw());
+    }
+    Serial.println("Calibration: UNVERIFIED (Keep RPM_MAPPED=NO until physical tachometer verified)");
+    Serial.printf("Physical Shift Lights: %s | CAN TX: PHYSICALLY ISOLATED\r\n",
+                  dashboard_.isTestRpmActive() ? "BENCH TEST OVERRIDE" : "DISABLED");
+
     Serial.println("\n--- Intelligent Diagnostics & Troubleshooting ---");
     if (!sm.isMounted() || sm.mountFailed()) {
       Serial.println("DIAGNOSTIC: STORAGE_ERROR");
@@ -717,6 +800,10 @@ private:
   bool liveStreamEnabled_ = false;
   bool firstFrameSeen_ = false;
   bool finalReportPrinted_ = false;
+  RpmCandidateMonitor candidateMonitor_;
+  bool rpmMonitorStreaming_ = false;
+  uint32_t lastRpmMonitorPrint_ = 0;
+  uint32_t rpmTestExpireMs_ = 0;
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   uint32_t lastSent_ = 0, sequence_ = 0;
 #endif

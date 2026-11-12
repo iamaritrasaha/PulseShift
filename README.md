@@ -4,8 +4,10 @@ Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware.
 
 ## What it does
 
-- **CAN Capture mode (Default production mode)**: Boots directly into passive listen-only mode at 500000 bps, receiving real motorcycle CAN frames, streaming them live to a connected PC over USB, and recording frames with CRC16 checksums to internal flash (LittleFS).
-- **Vehicle RPM mode**: Live shift light driven by decoded motorcycle CAN data (requires a verified vehicle profile, activated once NS125 CAN traffic is analyzed).
+- **CAN Capture mode (Default production mode)**: Boots directly into passive listen-only mode at 500000 bps, receiving real motorcycle CAN frames, streaming rate-limited candidate telemetry, and recording frames with CRC16 checksums to internal flash (LittleFS).
+- **Live RPM Candidate Monitor (CAN ID 0x301)**: Continuously monitors the provisional engine-speed signal identified on the 2025 Bajaj Pulsar NS125 ABS (arbitration ID 0x301, payload byte 0). Calculates estimated RPM using a configurable provisional multiplier (default 40.0), tracks signal freshness with a 250 ms timeout, detects signal anomalies, and provides instant telemetry via `RPM STATUS` and `RPM MONITOR ON`.
+- **Bench-Testable Shift Light Engine**: The 6-LED WS2812B shift-light engine can be bench tested with simulated RPM inputs (`RPM TEST <val>`), verifying color transitions and 6000 RPM shift alerts without vehicle operation. In vehicle operation, physical engine-triggered shift lights remain strictly disabled (`RPM_MAPPED=NO`) until calibration against an independent physical tachometer is complete.
+- **Optimized CAN Reliability & High-Throughput Buffering**: Flash operations in CanRecorder are batched into contiguous memory blocks with an expanded 256-frame ring buffer, preventing SPI flash write delays from causing TWAI hardware overruns or driver missed frames.
 - **Intelligent diagnostics & error logging**: Real-time diagnostic events (CAN overflows, bus errors, storage full alerts, reset reasons) are streamed over USB and safely recorded to flash without circular wipes.
 - **Understandable LED hardware status**: In CAN capture mode, the six LEDs display controller health, frame arrival heartbeat, active recording stage (1, 2, or 3), and flash storage status.
 
@@ -354,6 +356,13 @@ When testing on an operating motorcycle with a PC connected via USB:
 | `HELP` | Display complete list of available Serial Monitor commands |
 | `STATUS` | Show comprehensive system health, storage state, and intelligent troubleshooting advice |
 | `LOGS` | Dump saved persistent diagnostic events log from internal flash |
+| `RPM STATUS` | Display live 0x301 candidate engine-speed monitor snapshot and calibration status |
+| `RPM MONITOR ON` | Enable rate-limited (10 Hz) live 0x301 candidate streaming on Serial Monitor |
+| `RPM MONITOR OFF` | Disable live candidate streaming |
+| `RPM MONITOR` | Print single instantaneous 0x301 candidate stream line |
+| `RPM TEST <val>` | Bench test 6-LED shift lights with simulated RPM for 10s (e.g. `RPM TEST 4500`) |
+| `RPM TEST OFF` | Immediately turn off shift-light bench test and return to field status LEDs |
+| `RPM MULTIPLIER <val>` | Update candidate provisional multiplier (default: 40.0; calibration remains UNVERIFIED) |
 | `DUMP` | Export recorded CAN frames in 500-record pages (resumes next page if active) |
 | `DUMP NEXT` | Export next 500-record page of stored CAN frames |
 | `DUMP ALL` | Export all stored CAN records continuously without pagination |
@@ -416,18 +425,61 @@ Edit `PulseShift/UserConfig.h` before uploading:
 > [!NOTE]
 > **Power Budget Note**: Six WS2812B LEDs at full scale white (brightness 255) draw ~360mA total. Combined with the ESP32 (~90-120mA) and transceiver (~15mA), worst-case power demand is ~465mA (peak ~600mA) on the 5V rail. A regulated 5V power supply rated for at least 1A is recommended.
 
-## What still requires real motorcycle testing
+## RPM Calibration Procedure and Signal Verification
 
-- **The NS125 RPM CAN ID and decoding formula are unknown.** No CAN ID has been confirmed from the motorcycle's bus. The firmware deliberately shows "unavailable" in Vehicle RPM mode rather than guessing.
-- **CAN bitrate verification**: 500000 bps is the default standard for modern OBD-II and Euro-5 motorcycle buses. If no frames appear, try 250000 or 125000 bps in `UserConfig.h`.
-- **Hardware qualification**: SN65HVD230 wiring, transceiver RS pin mode, termination removal, and automotive protection must be verified before connecting to the vehicle.
-- **Shift RPM thresholds**: The 6000 RPM shift point is a baseline. Real calibration depends on the rider and engine power curve.
+From confirmed motorcycle testing (Session 2, 22,542 frames at 500,000 bps):
+- Candidate arbitration ID: `0x301` (standard 11-bit CAN identifier, DLC=8, trailing byte `0xC9`).
+- Candidate signal: payload byte 0 (`data[0]`).
+- Observed behavior:
+  - Stage 1 (Key ON, Engine OFF): Byte 0 is constant 0.
+  - Stage 2 (Idling): Starts with 0-55 transient, settles into raw 35-40 (median 37).
+  - Stage 3 (Gentle RPM Sweep): Sweeps smoothly up to raw 240, falls back to 35-40, then drops to 0 when engine stops.
+- Provisional conversion hypothesis: `RPM = raw * 40.0` (Raw 35 -> 1400 RPM, Raw 240 -> 9600 RPM).
+
+> [!IMPORTANT]
+> **Calibration Status is UNVERIFIED**:
+> Nominal owner manual idle specification (1400 +/- 100 RPM) is manufacturer guidance, not a measured RPM reading from this specific motorcycle.
+> `RPM_MAPPED=NO` and `Calibration: UNVERIFIED` remain in effect until verified against an independent physical reference.
+
+### Two-Point Calibration Procedure
+
+To independently calibrate the candidate signal without risky road tests:
+1. Setup Hardware:
+   - Ensure motorcycle is stationary, in neutral, on center stand, with adequate ventilation.
+   - Connect ESP32 in passive listen-only mode using a battery-powered laptop (unplugged from AC mains).
+2. Connect Reference Tachometer:
+   - Connect an independent RPM measurement instrument (an OBD-II scan tool displaying live engine speed or an optical/inductive workshop tachometer).
+3. Sample Point 1 (Stable Idle):
+   - With engine idling at operating temperature, observe `RPM STATUS` or `RPM MONITOR ON` on the ESP32.
+   - Record simultaneous values: `(raw_idle, ref_rpm_idle)`, e.g. `(37, 1450)`.
+4. Sample Point 2 (Moderate Stationary Hold):
+   - Gently hold throttle stationary at approximately 3000 to 4000 RPM in neutral.
+   - Record simultaneous values: `(raw_hold, ref_rpm_hold)`, e.g. `(75, 3050)`.
+5. Compute Two-Point Linear Model:
+   - Calculate slope (m) and intercept (c) from the two verified sample pairs (x1, y1) and (x2, y2):
+     $$\Delta x = x_2 - x_1, \quad \Delta y = y_2 - y_1$$
+     $$m = \frac{\Delta y}{\Delta x}$$
+     $$c = y_1 - (m \times x_1)$$
+   - Convert to integer rational fraction constants for fixed-point integer calculation in ESP32 firmware:
+     $$\text{scaleNumerator} = y_2 - y_1$$
+     $$\text{scaleDenominator} = x_2 - x_1$$
+     $$\text{offsetNumerator} = c$$
+   - Example calculation using hypothetical pairs (37, 1450) and (75, 3050):
+     $$\Delta x = 75 - 37 = 38$$
+     $$\Delta y = 3050 - 1450 = 1600$$
+     $$m = \frac{1600}{38} \approx 42.105$$
+     $$c = 1450 - (42.105 \times 37) \approx -108$$
+6. Update Vehicle Profile:
+   - Once verified with independent physical test data across multiple sessions, enter the calibrated rational constants into `PulseShift/src/vehicle_profile.cpp` and set `RPM_MAPPED = YES` in the profile definition.
+
+---
 
 ## Safety notes
 
 - GPIO17 (CAN TX) must remain physically isolated from the SN65HVD230 TXD input at all times during motorcycle use.
 - PulseShift never transmits CAN frames. The TWAI controller is configured in listen-only mode.
 - Do not change wiring while powered. Power LEDs before connecting USB.
+- When connecting via USB to a motorcycle, always use a laptop running on battery power to prevent dangerous ground loops.
 - Some 5V WS2812B strips require a 74AHCT125 level shifter for reliable 3.3V signal recognition from the ESP32.
 
 ## Directory structure
@@ -442,6 +494,7 @@ PulseShift-Firmware/
 │       ├── can_transport.*   ← TWAI driver wrapper (listen-only)
 │       ├── can_recorder.*    ← Raw CAN capture to LittleFS
 │       ├── shift_light.*     ← WS2812B LED control
+│       ├── rpm_candidate.*   ← Live 0x301 candidate engine-speed monitor
 │       ├── rpm_decoder.*     ← CAN RPM decoding framework
 │       ├── diag_logger.*     ← Automatic error logging
 │       ├── storage_manager.* ← LittleFS and NVS management (safe formatting)
@@ -454,7 +507,7 @@ PulseShift-Firmware/
 │   ├── ws2812b-circuit.svg
 │   └── sn65hvd230-circuit.svg
 ├── test/                 ← Host-side C++ and Python verification tests
-├── tools/                ← can_investigate.py for log analysis
+├── tools/                ← Optional capture scripts (pulseshift_capture.py, can_investigate.py)
 ├── docs/                 ← Hardware and CAN investigation notes
 └── README.md
 ```

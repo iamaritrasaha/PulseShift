@@ -33,7 +33,7 @@ class CanRecorder {
  public:
   static constexpr const char* CAPTURE_PATH = "/capture.bin";
   static constexpr size_t MAX_CAPTURE_SIZE = 1000000; // 1,000,000 bytes (~50,000 frames)
-  static constexpr size_t RING_CAPACITY = 128;        // In-memory queue (2560 bytes)
+  static constexpr size_t RING_CAPACITY = 256;        // In-memory queue (5120 bytes)
   static constexpr size_t DUMP_PAGE_SIZE = 500;       // 500 records per export page
 
   enum Stage : uint8_t {
@@ -110,9 +110,9 @@ class CanRecorder {
   static bool verifyCaptureFile(const char* filePath, size_t expectedSize, bool checkRecords);
 
   CanLogRecord ring_[RING_CAPACITY]{};
-  uint8_t head_ = 0;
-  uint8_t tail_ = 0;
-  uint8_t count_ = 0;
+  uint16_t head_ = 0;
+  uint16_t tail_ = 0;
+  uint16_t count_ = 0;
 
   bool initialized_ = false;
   bool recording_ = true;

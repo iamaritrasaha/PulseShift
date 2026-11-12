@@ -464,8 +464,8 @@ bool CanRecorder::push(const CanFrame& frame) {
 void CanRecorder::pump(uint32_t now) {
   if (!initialized_) return;
 
-  // Flush when batch reaches 8 records (160 bytes) OR time elapsed >= 200ms
-  if (count_ >= 8 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 200)) {
+  // Flush when batch reaches 16 records (320 bytes) OR time elapsed >= 200ms
+  if (count_ >= 16 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 200)) {
     flush();
   }
 }
@@ -505,22 +505,27 @@ void CanRecorder::flush() {
     return;
   }
 
-  // Write in batches from ring buffer
+  // Write in contiguous batches from ring buffer to minimize flash transaction overhead
   while (count_ > 0) {
-    const auto& rec = ring_[tail_];
-    const size_t written = f.write(reinterpret_cast<const uint8_t*>(&rec), sizeof(CanLogRecord));
-    if (written == sizeof(CanLogRecord)) {
-      ++recordedFrames_;
-    } else {
-      ++droppedFrames_;
+    const size_t contiguous = (head_ > tail_) ? count_ : (RING_CAPACITY - tail_);
+    const size_t batchCount = (contiguous > count_) ? count_ : contiguous;
+    const size_t bytesToWrite = batchCount * sizeof(CanLogRecord);
+    const size_t written = f.write(reinterpret_cast<const uint8_t*>(&ring_[tail_]), bytesToWrite);
+    const size_t recordsWritten = written / sizeof(CanLogRecord);
+    recordedFrames_ += recordsWritten;
+    tail_ = (tail_ + recordsWritten) % RING_CAPACITY;
+    count_ -= recordsWritten;
+
+    if (written != bytesToWrite) {
+      droppedFrames_ += count_;
+      count_ = 0;
+      head_ = tail_;
       writeError_ = true;
       storageFull_ = true;
       DiagLogger::instance().logEvent(DiagLevel::Error, "STORAGE_ERROR",
                                      "Write error while flushing record to flash.");
       break;
     }
-    tail_ = (tail_ + 1) % RING_CAPACITY;
-    --count_;
   }
 
   f.flush();

@@ -148,8 +148,18 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
   const uint16_t shownRpm = live ? s.rpm() : 0;
 
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE
-  // In CAPTURE mode: run startup sweep first, then display field status
-  if (!shiftLight_.isStartupComplete()) {
+  // Test override allows bench testing shift-light LED patterns without physical CAN
+  if (testRpmActive_) {
+    const bool ledsChanged = shiftLight_.update(now, testRpm_, ViewStatus::Live);
+    if (ledsChanged) {
+      const uint8_t count = shiftLight_.ledCount();
+      for (uint8_t i = 0; i < count; ++i) {
+        const RgbColor c = shiftLight_.getPixel(i);
+        leds_.setPixelColor(i, leds_.Color(c.r, c.g, c.b));
+      }
+      leds_.show();
+    }
+  } else if (!shiftLight_.isStartupComplete()) {
     const bool ledsChanged = shiftLight_.update(now, shownRpm, ViewStatus::Live);
     if (ledsChanged) {
       const uint8_t count = shiftLight_.ledCount();
