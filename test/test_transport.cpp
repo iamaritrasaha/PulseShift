@@ -19,7 +19,7 @@ int gpio_set_direction(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_MODE_INPUT);ro
 int gpio_set_pull_mode(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_PULLUP_ONLY);routing.push_back(3);return ESP_OK;}
 int twai_driver_install(const twai_general_config_t* g,const twai_timing_config_t* t,const twai_filter_config_t*) {
   ++installs;CHECK(g->mode==TWAI_MODE_LISTEN_ONLY);CHECK(g->tx_io==17 && g->rx_io==16);
-  CHECK(g->tx_queue_len==0 && g->rx_queue_len==64);CHECK(t->bitrate==500000);
+  CHECK(g->tx_queue_len==0 && g->rx_queue_len==128);CHECK(t->bitrate==500000);
   CHECK(!(g->alerts_enabled & (TWAI_ALERT_TX_SUCCESS|TWAI_ALERT_TX_FAILED|TWAI_ALERT_TX_IDLE)));
   return installResult;
 }
@@ -33,7 +33,7 @@ int main() {
   reset();FrameLog disabledLog;CanTransport disabled(0,&disabledLog);
   CHECK(!disabled.configured() && !disabled.begin());CHECK(installs==0);
   reset();CanTransport unknown(333333);CHECK(!unknown.begin() && !unknown.healthy());CHECK(installs==0);
-  for(uint32_t terminal:{TWAI_ALERT_BUS_OFF,TWAI_ALERT_RX_QUEUE_FULL,TWAI_ALERT_RX_FIFO_OVERRUN}) {
+  for(uint32_t terminal:{TWAI_ALERT_BUS_OFF}) {
     reset();FrameLog log;CanTransport can(500000,&log);CHECK(can.begin());CHECK(can.healthy());const auto began=starts;CHECK(can.begin() && starts==began);
     next.identifier=0x123;next.data_length_code=2;next.data[0]=0xAA;next.data[1]=0xBB;available=true;
     CanFrame frame;CHECK(can.receive(frame,0xFFFFFFF0));CHECK(frame.payloadSize==2 && frame.timestampMs==0xFFFFFFF0 && frame.data[1]==0xBB);
@@ -42,6 +42,8 @@ int main() {
     next.data_length_code=8;next.rtr=true;available=true;
     CHECK(can.receive(frame,20));CHECK(frame.remote && frame.payloadSize==0 && validEnvelope(frame));
     alerts=TWAI_ALERT_BUS_ERROR;can.poll(1000);CHECK(can.healthy()); // Report-only isolated error.
+    alerts=TWAI_ALERT_RX_QUEUE_FULL;can.poll(1005);CHECK(can.healthy()); // Non-fatal RX overflow continues receiving
+    alerts=TWAI_ALERT_RX_FIFO_OVERRUN;can.poll(1008);CHECK(can.healthy()); // Non-fatal FIFO overrun continues receiving
     const auto before=stops;alerts=terminal;can.poll(1010);CHECK(!can.healthy() && stops==before+1);
     for(unsigned i=0;i<1000;++i) { can.poll(2000+i); }
     CHECK(stops==before+1);
@@ -57,7 +59,7 @@ int main() {
   rxResult=ESP_FAIL;CanFrame frame;CHECK(!can.receive(frame,10) && !can.healthy());
   reset();CanTransport stopped(500000,&log);CHECK(stopped.begin());status.state=TWAI_STATE_STOPPED;stopped.poll(20);CHECK(!stopped.healthy());
   reset();CanTransport pending(500000,&log);CHECK(pending.begin());status.msgs_to_tx=1;pending.poll(20);CHECK(!pending.healthy());
-  reset();CanTransport missed(500000,&log);CHECK(missed.begin());status.rx_missed_count=1;missed.poll(20);CHECK(!missed.healthy());
+  reset();CanTransport missed(500000,&log);CHECK(missed.begin());status.rx_missed_count=1;missed.poll(20);CHECK(missed.healthy()); // Missed frames are non-fatal!
   reset();CanTransport alertFailure(500000,&log);CHECK(alertFailure.begin());alertResult=ESP_FAIL;alertFailure.poll(20);CHECK(!alertFailure.healthy());
   reset();installResult=ESP_FAIL;const auto startCount=starts;CanTransport failed(500000,&log);CHECK(!failed.begin() && starts==startCount);
   // A priority fault record survives a full frame queue with explicit loss count.

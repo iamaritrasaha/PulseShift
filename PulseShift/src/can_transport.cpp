@@ -206,12 +206,8 @@ void CanTransport::poll(uint32_t now) {
   if (tracker_.timedOut(now, config::txTimeoutMs)) fault(tracker_.txSeen() ? "RX timeout" : "TX completion timeout");
 #else
   twai_status_info_t status{};
-  if (twai_get_status_info(&status) != ESP_OK) {
-    fault("status read failed");
-    return;
-  }
-  if (status.state == TWAI_STATE_BUS_OFF) {
-    fault("controller bus-off state");
+  if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0) {
+    fault("controller status failure");
     return;
   }
 
@@ -240,13 +236,7 @@ bool CanTransport::receive(CanFrame& f, uint32_t now) {
   twai_message_t msg{};
   auto err = twai_receive(&msg, 0);
   if (err == ESP_ERR_TIMEOUT) return false;
-  if (err != ESP_OK) {
-    twai_status_info_t s{};
-    if (twai_get_status_info(&s) == ESP_OK && s.state == TWAI_STATE_BUS_OFF) {
-      fault("RX driver bus-off");
-    }
-    return false;
-  }
+  if (err != ESP_OK) { fault("RX driver failure"); return false; }
 
   f = {};
   f.id = msg.identifier;
