@@ -140,15 +140,14 @@ void CanTransport::poll(uint32_t now) {
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) { fault("alert read failed"); return; }
   alertsSeen_ |= alerts;
 
-  // True bus-off state is fatal in listen-only mode
-  if (alerts & TWAI_ALERT_BUS_OFF) {
-    fault("bus-off detected; inspect bus wiring and bitrate");
+  // True bus-off or RX overflow state is fatal in listen-only mode
+  if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
+    if (alerts & (TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
+      rxOverflowAlerts_.record();
+      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_OVERFLOW", "rx queue full or FIFO overrun");
+    }
+    fault("bus-off or RX overflow; inspect counters");
     return;
-  }
-
-  // Fix D1: RX queue full and hardware FIFO overrun are buffer congestion warnings, NOT fatal controller faults
-  if (alerts & (TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
-    rxOverflowAlerts_.record();
   }
 
 #if PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST
@@ -192,31 +191,29 @@ void CanTransport::poll(uint32_t now) {
   }
   if (tracker_.timedOut(now, config::txTimeoutMs)) fault(tracker_.txSeen() ? "RX timeout" : "TX completion timeout");
 #else
-  // Fix D1: In listen-only mode, rx_missed_count and rx_overrun_count are recorded as diagnostic metrics,
-  // NOT fatal halts. Only genuine driver state divergence is fatal.
   twai_status_info_t status{};
-  if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0) {
+  if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0 ||
+      status.rx_missed_count != 0 || status.rx_overrun_count != 0) {
+    lastBusErrorCount_ = status.bus_error_count;
+    lastMissedCount_ = status.rx_missed_count;
+    lastOverrunCount_ = status.rx_overrun_count;
+    if (status.rx_missed_count != 0) {
+      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_MISSED",
+                                     "frames dropped by driver queue missed=%lu",
+                                     (unsigned long)status.rx_missed_count);
+    }
+    if (status.rx_overrun_count != 0) {
+      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_OVERRUN",
+                                     "hardware FIFO overrun count=%lu",
+                                     (unsigned long)status.rx_overrun_count);
+    }
     fault("controller status failure");
     return;
   }
 
   lastBusErrorCount_ = status.bus_error_count;
-
-  if (status.rx_missed_count != lastMissedCount_) {
-    const uint32_t delta = status.rx_missed_count - lastMissedCount_;
-    lastMissedCount_ = status.rx_missed_count;
-    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_MISSED",
-                                   "frames dropped by driver queue delta=%lu total=%lu",
-                                   (unsigned long)delta, (unsigned long)lastMissedCount_);
-  }
-
-  if (status.rx_overrun_count != lastOverrunCount_) {
-    const uint32_t delta = status.rx_overrun_count - lastOverrunCount_;
-    lastOverrunCount_ = status.rx_overrun_count;
-    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_OVERRUN",
-                                   "hardware FIFO overrun delta=%lu total=%lu",
-                                   (unsigned long)delta, (unsigned long)lastOverrunCount_);
-  }
+  lastMissedCount_ = status.rx_missed_count;
+  lastOverrunCount_ = status.rx_overrun_count;
 #endif
 }
 
