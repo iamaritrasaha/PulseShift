@@ -23,6 +23,21 @@ class DiagLogger {
     return logger;
   }
 
+#if !defined(ARDUINO)
+  void begin(uint32_t, uint32_t) {}
+  void logBoot(const char*, bool) {}
+  void logEvent(DiagLevel, const char*, const char*, ...) {}
+  void logCanAlert(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
+  void logCanInit(uint32_t, int, const char*) {}
+  void logCanHalted(const char*) {}
+  void logCanInactivity(uint32_t) {}
+  void logCanResume(uint32_t) {}
+  void logStageChange(uint8_t, const char*) {}
+  void logStorageState(bool, size_t, size_t, bool) {}
+  void flush() {}
+  void dumpToSerial() {}
+  void clear() {}
+#else
   void begin(uint32_t bootCount, uint32_t sessionId);
   void logBoot(const char* modeName, bool rpmMapped);
   void logEvent(DiagLevel level, const char* tag, const char* format, ...);
@@ -33,10 +48,10 @@ class DiagLogger {
   void logCanResume(uint32_t totalRx);
   void logStageChange(uint8_t stage, const char* stageName);
   void logStorageState(bool mounted, size_t used, size_t freeBytes, bool full);
-
   void flush();
   void dumpToSerial();
   void clear();
+#endif
 
   uint32_t errorCount() const { return errorCount_; }
   uint32_t warnCount() const { return warnCount_; }
