@@ -107,6 +107,7 @@ class CanRecorder {
 
   void writeHeader();
   bool truncateToSize(const char* path, size_t newSize);
+  static bool verifyCaptureFile(const char* filePath, size_t expectedSize, bool checkRecords);
 
   CanLogRecord ring_[RING_CAPACITY]{};
   uint8_t head_ = 0;

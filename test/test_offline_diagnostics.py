@@ -17,6 +17,7 @@ import tempfile
 import os
 import json
 import re
+import io
 
 
 def compute_crc16_ccitt(data: bytes) -> int:
@@ -574,118 +575,365 @@ class ExportRecoveryIntegrationTests(unittest.TestCase):
         self.assertNotEqual(exp, act, "Missing export page must be detected via expected != exported")
 
 
+class FaultInjectableStorage:
+    """In-memory LittleFS simulator with fine-grained fault injection hooks."""
+
+    def __init__(self, free_bytes=500000):
+        self.files = {}
+        self.fail_rename_patterns = []
+        self.fail_write_offsets = {}
+        self.free_bytes_val = free_bytes
+
+    def set_free_bytes(self, b):
+        self.free_bytes_val = b
+
+    def free_bytes(self):
+        return self.free_bytes_val
+
+    def exists(self, path):
+        return path in self.files
+
+    def size(self, path):
+        return len(self.files.get(path, b""))
+
+    def remove(self, path):
+        if path in self.files:
+            del self.files[path]
+            return True
+        return False
+
+    def rename(self, src, dst):
+        for s_pat, d_pat in self.fail_rename_patterns:
+            if (s_pat == "*" or s_pat == src) and (d_pat == "*" or d_pat == dst):
+                return False
+        if src not in self.files:
+            return False
+        self.files[dst] = self.files[src]
+        del self.files[src]
+        return True
+
+    def write_file(self, path, data, chunk_size=128):
+        max_bytes = self.fail_write_offsets.get(path, None)
+        buf = bytearray()
+        offset = 0
+        while offset < len(data):
+            chunk = data[offset:offset + chunk_size]
+            if max_bytes is not None:
+                allowed = max(0, max_bytes - len(buf))
+                chunk = chunk[:allowed]
+                buf.extend(chunk)
+                if len(buf) >= max_bytes:
+                    self.files[path] = bytes(buf)
+                    return False
+            else:
+                buf.extend(chunk)
+            offset += len(chunk)
+        self.files[path] = bytes(buf)
+        return True
+
+
+def sim_verify_capture_file(storage: FaultInjectableStorage, path: str, expected_size: int = 0, check_records: bool = False) -> bool:
+    if not storage.exists(path):
+        return False
+    sz = storage.size(path)
+    if expected_size > 0 and sz != expected_size:
+        return False
+    if sz < 76:
+        return False
+    data_len = sz - 76
+    if (data_len % 20) != 0:
+        return False
+    raw = storage.files[path]
+    magic, ver, rec_size = struct.unpack("<8sHH", raw[:12])
+    if magic != b"PULSECAP" or ver != 1 or rec_size != 20:
+        return False
+    if check_records and data_len > 0:
+        offset = 76
+        while offset + 20 <= sz:
+            rec = raw[offset:offset + 20]
+            dlc = rec[8]
+            if dlc > 8:
+                return False
+            expected_crc = compute_crc16_ccitt(rec[:18])
+            stored_crc = struct.unpack("<H", rec[18:20])[0]
+            if stored_crc != expected_crc:
+                return False
+            offset += 20
+    return True
+
+
+def sim_truncate_to_size(storage: FaultInjectableStorage, path: str, new_size: int) -> bool:
+    if not storage.exists(path):
+        return False
+    cur_size = storage.size(path)
+    if cur_size <= new_size:
+        return True
+    if new_size < 76 or ((new_size - 76) % 20) != 0:
+        return False
+    if storage.free_bytes() < (new_size + 32768):
+        return False
+
+    temp_path = "/temp_cap.bin"
+    backup_path = "/backup_cap.bin"
+
+    if storage.exists(temp_path):
+        storage.remove(temp_path)
+    if storage.exists(backup_path):
+        storage.remove(backup_path)
+
+    orig_data = storage.files[path]
+    copy_data = orig_data[:new_size]
+    write_ok = storage.write_file(temp_path, copy_data)
+    if not write_ok or storage.size(temp_path) != new_size:
+        storage.remove(temp_path)
+        return False
+
+    if not sim_verify_capture_file(storage, temp_path, expected_size=new_size, check_records=True):
+        storage.remove(temp_path)
+        return False
+
+    # Step 1: rename original to backup
+    if not storage.rename(path, backup_path):
+        storage.remove(temp_path)
+        return False
+
+    # Step 2: rename verified replacement to path
+    if not storage.rename(temp_path, path):
+        storage.rename(backup_path, path)
+        storage.remove(temp_path)
+        return False
+
+    # Step 3: verify committed replacement at path before deleting backup
+    if not sim_verify_capture_file(storage, path, expected_size=new_size, check_records=False):
+        storage.remove(path)
+        storage.rename(backup_path, path)
+        return False
+
+    # Step 4: replacement is verified committed at path; remove backup
+    storage.remove(backup_path)
+    return True
+
+
+def sim_recover_boot_state(storage: FaultInjectableStorage, capture_path="/capture.bin", backup_path="/backup_cap.bin", temp_path="/temp_cap.bin") -> str:
+    if storage.exists(backup_path):
+        capture_exists = storage.exists(capture_path)
+        capture_valid = capture_exists and sim_verify_capture_file(storage, capture_path, check_records=False)
+        if capture_valid:
+            storage.remove(backup_path)
+            if storage.exists(temp_path):
+                storage.remove(temp_path)
+            return "ALREADY_COMMITTED"
+        else:
+            temp_valid = storage.exists(temp_path) and sim_verify_capture_file(storage, temp_path, check_records=True)
+            if temp_valid:
+                if capture_exists:
+                    storage.remove(capture_path)
+                if storage.rename(temp_path, capture_path) and sim_verify_capture_file(storage, capture_path, check_records=False):
+                    storage.remove(backup_path)
+                    return "COMMITTED_FROM_TEMP"
+                else:
+                    if storage.exists(capture_path):
+                        storage.remove(capture_path)
+                    restore_ok = storage.rename(backup_path, capture_path)
+                    if storage.exists(temp_path):
+                        storage.remove(temp_path)
+                    return "RESTORED_FROM_BACKUP" if restore_ok else "RECOVERY_FAILED_BACKUP_KEPT"
+            else:
+                if capture_exists:
+                    storage.remove(capture_path)
+                restore_ok = storage.rename(backup_path, capture_path)
+                if storage.exists(temp_path):
+                    storage.remove(temp_path)
+                return "RESTORED_FROM_BACKUP" if restore_ok else "RECOVERY_FAILED_BACKUP_KEPT"
+    elif storage.exists(temp_path):
+        if storage.exists(capture_path) and sim_verify_capture_file(storage, capture_path, check_records=False):
+            storage.remove(temp_path)
+            return "CLEANED_TEMP"
+        elif not storage.exists(capture_path):
+            storage.rename(temp_path, capture_path)
+            return "PRESERVED_TEMP_AS_CAPTURE"
+        else:
+            storage.remove(temp_path)
+            return "CLEANED_TEMP"
+    return "NO_RECOVERY_NEEDED"
+
+
 class PowerFailureSafeTruncationTests(unittest.TestCase):
-    """Simulates power-failure safe truncation, backup recovery and damaged file preservation."""
+    """Behavioral regression tests using fault-injectable filesystem operations."""
 
     HEADER_FORMAT = "<8sHHIIII16s32s"  # 76 bytes
 
-    def make_header(self, magic=b"PULSECAP", ver=1, sess=1, boot=1):
-        return struct.pack(
+    def make_valid_file(self, num_records=3, sess=1, boot=1):
+        hdr = struct.pack(
             self.HEADER_FORMAT,
-            magic, ver, 20, sess, boot, 500000, 1000,
+            b"PULSECAP", 1, 20, sess, boot, 500000, 1000,
             b"CAN_CAPTURE\x00\x00\x00\x00\x00",
             b"NS125 ABS 2025\x00" + b"\x00" * 17
         )
+        data = bytearray(hdr)
+        for i in range(num_records):
+            rec_body = struct.pack("<IIBB8s", i * 10, 0x120 + i, 8, 1, bytes([i % 256] * 8))
+            crc = compute_crc16_ccitt(rec_body)
+            data.extend(rec_body + struct.pack("<H", crc))
+        return bytes(data)
 
-    def test_interrupted_replacement_recovery_backup_restored(self):
-        """Simulate power loss where backup exists and original capture.bin is missing."""
-        with tempfile.TemporaryDirectory() as td:
-            backup_path = os.path.join(td, "backup_cap.bin")
-            capture_path = os.path.join(td, "capture.bin")
-            temp_path = os.path.join(td, "temp_cap.bin")
+    def test_fault_injection_interrupted_write_temp(self):
+        """Simulate power cut or write error mid-write to temp file."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)  # 76 + 100 = 176 bytes
+        storage.files["/capture.bin"] = orig_data
 
-            original_data = self.make_header() + (b"\x11" * 100)
-            with open(backup_path, "wb") as f:
-                f.write(original_data)
+        # Inject fault: fail after writing only 40 bytes to /temp_cap.bin
+        storage.fail_write_offsets["/temp_cap.bin"] = 40
 
-            # Temp path either does not exist or is corrupted/partial
-            with open(temp_path, "wb") as f:
-                f.write(b"CORRUPTED_TEMP_DATA")
+        success = sim_truncate_to_size(storage, "/capture.bin", new_size=136)
+        self.assertFalse(success, "Truncation must fail cleanly on interrupted temp write")
+        self.assertFalse(storage.exists("/temp_cap.bin"), "Partial temp file must be removed")
+        self.assertFalse(storage.exists("/backup_cap.bin"), "No backup file should be left behind")
+        self.assertTrue(storage.exists("/capture.bin"), "Original capture must remain in place")
+        self.assertEqual(storage.files["/capture.bin"], orig_data, "Original data must be 100% unaltered")
 
-            # Simulate CanRecorder::begin() recovery
-            if os.path.exists(backup_path):
-                if not os.path.exists(capture_path):
-                    temp_valid = False
-                    if os.path.exists(temp_path) and os.path.getsize(temp_path) >= 76:
-                        with open(temp_path, "rb") as tf:
-                            hdr = tf.read(76)
-                            if len(hdr) == 76 and hdr[:8] == b"PULSECAP":
-                                temp_valid = True
-                    if temp_valid:
-                        os.replace(temp_path, capture_path)
-                        os.remove(backup_path)
-                    else:
-                        os.replace(backup_path, capture_path)
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
+    def test_fault_injection_corrupted_temp_record_alignment(self):
+        """Reject truncation if target size violates record boundary alignment."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        storage.files["/capture.bin"] = orig_data
 
-            self.assertTrue(os.path.exists(capture_path))
-            self.assertFalse(os.path.exists(backup_path))
-            self.assertFalse(os.path.exists(temp_path))
-            with open(capture_path, "rb") as f:
-                self.assertEqual(f.read(), original_data)
+        # 76 + 25 bytes is not a multiple of 20
+        success = sim_truncate_to_size(storage, "/capture.bin", new_size=101)
+        self.assertFalse(success, "Truncation must reject non-record-aligned sizes")
+        self.assertEqual(storage.files["/capture.bin"], orig_data)
 
-    def test_interrupted_replacement_recovery_valid_replacement_committed(self):
-        """Simulate power loss where backup exists and temp file is verified valid."""
-        with tempfile.TemporaryDirectory() as td:
-            backup_path = os.path.join(td, "backup_cap.bin")
-            capture_path = os.path.join(td, "capture.bin")
-            temp_path = os.path.join(td, "temp_cap.bin")
+    def test_fault_injection_corrupted_temp_header_magic(self):
+        """Simulate corrupted magic in temporary file causing verification to reject commit."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        # Corrupted source data
+        corrupt_data = bytearray(orig_data)
+        corrupt_data[0:8] = b"BADMAGIC"
+        storage.files["/capture.bin"] = bytes(corrupt_data)
 
-            original_data = self.make_header() + (b"\x11" * 100)
-            replacement_data = self.make_header() + (b"\x22" * 80)
+        success = sim_truncate_to_size(storage, "/capture.bin", new_size=136)
+        self.assertFalse(success, "Truncation must reject corrupted header magic")
+        self.assertFalse(storage.exists("/temp_cap.bin"))
+        self.assertFalse(storage.exists("/backup_cap.bin"))
 
-            with open(backup_path, "wb") as f:
-                f.write(original_data)
-            with open(temp_path, "wb") as f:
-                f.write(replacement_data)
+    def test_fault_injection_corrupted_temp_record_crc(self):
+        """Simulate bitflip in record payload detected by full integrity verification."""
+        storage = FaultInjectableStorage()
+        orig_data = bytearray(self.make_valid_file(num_records=5))
+        # Corrupt one payload byte in record 2 without updating CRC
+        orig_data[76 + 20 + 10] ^= 0xFF
+        storage.files["/capture.bin"] = bytes(orig_data)
 
-            temp_valid = False
-            if os.path.exists(temp_path) and os.path.getsize(temp_path) >= 76:
-                with open(temp_path, "rb") as tf:
-                    hdr = tf.read(76)
-                    if len(hdr) == 76 and hdr[:8] == b"PULSECAP":
-                        temp_valid = True
+        success = sim_truncate_to_size(storage, "/capture.bin", new_size=136)
+        self.assertFalse(success, "Truncation must reject temp file with invalid record CRC")
+        self.assertFalse(storage.exists("/temp_cap.bin"))
+        self.assertFalse(storage.exists("/backup_cap.bin"))
 
-            self.assertTrue(temp_valid)
-            if temp_valid:
-                os.replace(temp_path, capture_path)
-                os.remove(backup_path)
+    def test_fault_injection_failed_rename_to_backup(self):
+        """Simulate failure renaming original capture to backup."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        storage.files["/capture.bin"] = orig_data
 
-            self.assertTrue(os.path.exists(capture_path))
-            self.assertFalse(os.path.exists(backup_path))
-            with open(capture_path, "rb") as f:
-                self.assertEqual(f.read(), replacement_data)
+        # Inject failure on rename to backup
+        storage.fail_rename_patterns.append(("/capture.bin", "/backup_cap.bin"))
 
-    def test_failed_rename_preserves_original(self):
-        """Simulate rollback when replacement rename fails."""
-        with tempfile.TemporaryDirectory() as td:
-            backup_path = os.path.join(td, "backup_cap.bin")
-            capture_path = os.path.join(td, "capture.bin")
-            temp_path = os.path.join(td, "temp_cap.bin")
+        success = sim_truncate_to_size(storage, "/capture.bin", new_size=136)
+        self.assertFalse(success)
+        self.assertFalse(storage.exists("/temp_cap.bin"))
+        self.assertFalse(storage.exists("/backup_cap.bin"))
+        self.assertEqual(storage.files["/capture.bin"], orig_data, "Original file preserved when backup rename fails")
 
-            original_data = self.make_header() + (b"\x11" * 100)
-            with open(capture_path, "wb") as f:
-                f.write(original_data)
-            with open(temp_path, "wb") as f:
-                f.write(self.make_header() + (b"\x22" * 80))
+    def test_fault_injection_failed_commit_with_successful_rollback(self):
+        """Simulate failure committing replacement with successful rollback restoring backup."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        storage.files["/capture.bin"] = orig_data
 
-            # Step 1: rename original to backup
-            os.replace(capture_path, backup_path)
-            self.assertTrue(os.path.exists(backup_path))
+        # Inject failure when committing temp to capture.bin
+        storage.fail_rename_patterns.append(("/temp_cap.bin", "/capture.bin"))
 
-            # Step 2: simulate failure on renaming temp to capture_path
-            rename_succeeded = False
-            if not rename_succeeded:
-                # Rollback to restore backup back to capture_path
-                os.replace(backup_path, capture_path)
-                os.remove(temp_path)
+        success = sim_truncate_to_size(storage, "/capture.bin", new_size=136)
+        self.assertFalse(success, "Truncation must report failure when commit fails")
+        self.assertFalse(storage.exists("/temp_cap.bin"), "Temp file must be unlinked")
+        self.assertFalse(storage.exists("/backup_cap.bin"), "Backup file restored back to capture.bin")
+        self.assertTrue(storage.exists("/capture.bin"), "Capture file must exist after rollback")
+        self.assertEqual(storage.files["/capture.bin"], orig_data, "Rollback must restore original capture bytes")
 
-            self.assertTrue(os.path.exists(capture_path))
-            self.assertFalse(os.path.exists(backup_path))
-            self.assertFalse(os.path.exists(temp_path))
-            with open(capture_path, "rb") as f:
-                self.assertEqual(f.read(), original_data)
+    def test_fault_injection_failed_rollback_preserves_backup_never_deletes(self):
+        """Critical safety: if rollback rename fails, backup must NEVER be deleted."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        storage.files["/capture.bin"] = orig_data
+
+        # Fail commit of temp AND fail rollback of backup
+        storage.fail_rename_patterns.append(("/temp_cap.bin", "/capture.bin"))
+        storage.fail_rename_patterns.append(("/backup_cap.bin", "/capture.bin"))
+
+        success = sim_truncate_to_size(storage, "/capture.bin", new_size=136)
+        self.assertFalse(success)
+        # CRITICAL ASSERTION: The last recoverable copy must NOT be deleted!
+        self.assertTrue(storage.exists("/backup_cap.bin"), "Backup copy MUST be preserved when rollback fails")
+        self.assertEqual(storage.files["/backup_cap.bin"], orig_data, "Backup data must be intact")
+
+    def test_fault_injection_boot_recovery_from_backup_when_capture_missing(self):
+        """Simulate boot recovery after power loss interrupted commit."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        storage.files["/backup_cap.bin"] = orig_data
+        storage.files["/temp_cap.bin"] = b"PARTIAL_TORN_TEMP_BYTES"
+
+        status = sim_recover_boot_state(storage)
+        self.assertEqual(status, "RESTORED_FROM_BACKUP")
+        self.assertTrue(storage.exists("/capture.bin"))
+        self.assertEqual(storage.files["/capture.bin"], orig_data)
+        self.assertFalse(storage.exists("/backup_cap.bin"))
+        self.assertFalse(storage.exists("/temp_cap.bin"))
+
+    def test_fault_injection_boot_recovery_corrupt_capture_replaced_by_backup(self):
+        """Simulate boot recovery when capture.bin was corrupted during commit before power cut."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        storage.files["/backup_cap.bin"] = orig_data
+        storage.files["/capture.bin"] = b""  # 0-byte corrupt file from cut-off commit
+
+        status = sim_recover_boot_state(storage)
+        self.assertEqual(status, "RESTORED_FROM_BACKUP")
+        self.assertTrue(storage.exists("/capture.bin"))
+        self.assertEqual(storage.files["/capture.bin"], orig_data)
+        self.assertFalse(storage.exists("/backup_cap.bin"))
+
+    def test_fault_injection_boot_recovery_from_verified_temp(self):
+        """Simulate boot recovery when temp file is verified valid and complete."""
+        storage = FaultInjectableStorage()
+        orig_data = self.make_valid_file(num_records=5)
+        truncated_data = self.make_valid_file(num_records=4)
+        storage.files["/backup_cap.bin"] = orig_data
+        storage.files["/temp_cap.bin"] = truncated_data
+
+        status = sim_recover_boot_state(storage)
+        self.assertEqual(status, "COMMITTED_FROM_TEMP")
+        self.assertTrue(storage.exists("/capture.bin"))
+        self.assertEqual(storage.files["/capture.bin"], truncated_data)
+        self.assertFalse(storage.exists("/backup_cap.bin"))
+        self.assertFalse(storage.exists("/temp_cap.bin"))
+
+    def test_fault_injection_boot_recovery_already_committed(self):
+        """Simulate boot recovery when replacement was already committed before power cut."""
+        storage = FaultInjectableStorage()
+        valid_capture = self.make_valid_file(num_records=4)
+        storage.files["/capture.bin"] = valid_capture
+        storage.files["/backup_cap.bin"] = self.make_valid_file(num_records=5)
+        storage.files["/temp_cap.bin"] = b"STALE"
+
+        status = sim_recover_boot_state(storage)
+        self.assertEqual(status, "ALREADY_COMMITTED")
+        self.assertTrue(storage.exists("/capture.bin"))
+        self.assertEqual(storage.files["/capture.bin"], valid_capture)
+        self.assertFalse(storage.exists("/backup_cap.bin"))
+        self.assertFalse(storage.exists("/temp_cap.bin"))
 
     def test_damaged_or_incomplete_header_preservation(self):
         """Verify incomplete (< 76 bytes) or corrupted header capture is preserved and never overwritten."""

@@ -151,6 +151,9 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
         self.assertIn("TRUNCATE_BACKUP_FAILED", content)
         self.assertIn("TRUNCATE_REPLACE_FAILED", content)
         self.assertIn("TRUNCATE_RECOVERED", content)
+        self.assertIn("ROLLBACK_FAILED", content)
+        self.assertIn("verifyCaptureFile", content)
+        self.assertIn("TRUNCATE_INVALID_SIZE", content)
         # Must preserve damaged capture
         self.assertIn("DAMAGED_CAPTURE_PRESERVED", content)
 

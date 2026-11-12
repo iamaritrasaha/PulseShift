@@ -94,45 +94,65 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
   const char* tempPath = "/temp_cap.bin";
   const char* backupPath = "/backup_cap.bin";
 
-  // Power-failure recovery:
+  // Strengthened power-failure recovery:
   // If backupPath exists, a previous truncate operation was interrupted by power failure.
   if (sm.exists(backupPath)) {
-    if (!sm.exists(CAPTURE_PATH)) {
-      // Interrupted after original was renamed to backup, before replacement was committed.
-      // Check if tempPath has a valid header and data.
-      bool tempValid = false;
-      if (sm.exists(tempPath) && sm.size(tempPath) >= sizeof(CaptureHeader)) {
-        File tf = sm.open(tempPath, "r");
-        if (tf) {
-          CaptureHeader thdr{};
-          if (tf.read(reinterpret_cast<uint8_t*>(&thdr), sizeof(thdr)) == sizeof(thdr) &&
-              memcmp(thdr.magic, "PULSECAP", 8) == 0 && thdr.headerVersion == 1) {
-            tempValid = true;
+    const bool captureExists = sm.exists(CAPTURE_PATH);
+    const bool captureValid = captureExists && verifyCaptureFile(CAPTURE_PATH, 0, false);
+
+    if (captureValid) {
+      // CAPTURE_PATH exists and is verified valid; replacement was committed before power cut.
+      sm.remove(backupPath);
+      if (sm.exists(tempPath)) sm.remove(tempPath);
+    } else {
+      // CAPTURE_PATH does not exist or is corrupted.
+      // Check if tempPath is complete and verified valid.
+      const bool tempValid = sm.exists(tempPath) && verifyCaptureFile(tempPath, 0, true);
+      if (tempValid) {
+        if (captureExists) sm.remove(CAPTURE_PATH);
+        if (sm.rename(tempPath, CAPTURE_PATH) && verifyCaptureFile(CAPTURE_PATH, 0, false)) {
+          sm.remove(backupPath);
+          DiagLogger::instance().logEvent(DiagLevel::Warn, "TRUNCATE_RECOVERED",
+                                         "Committed verified replacement from interrupted truncation.");
+        } else {
+          // Commit failed; restore from backup
+          if (sm.exists(CAPTURE_PATH)) sm.remove(CAPTURE_PATH);
+          const bool restoreOk = sm.rename(backupPath, CAPTURE_PATH);
+          if (restoreOk) {
+            DiagLogger::instance().logEvent(DiagLevel::Warn, "TRUNCATE_RECOVERED",
+                                           "Restored original capture from backup after failed temp commit.");
+          } else {
+            DiagLogger::instance().logEvent(DiagLevel::Error, "RECOVERY_FAILED",
+                                           "Failed to restore backup to capture path; preserving %s", backupPath);
           }
-          tf.close();
+          if (sm.exists(tempPath)) sm.remove(tempPath);
         }
-      }
-      if (tempValid && sm.rename(tempPath, CAPTURE_PATH)) {
-        sm.remove(backupPath);
-        DiagLogger::instance().logEvent(DiagLevel::Warn, "TRUNCATE_RECOVERED",
-                                       "Committed valid replacement from interrupted truncation.");
       } else {
-        // Restore from backup
-        if (sm.rename(backupPath, CAPTURE_PATH)) {
+        // tempPath is missing or invalid; restore from backupPath.
+        if (captureExists) sm.remove(CAPTURE_PATH);
+        const bool restoreOk = sm.rename(backupPath, CAPTURE_PATH);
+        if (restoreOk) {
           DiagLogger::instance().logEvent(DiagLevel::Warn, "TRUNCATE_RECOVERED",
                                          "Restored original capture from interrupted truncation backup.");
+        } else {
+          DiagLogger::instance().logEvent(DiagLevel::Error, "RECOVERY_FAILED",
+                                         "Failed to restore backup to capture path; preserving %s", backupPath);
         }
         if (sm.exists(tempPath)) sm.remove(tempPath);
       }
-    } else {
-      // CAPTURE_PATH exists, so the replacement was already committed before power loss.
-      // Clean up obsolete backup and temp files.
-      sm.remove(backupPath);
-      if (sm.exists(tempPath)) sm.remove(tempPath);
     }
   } else if (sm.exists(tempPath)) {
-    // Stale temp file from interrupted truncation before renaming backup. Clean up.
-    sm.remove(tempPath);
+    // Stale temp file without backupPath.
+    if (sm.exists(CAPTURE_PATH) && verifyCaptureFile(CAPTURE_PATH, 0, false)) {
+      sm.remove(tempPath);
+    } else if (!sm.exists(CAPTURE_PATH) && verifyCaptureFile(tempPath, 0, false)) {
+      sm.rename(tempPath, CAPTURE_PATH);
+    } else if (!sm.exists(CAPTURE_PATH)) {
+      // tempPath is the only file with data; preserve it as CAPTURE_PATH so it can be examined or cleared
+      sm.rename(tempPath, CAPTURE_PATH);
+    } else {
+      sm.remove(tempPath);
+    }
   }
 
   // Inspect CAPTURE_PATH
@@ -220,6 +240,57 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
   initialized_ = true;
 }
 
+bool CanRecorder::verifyCaptureFile(const char* filePath, size_t expectedSize, bool checkRecords) {
+  auto& sm = StorageManager::instance();
+  if (!sm.isMounted() || !sm.exists(filePath)) return false;
+
+  const size_t sz = sm.size(filePath);
+  if (expectedSize > 0 && sz != expectedSize) return false;
+  if (sz < sizeof(CaptureHeader)) return false;
+
+  const size_t dataLen = sz - sizeof(CaptureHeader);
+  if ((dataLen % sizeof(CanLogRecord)) != 0) return false;
+
+  File f = sm.open(filePath, "r");
+  if (!f) return false;
+
+  CaptureHeader hdr{};
+  if (f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
+    f.close();
+    return false;
+  }
+
+  if (memcmp(hdr.magic, "PULSECAP", 8) != 0 ||
+      hdr.headerVersion != 1 ||
+      hdr.recordSize != sizeof(CanLogRecord)) {
+    f.close();
+    return false;
+  }
+
+  if (checkRecords && dataLen > 0) {
+    const size_t numRecords = dataLen / sizeof(CanLogRecord);
+    CanLogRecord rec{};
+    for (size_t i = 0; i < numRecords; ++i) {
+      if (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) != sizeof(rec)) {
+        f.close();
+        return false;
+      }
+      if (rec.dlc > 8) {
+        f.close();
+        return false;
+      }
+      const uint16_t expectedCrc = computeCrc16(reinterpret_cast<const uint8_t*>(&rec), 18);
+      if (rec.checksum != expectedCrc) {
+        f.close();
+        return false;
+      }
+    }
+  }
+
+  f.close();
+  return true;
+}
+
 bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
   auto& sm = StorageManager::instance();
   if (!sm.isMounted()) return false;
@@ -228,6 +299,15 @@ bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
   if (orig.size() <= newSize) {
     orig.close();
     return true;
+  }
+
+  // Record alignment check: truncated size must include header and full records
+  if (newSize < sizeof(CaptureHeader) || ((newSize - sizeof(CaptureHeader)) % sizeof(CanLogRecord)) != 0) {
+    orig.close();
+    DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_INVALID_SIZE",
+                                   "Target size %lu not record aligned; original capture preserved.",
+                                   (unsigned long)newSize);
+    return false;
   }
 
   // Safety check: verify sufficient free flash to write replacement copy
@@ -271,19 +351,11 @@ bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
   temp.flush();
   temp.close();
 
-  // Validate replacement before touching the original file
+  // Validate replacement before touching the original file:
+  // Full expected size, record alignment, header fields, and record integrity
   bool validReplacement = (!writeError && copied == newSize && sm.size(tempPath) == newSize);
-  if (validReplacement && newSize >= 8) {
-    File verifyFile = sm.open(tempPath, "r");
-    if (verifyFile) {
-      char magic[8];
-      if (verifyFile.read(reinterpret_cast<uint8_t*>(magic), 8) != 8 || memcmp(magic, "PULSECAP", 8) != 0) {
-        validReplacement = false;
-      }
-      verifyFile.close();
-    } else {
-      validReplacement = false;
-    }
+  if (validReplacement) {
+    validReplacement = verifyCaptureFile(tempPath, newSize, true);
   }
 
   if (!validReplacement) {
@@ -304,15 +376,37 @@ bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
 
   // Step 2: Rename verified replacement to original path
   if (!sm.rename(tempPath, path)) {
-    // Rollback: restore backup back to original path
-    sm.rename(backupPath, path);
+    // Rollback: restore backup back to original path and verify result
+    const bool rollbackOk = sm.rename(backupPath, path);
     sm.remove(tempPath);
-    DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_REPLACE_FAILED",
-                                   "Failed to commit replacement; backup restored.");
+    if (rollbackOk) {
+      DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_REPLACE_FAILED",
+                                     "Failed to commit replacement; backup restored.");
+    } else {
+      // Rollback rename failed! Never delete the last recoverable copy!
+      DiagLogger::instance().logEvent(DiagLevel::Error, "ROLLBACK_FAILED",
+                                     "Rollback rename failed; preserving last recoverable copy at %s", backupPath);
+    }
     return false;
   }
 
-  // Step 3: Verified replacement is committed at path. Now remove backup.
+  // Step 3: Verify committed replacement at path before deleting backup.
+  // Never delete the last recoverable copy!
+  if (!verifyCaptureFile(path, newSize, false)) {
+    // Replacement corrupt after commit; roll back from backup
+    sm.remove(path);
+    const bool rollbackOk = sm.rename(backupPath, path);
+    if (rollbackOk) {
+      DiagLogger::instance().logEvent(DiagLevel::Error, "REPLACE_CORRUPT_RESTORED",
+                                     "Committed replacement corrupt; backup copy restored.");
+    } else {
+      DiagLogger::instance().logEvent(DiagLevel::Error, "ROLLBACK_FAILED",
+                                     "Committed replacement corrupt and rollback failed; preserving %s", backupPath);
+    }
+    return false;
+  }
+
+  // Step 4: Verified replacement is fully in place. Safe to remove backup.
   sm.remove(backupPath);
   return true;
 }
