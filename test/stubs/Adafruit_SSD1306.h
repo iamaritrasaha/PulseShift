@@ -17,6 +17,7 @@ class Adafruit_SSD1306 {
   void setTextColor(int) {} void setTextSize(int) {} void setCursor(int,int) {}
   void print(const char* s) { testOledText += s; }
   void print(unsigned n,int=10) { testOledText += std::to_string(n); }
+  template<typename... Args> void printf(const char*, Args...) {}
   void drawRect(int,int,int,int,int) {}
   void fillRect(int x,int y,int width,int height,int) {
     if (x==1 && y==59 && height==4) { testOledBarWidth=width; ++testOledBarFills; }
