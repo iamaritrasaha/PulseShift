@@ -127,6 +127,7 @@ Open Serial Monitor in Arduino IDE (Ctrl+Shift+M), set baud to **115200**.
 | `STATUS` | Current system state, storage, CAN controller stats |
 | `LOGS` | Display saved error log |
 | `DUMP` | Export raw CAN capture as CSV (copy from Serial Monitor) |
+| `STAGE <1\|2\|3>` | Set field capture stage (1=KeyOn, 2=Idle, 3=GentleRPM) |
 | `CLEAR YES` | Erase stored logs after explicit confirmation |
 
 Demo-mode extra commands:
@@ -171,21 +172,19 @@ Edit `PulseShift/UserConfig.h` before uploading:
 ```
 PulseShift-Firmware/
 ├── PulseShift/           ← Open PulseShift.ino here in Arduino IDE
-│   ├── PulseShift.ino    ← Sketch entry point
+│   ├── PulseShift.ino    ← Main sketch entry point (setup and loop)
 │   ├── UserConfig.h      ← Edit this to change settings
-│   ├── ConfigCompat.h    ← Legacy name compatibility
-│   ├── config.h          ← Internal config (do not edit)
-│   ├── main.cpp          ← setup() and loop()
-│   ├── can_transport.*   ← TWAI driver wrapper
+│   ├── config.h          ← Internal config
+│   ├── can_transport.*   ← TWAI driver wrapper (listen-only)
 │   ├── can_recorder.*    ← Raw CAN capture to LittleFS
 │   ├── shift_light.*     ← WS2812B LED control
 │   ├── rpm_decoder.*     ← CAN RPM decoding framework
 │   ├── diag_logger.*     ← Automatic error logging
-│   ├── storage_manager.* ← LittleFS and NVS management
+│   ├── storage_manager.* ← LittleFS and NVS management (safe formatting)
 │   ├── dashboard.*       ← OLED display (optional)
-│   └── ...               ← Other supporting files
-├── test/                 ← Optional host-side C++ unit tests
-├── tools/                ← Optional: can_investigate.py for log analysis
+│   └── ...               ← Supporting headers
+├── test/                 ← Host-side C++ and Python verification tests
+├── tools/                ← can_investigate.py for log analysis
 ├── docs/                 ← Hardware and CAN investigation notes
 └── README.md
 ```

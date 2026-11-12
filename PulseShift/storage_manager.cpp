@@ -7,21 +7,26 @@
 bool StorageManager::isPartitionBlank() const {
   const esp_partition_t* part = esp_partition_find_first(
       ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
-  if (!part) return false;
+  if (!part || part->size == 0) return false;
 
-  // Inspect first 1024 bytes of the data partition
+  // Verify the entire partition in bounded 256-byte chunks.
+  // Never classify a partition as blank based on just the first 1 KB;
+  // valid recordings or filesystem structures could exist further in the partition.
   uint8_t buf[256];
-  for (size_t offset = 0; offset < 1024; offset += sizeof(buf)) {
-    if (esp_partition_read(part, offset, buf, sizeof(buf)) != ESP_OK) {
+  for (size_t offset = 0; offset < part->size; offset += sizeof(buf)) {
+    const size_t toRead = (part->size - offset < sizeof(buf)) ? (part->size - offset) : sizeof(buf);
+    if (esp_partition_read(part, offset, buf, toRead) != ESP_OK) {
+      // If flash read fails, fail-safe: assume not blank to prevent accidental wipe
       return false;
     }
-    for (size_t i = 0; i < sizeof(buf); i++) {
+    for (size_t i = 0; i < toRead; ++i) {
       if (buf[i] != 0xFF) {
-        return false; // Found non-0xFF byte: partition has written data or existing filesystem
+        // Found non-0xFF byte: partition contains data or previous filesystem
+        return false;
       }
     }
   }
-  return true; // All 1024 bytes are 0xFF: virgin unformatted flash
+  return true; // Every byte across the entire partition is verified 0xFF (virgin flash)
 }
 
 bool StorageManager::begin(bool allowFormatIfCorrupt) {
@@ -29,25 +34,32 @@ bool StorageManager::begin(bool allowFormatIfCorrupt) {
   mounted_ = LittleFS.begin(false, "/littlefs", 10, "spiffs");
 
   if (!mounted_) {
-    // Check if the partition is virgin unformatted flash (all 0xFF).
+    // Check if the partition is genuinely blank (every byte across the entire partition is 0xFF).
     // On a brand-new ESP32 out of the box, the partition is unformatted.
-    // Formatting virgin flash on first boot is essential so persistent storage
-    // works without manual USB intervention, while NEVER wiping an existing partition with data.
+    // Formatting virgin flash on first boot ensures persistent storage works out-of-the-box,
+    // while NEVER formatting an existing partition that contains data.
     const bool isVirgin = isPartitionBlank();
 
     if (isVirgin || allowFormatIfCorrupt) {
       Serial.println(isVirgin 
-        ? "[STORAGE] Virgin unformatted partition detected. Formatting LittleFS on first boot..."
+        ? "[STORAGE] Blank unformatted partition verified (all 0xFF). Formatting LittleFS for first boot..."
         : "[STORAGE] Formatting LittleFS as explicitly requested...");
       if (LittleFS.format()) {
         mounted_ = LittleFS.begin(false, "/littlefs", 10, "spiffs");
+        if (mounted_) {
+          Serial.println("[STORAGE] LittleFS formatted and mounted successfully.");
+        } else {
+          Serial.println("[STORAGE ERROR] LittleFS format succeeded, but mount failed.");
+        }
+      } else {
+        Serial.println("[STORAGE ERROR] LittleFS format failed.");
       }
     } else {
-      // Partition is NOT blank (contains existing data or previous recordings).
-      // Automatic formatting is strictly suppressed to prevent accidental data loss.
-      Serial.println("[STORAGE WARNING] LittleFS mount failed on partition containing data. "
-                     "Automatic format suppressed to protect existing recordings. "
-                     "Use serial command 'CLEAR YES' via USB if you wish to wipe.");
+      // Partition is NOT blank (contains non-0xFF bytes, such as existing recordings or corrupted filesystem).
+      // Automatic formatting is strictly suppressed to protect potentially recoverable data.
+      Serial.println("[STORAGE WARNING] LittleFS mount failed on partition containing data.");
+      Serial.println("[STORAGE WARNING] Automatic format suppressed to protect existing recordings.");
+      Serial.println("[STORAGE WARNING] Use Serial Monitor command 'CLEAR YES' via USB if you wish to wipe.");
     }
   }
 

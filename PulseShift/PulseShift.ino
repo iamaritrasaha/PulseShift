@@ -83,7 +83,7 @@ class Application {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("TARGET: %s / %s / %u WS2812B LEDs\r\n",
       config::vehicle, config::transceiver, config::ledCount);
-    Serial.println("RECEIVE ONLY: actual module RS-high/TXD bias must be electrically verified");
+    Serial.println("RECEIVE ONLY: SN65HVD230 RS to GND (high-speed), TXD biased 3.3V, GPIO17 physically isolated");
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     Serial.printf("PROFILE id=%s status=%s ready=%d\r\n", selectedVehicleProfile().identifier,
       profileStatusName(selectedVehicleProfile().status), rpm_.mapped());

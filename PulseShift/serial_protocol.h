@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <ctype.h>
 
 class SerialProtocol {
  public:
@@ -10,10 +11,40 @@ class SerialProtocol {
 
   SerialProtocol() = default;
 
-  // Feeds a single character from Serial. Returns true when a complete command is ready in cmdBuffer()
-  bool feed(char ch);
+  // Feeds a single character from Serial. Returns true when a complete command is ready in command()
+  bool feed(char ch) {
+    if (ch == '\r' || ch == '\n') {
+      if (overflow_) {
+        reset();
+        return false;
+      }
+      if (length_ == 0) return false;
+      buffer_[length_] = '\0';
+      return true; // Complete command ready
+    }
+
+    if (overflow_) return false;
+
+    if (length_ >= MAX_CMD_LEN - 1) {
+      overflow_ = true;
+      return false;
+    }
+
+    // Accept printable characters
+    if (isprint(static_cast<unsigned char>(ch))) {
+      buffer_[length_++] = ch;
+    }
+
+    return false;
+  }
+
   const char* command() const { return buffer_; }
-  void reset();
+
+  void reset() {
+    length_ = 0;
+    overflow_ = false;
+    buffer_[0] = '\0';
+  }
 
  private:
   char buffer_[MAX_CMD_LEN]{};

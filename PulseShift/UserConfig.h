@@ -21,12 +21,11 @@
 #define PULSESHIFT_ALERT_SOLID_RED   1
 #define PULSESHIFT_ALERT_FLASH_RED   2
 #define PULSESHIFT_ALERT_FLASH_WHITE 3
-#include "ConfigCompat.h"
+
 // DEFAULT: DEMO creates complete synthetic frames; it needs no CAN connection.
 // DO NOT CHANGE WITHOUT VERIFICATION: CAN_CAPTURE requires a reviewed isolated
 // bench and known bitrate. VEHICLE_RPM stays disabled until its entire profile
 // and electrical qualification are verified. Neither mode sends CAN frames.
-// PlatformIO bike/self-test environments force their own mode; see README.
 #ifndef PULSESHIFT_OPERATING_MODE
 #define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_DEMO
 #endif
@@ -119,7 +118,6 @@
 
 // DEFAULT: 0 (off) for the LED-only Arduino sketch. CHANGE ONLY IF: an SSD1306
 // 128x64 at 0x3C is installed, then use 1 and the documented libraries.
-// The existing Wokwi environment overrides this to 1 for its simulated OLED.
 #ifndef PULSESHIFT_OLED_ENABLED
 #define PULSESHIFT_OLED_ENABLED 0
 #endif
@@ -138,14 +136,15 @@
 #define PULSESHIFT_CAN_RX_GPIO 16
 #endif
 // DEFAULT: GPIO17, reserved for transceiver TXD; leave unconnected in LED demo.
-// DO NOT CHANGE WITHOUT VERIFICATION: reset/passivity protection. The bench
-// firmware disconnects this output; actual module RS/TXD wiring must be checked.
+// DO NOT CHANGE WITHOUT VERIFICATION: reset/passivity protection. In listen-only modes,
+// firmware disconnects this pin from output. SN65HVD230 pin 8 (Rs) connects to GND
+// (high-speed mode) while pin 1 (TXD) must be held recessive (3.3V) to guarantee
+// zero bus transmission.
 #ifndef PULSESHIFT_CAN_TX_GPIO
 #define PULSESHIFT_CAN_TX_GPIO 17
 #endif
 // DEFAULT: 0 keeps TWAI stopped. DO NOT CHANGE WITHOUT VERIFICATION: only a known
-// isolated bench may use 125000, 250000, 500000 or 1000000 bits/s. Both the bike
-// PlatformIO target and Arduino bench mode read this. It does not enable a
+// isolated bench may use 125000, 250000, 500000 or 1000000 bits/s. It does not enable a
 // motorcycle decoder or prove wiring, bitrate or passive RPM compatibility.
 #ifndef PULSESHIFT_CAN_BITRATE
 #define PULSESHIFT_CAN_BITRATE 0
@@ -155,8 +154,7 @@
 #ifndef PULSESHIFT_SERIAL_DIAGNOSTICS
 #define PULSESHIFT_SERIAL_DIAGNOSTICS 1
 #endif
-// DEFAULT: 115200 baud. OPTIONAL: 1..2000000; match the monitor's baud setting.
-// PlatformIO monitor_speed stays 115200 unless you change it separately.
+// DEFAULT: 115200 baud. OPTIONAL: 1..2000000; match Arduino Serial Monitor baud rate.
 #ifndef PULSESHIFT_SERIAL_BAUD
 #define PULSESHIFT_SERIAL_BAUD 115200
 #endif
@@ -175,9 +173,7 @@
 #define PULSESHIFT_MAX_DIAG_LOG_BYTES 131072
 #endif
 
-// Export legacy names and reject old/new conflicts before validation.
 #define PULSESHIFT_CONFIG_VALUES_READY 1
-#include "ConfigCompat.h"
 
 // Internal compile-time validation below. These are not user settings.
 #if PULSESHIFT_OPERATING_MODE != PULSESHIFT_USER_MODE_DEMO && \

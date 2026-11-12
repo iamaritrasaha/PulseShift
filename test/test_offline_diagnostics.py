@@ -275,24 +275,42 @@ class StorageQuotaAndFullPolicyTests(unittest.TestCase):
         self.assertTrue(sm2.storage_full)
 
     def test_virgin_unformatted_partition_detection(self):
-        """Simulates isPartitionBlank() logic to guarantee safe first-boot formatting."""
-        def is_partition_blank(flash_bytes: bytes) -> bool:
-            # Check first 1024 bytes for all 0xFF
-            chunk = flash_bytes[:1024]
-            return all(b == 0xFF for b in chunk)
+        """Simulates full-partition isPartitionBlank() logic to guarantee safe first-boot formatting."""
+        def is_partition_blank(flash_bytes: bytes, chunk_size: int = 256) -> bool:
+            if not flash_bytes:
+                return False
+            for offset in range(0, len(flash_bytes), chunk_size):
+                chunk = flash_bytes[offset:offset + chunk_size]
+                if any(b != 0xFF for b in chunk):
+                    return False
+            return True
 
         # 1. Virgin factory-erased flash (all 0xFF) -> Safe to format on first boot
-        virgin_flash = b"\xFF" * 4096
+        virgin_flash = b"\xFF" * 65536
         self.assertTrue(is_partition_blank(virgin_flash))
 
         # 2. Existing LittleFS partition (starts with LittleFS superblock) -> MUST NOT auto-format
-        littlefs_flash = b"littlefs" + b"\x00" * 4088
+        littlefs_flash = b"littlefs" + b"\xFF" * 4088
         self.assertFalse(is_partition_blank(littlefs_flash))
 
-        # 3. Corrupted or dirty existing partition with data -> MUST NOT auto-format
-        dirty_flash = bytearray([0xFF] * 4096)
-        dirty_flash[128] = 0x55  # Single non-0xFF byte
-        self.assertFalse(is_partition_blank(bytes(dirty_flash)))
+        # 3. Dirty partition within first 1024 bytes -> MUST NOT auto-format
+        dirty_early = bytearray([0xFF] * 8192)
+        dirty_early[128] = 0x55  # Single non-0xFF byte in first block
+        self.assertFalse(is_partition_blank(bytes(dirty_early)))
+
+        # 4. Critical safety regression: dirty partition with non-0xFF PAST 1024 bytes
+        # (e.g. data at offset 1025, 2048, or 4096). The old 1024-byte check would falsely
+        # classify this as blank and wipe user recordings; full scan MUST return False!
+        dirty_late_1025 = bytearray([0xFF] * 8192)
+        dirty_late_1025[1025] = 0x00
+        self.assertFalse(is_partition_blank(bytes(dirty_late_1025)))
+
+        dirty_late_4096 = bytearray([0xFF] * 8192)
+        dirty_late_4096[4096] = 0xAA
+        self.assertFalse(is_partition_blank(bytes(dirty_late_4096)))
+
+        # 5. Empty/null partition -> MUST NOT auto-format
+        self.assertFalse(is_partition_blank(b""))
 
     def test_duration_at_different_frame_rates(self):
         """Validates realistic capacity limits across typical vehicle CAN frame rates."""

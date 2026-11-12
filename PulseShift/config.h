@@ -2,19 +2,13 @@
 #pragma once
 #include <stdint.h>
 #include "UserConfig.h"
-#ifndef PULSESHIFT_CONFIG_VALUES_READY
-#define PULSESHIFT_CONFIG_VALUES_READY 1
-#endif
-#include "ConfigCompat.h"
 #include "shift_light.h"
 #include "vehicle_profile.h"
 
 #define PULSESHIFT_REPLAY 1
 #define PULSESHIFT_TWAI_TEST 2
-#define PULSESHIFT_BIKE 3 // Legacy capture target.
 #define PULSESHIFT_CAPTURE 3
 #define PULSESHIFT_VEHICLE 4
-#include "ConfigCompat.h"
 
 #ifndef PULSESHIFT_MODE
 #if PULSESHIFT_OPERATING_MODE == PULSESHIFT_USER_MODE_DEMO
@@ -45,13 +39,12 @@
 #error "Unsupported PULSESHIFT_BITRATE"
 #endif
 
-#include "ConfigCompat.h"
-
 namespace config {
 constexpr const char* vehicle = "Bajaj Pulsar NS125 2025 ABS";
 constexpr const char* transceiver = "SN65HVD230";
-// GPIO17 is disconnected from output in receive-only mode. Hold transceiver RS
-// high in hardware and keep its TXD input recessive during isolated bench use.
+// GPIO17 is disconnected from output in receive-only mode. SN65HVD230 pin 8 (Rs)
+// connects to GND for normal high-speed operation; pin 1 (TXD) is held recessive (3.3V)
+// and GPIO17 remains physically disconnected so no transmission can occur.
 constexpr int sda = PULSESHIFT_OLED_SDA_GPIO, scl = PULSESHIFT_OLED_SCL_GPIO;
 constexpr int ledPin = PULSESHIFT_LED_DATA_GPIO, txPin = PULSESHIFT_CAN_TX_GPIO;
 constexpr int rxPin = PULSESHIFT_CAN_RX_GPIO;

@@ -13,8 +13,6 @@ class ConfigurationTests(unittest.TestCase):
                 source,count=re.subn(rf"(?m)^(#define {key} )[^\n]*",rf"\g<1>{value}",source)
                 self.assertEqual(count,1)
             (path/"UserConfig.h").write_text(source)
-            compat_path = ROOT/"PulseShift/ConfigCompat.h" if (ROOT/"PulseShift/ConfigCompat.h").exists() else ROOT/"ConfigCompat.h"
-            (path/"ConfigCompat.h").write_bytes(compat_path.read_bytes())
             return subprocess.run(["g++","-std=c++17","-Wall","-Wextra","-Werror","-x","c++","-fsyntax-only","-"],input='#include "UserConfig.h"\n',text=True,cwd=path,capture_output=True)
     def test_valid_modes_keep_pin_defaults(self):
         for mode in ("PULSESHIFT_USER_MODE_DEMO","PULSESHIFT_USER_MODE_CAN_CAPTURE","PULSESHIFT_USER_MODE_BENCH_LISTEN_ONLY","PULSESHIFT_USER_MODE_VEHICLE_RPM"):
