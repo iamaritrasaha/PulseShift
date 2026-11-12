@@ -37,6 +37,7 @@ SOURCE_FILES = (
     "PulseShift/src/config.h",
     "PulseShift/src/dashboard.h",
     "PulseShift/src/dashboard_model.h",
+    "PulseShift/src/demo_commands.h",
     "PulseShift/src/diag_logger.h",
     "PulseShift/src/event_summary.h",
     "PulseShift/src/frame_log.h",
