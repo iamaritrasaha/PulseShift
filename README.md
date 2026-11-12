@@ -1,138 +1,195 @@
 # PulseShift
 
-Customizable ESP32 motorcycle shift-light firmware with six WS2812B LEDs, a standalone RPM demonstration, persistent offline CAN diagnostics, and passive raw CAN recording for reverse-engineering vehicle telemetry.
+Customizable ESP32 motorcycle shift-light firmware. Six WS2812B LEDs light up progressively with engine RPM. At 6000 RPM all LEDs flash red — the shift alert. No motorcycle is needed to try it: the default Demo mode runs a full RPM simulation on its own.
 
-## Main features
+## What it does
 
-- **Self-Contained Offline Operation:** No laptop, Wi-Fi, or Bluetooth needed on the motorcycle. Automatically logs CAN bus activity, errors, and system events to internal flash.
-- **Standalone RPM Demo:** Progressive lighting bar and flashing shift alerts with smooth color transitions and customizable styles.
-- **Passive CAN Field Capture:** Records raw broadcast CAN frames to LittleFS across three guided testing stages (Key ON / Engine Off, Idle, Revving).
-- **One-Command Windows Retrieval:** High-speed log and raw capture export to CSV/JSON via PowerShell or Python over standard USB Serial.
-- **Fail-Safe Shift Light:** Instant LED blanking on bus errors, stale data, or lost CAN communication.
-- **Fail-Closed Architecture:** Hard-gated vehicle RPM logic that never synthesizes or guesses unverified CAN identifiers.
+- **Demo mode** — runs an autonomous synthetic RPM sweep from 0 to 6000 RPM and back, showing the shift light in action. No CAN connection needed.
+- **CAN Capture mode** — passively records raw CAN bus frames from the motorcycle to internal flash (LittleFS), for identifying the RPM message.
+- **Vehicle RPM mode** — live shift light driven by decoded motorcycle CAN data (requires a verified vehicle profile — currently unavailable for the NS125).
+- **Automatic error logging** — CAN faults, storage errors, and reset reasons are saved to flash and readable from Serial Monitor.
 
-**No settings need changing for the standard demo:** six LEDs, GPIO27, brightness 40/255, Classic style and OLED off. No motorcycle or CAN connection is needed.
+## Parts
 
-## What you need
+| Part | Notes |
+|---|---|
+| ESP32 DevKit V1 (ESP32-WROOM-32) | With USB data cable |
+| 6× WS2812B LED strip (5V, GRB, 800kHz) | 6-LED segment |
+| 330Ω resistor | In series with LED data line |
+| 1000µF 10V electrolytic capacitor | Across LED power rails |
+| Regulated 5V supply, ≥ 1A | For LEDs only |
+| SN65HVD230 3.3V CAN transceiver | For CAN modes only |
 
-![Standard parts for the PulseShift build](assets/readme/hardware-overview.svg)
+## Arduino IDE — Board Settings
 
-- ESP32 DevKit V1 (ESP32-WROOM-32) and a USB **data** cable.
-- One six-LED **5V WS2812B strip**, GRB / 800kHz.
-- A **330Ω resistor** and **1000µF, 10V electrolytic capacitor**.
-- A regulated **5V supply rated at least 1A**, secure wires and a multimeter.
-- SN65HVD230 3.3V CAN transceiver (for CAN capture and vehicle modes).
+| Setting | Value |
+|---|---|
+| Board | **ESP32 Dev Module** |
+| Upload Speed | **921600** |
+| Flash Size | **4MB (32Mb)** |
+| Partition Scheme | **Default 4MB with spiffs** |
+| PSRAM | **Disabled** |
 
-The optional SN65HVD230 CAN module stays disconnected for the demo.
+> [!IMPORTANT]
+> The "Default 4MB with spiffs" partition scheme includes a LittleFS-compatible data partition used for automatic diagnostic logging and CAN capture. PulseShift formats this partition on first boot if it is blank. It never erases an existing partition that already contains data.
 
-## How to wire it
+### Required libraries (install via Library Manager)
 
-Disconnect both supplies before assembly. Connect **GPIO27 → 330Ω → DIN**, with the resistor near the first LED. Keep the data lead short.
+- **Adafruit NeoPixel** ≥ 1.12.3
+- **Adafruit SSD1306** ≥ 2.5.13 *(only needed if OLED is enabled)*
+- **Adafruit GFX Library** ≥ 1.11.11 *(only needed if OLED is enabled)*
+- **Adafruit BusIO** ≥ 1.17.0 *(only needed if OLED is enabled)*
 
-![Direct demo wiring with separate LED power and common ground](assets/readme/main-wiring.svg)
+### ESP32 board support
 
-Connect to **DIN**, following the strip's printed arrow. Leave **DOUT** unconnected.
+Add this URL to **File → Preferences → Additional board manager URLs**:
 
-![LED data direction from DIN toward unused DOUT](assets/readme/led-direction.svg)
-
-**USB powers the ESP32. External regulated 5V powers the LEDs.** Join the supply negative, LED GND and ESP32 GND. Never join external +5V to the USB-powered ESP32's 5V, VIN or 3V3 pins. Never power the strip from a GPIO.
-
-Place the capacitor across LED +5V and GND: **positive to +5V, striped negative to GND**.
-
-![Separate power supplies, common ground and capacitor polarity](assets/readme/power-safety.svg)
-
-Check voltage, polarity and all connections before power-on. Power the LEDs before connecting USB; disconnect USB first when switching off. Let the capacitor discharge before rewiring.
-
-## Download
-
-**[Download PulseShift v0.3.0](https://github.com/iamaritrasaha/PulseShift/releases/tag/v0.3.0)**
-
-[Arduino ZIP](https://github.com/iamaritrasaha/PulseShift/releases/download/v0.3.0/PulseShift-Arduino-v0.3.0.zip) · [SHA-256](https://github.com/iamaritrasaha/PulseShift/releases/download/v0.3.0/PulseShift-Arduino-v0.3.0.sha256) · [All releases](https://github.com/iamaritrasaha/PulseShift/releases)
-
-For v0.3.0, download **PulseShift-Arduino-v0.3.0.zip** and **PulseShift-Arduino-v0.3.0.sha256** from Assets. Check the ZIP against its SHA-256 before extracting. Use the packaged Arduino ZIP, not GitHub's automatic source archive. Extract the archive and open **PulseShift/PulseShift.ino** in the Arduino IDE.
-
-**v0.3.0 is the current verified software prerelease.** Physical motorcycle qualification remains pending.
-
-## After upload
-
-![Startup sweep, progressive fill, shift alert and missing-data blanking](assets/readme/expected-behavior.svg)
-
-Expect a startup animation followed by a growing light bar and red flashing at the simulated shift point. Deliberate gaps in valid data make the LEDs go dark, then recover. **This demonstration does not measure engine RPM.**
-
-## Configuration
-
-Settings are configured in [PulseShift/UserConfig.h](PulseShift/UserConfig.h):
-
-- **Operating Mode (`PULSESHIFT_OPERATING_MODE`):**
-  - `PULSESHIFT_USER_MODE_DEMO` (Default): Autonomous desktop RPM simulation with six LEDs.
-  - `PULSESHIFT_USER_MODE_CAN_CAPTURE`: Passive motorcycle CAN sniffing and LittleFS raw frame recording.
-  - `PULSESHIFT_USER_MODE_VEHICLE_RPM`: Gated live motorcycle RPM shift light (requires qualified vehicle profile).
-- **Brightness:** `PULSESHIFT_LED_BRIGHTNESS`, default **40**, range 0..255. This is not a hardware current limiter.
-- **Style:** `PULSESHIFT_SHIFT_LIGHT_STYLE`, default **Classic**. (Options: `Racing`, `Minimal`, `Custom`).
-- **Direction:** `PULSESHIFT_LED_DIRECTION`, default **Normal**. Reversal changes the pattern, not the DIN connection.
-
-## Experimental CAN & Motorcycle Integration
-
-**CAN_CAPTURE** records existing CAN frames without diagnostic requests. **VEHICLE_RPM** requires an independently verified profile and never substitutes demo RPM for missing data. GPIO16 and GPIO17 remain reserved for receiver work.
-
-The **2025 Indian Bajaj Pulsar NS125 ABS** profile remains **UNVERIFIED**, with bitrate **0** and live decoding disabled. A scanner displaying RPM does not prove passive broadcasts or establish the diagnostic transport.
-
-### Passive High-Speed SN65HVD230 Wiring
-To maintain zero-impact electrical passivity at 500 kbps:
-- **Pin 8 (Rs) → GND:** Enables Normal High-Speed mode ($\le 50\text{ns}$ loop delay required for reliable 500 kbps decoding).
-- **Pin 1 (D / TXD) → 3.3V:** Hardware-enforced permanent recessive state.
-- **GPIO17 (TX) → Disconnected:** Physically isolated; cannot transmit or acknowledge frames under any circumstances.
-- **Pin 4 (R / RXD) → ESP32 GPIO16 (RX):** TWAI receive input.
-- **120Ω Terminating Resistor Removed:** Transceiver module's onboard SMD termination must be desoldered so as not to load down the motorcycle's factory CAN bus.
-
-## Offline Field Capture Workflow (Motorcycle Testing)
-
-No computer, laptop, Wi-Fi, or Bluetooth is needed while testing on the motorcycle.
-
-1. **Flash Capture Firmware:**
-   ```powershell
-   Set-Location "D:\Development\PulseShift-Firmware"
-   .\build.ps1 -Target capture -Upload -Port COM3
-   ```
-2. **Mount ESP32 on Motorcycle:**
-   Connect 3.3V power and ground, connect CAN_H and CAN_L, and turn the bike key ON.
-3. **Stage 1 (Key ON, Engine OFF):**
-   LED 2 turns Amber. Capture runs for 30–60 seconds to baseline idle network traffic.
-4. **Stage 2 (Engine Idling):**
-   Short-press the ESP32 **BOOT button** (GPIO0). LED 3 lights up. Idle the engine for 60 seconds.
-5. **Stage 3 (Gentle Revving):**
-   Short-press the **BOOT button** again. LED 4 lights up. Gently rev through RPM ranges (2000–5000 RPM).
-6. **Stop Recording:**
-   Press and hold the **BOOT button** for >2.5 seconds to commit and close the log session.
-
-## Retrieving Saved Logs on Windows
-
-When you return home, reconnect the ESP32 to Windows via USB:
-
-```powershell
-Set-Location "D:\Development\PulseShift-Firmware"
-powershell -ExecutionPolicy Bypass -File .\export-logs.ps1
+```
+https://espressif.github.io/arduino-esp32/package_esp32_index.json
 ```
 
-The script automatically detects your COM port, retrieves the status metadata, downloads the persistent diagnostic log (`diagnostics.log`), and exports all raw CAN frames to `can_capture.csv` with CRC16 verification.
+Then install **esp32 by Espressif Systems** (version 2.0.17 recommended).
 
-## Testing & Verification
+## How to upload
 
-Run the full local automated test suite:
+1. Open `PulseShift/PulseShift.ino` in Arduino IDE.
+2. Select **ESP32 Dev Module** in Tools → Board.
+3. Set partition scheme to **Default 4MB with spiffs**.
+4. Select your COM port.
+5. Click **Upload** (Ctrl+U).
 
-```powershell
-Set-Location "D:\Development\PulseShift-Firmware"
-powershell -ExecutionPolicy Bypass -File .\test-firmware.ps1
+That's it. No scripts, no command line.
+
+## LED behavior — 0 to 6000 RPM
+
+| RPM | LEDs |
+|---|---|
+| 0 | All off |
+| 1–1000 | LED 1 (green) |
+| 1001–2000 | LED 1–2 (green) |
+| 2001–3000 | LED 1–3 (green) |
+| 3001–4000 | LED 1–4 (green/yellow) |
+| 4001–5000 | LED 1–5 (yellow/orange) |
+| 5001–5999 | LED 1–6 (orange/red) |
+| ≥ 6000 | All LEDs flash red — **shift!** |
+
+Thresholds are in `UserConfig.h` as `PULSESHIFT_DEMO_START_RPM`, `PULSESHIFT_DEMO_SHIFT_RPM`, and `PULSESHIFT_DEMO_MAX_RPM`.
+
+## Wiring (Demo — no CAN needed)
+
+```
+ESP32 GPIO27 → 330Ω → LED strip DIN
+LED strip GND → common GND
+ESP32 GND    → common GND
+5V supply +  → LED strip 5V (with 1000µF cap across +/−)
+USB          → ESP32 power and upload
 ```
 
-All 22 test suites cover native compilation across all four targets, symbol isolation (zero forbidden transmit symbols), CRC16 bitflip detection, LittleFS quota safety, first-boot blank flash formatting, BOOT button FSM, and 17 functional Python integration scenarios.
+> [!WARNING]
+> Never connect the LED strip's 5V to ESP32's 3.3V or VIN pins. Use a separate regulated supply for the LEDs. Always maintain a common ground between ESP32 and the LED supply.
 
-## Safety limitations
+## Passive CAN wiring (SN65HVD230)
 
-- Common ground, correct DIN direction and capacitor polarity are essential. Never change wiring while powered.
-- PulseShift's standard demo sends data directly from GPIO27 through a 330Ω resistor. Some 5V WS2812B strips need a proper 74AHCT125 level shifter for reliable 3.3V data recognition. Separate LED power does not fix the signal-level mismatch; do not lower the rated LED supply voltage to compensate.
-- Keep the CAN module disconnected until a qualified technician verifies the connector, transport, RS wiring, TXD bias, reset/unpowered passivity, termination and automotive protection. Software listen-only alone does not qualify the hardware.
-- Motorcycle RPM integration and shift calibration are unverified. The demo's RPM thresholds are synthetic. This is a **software prerelease**, not a physically qualified motorcycle accessory.
-- Wokwi DEMO does not validate physical CAN. The isolated TWAI test still has an unresolved transmission-completion limitation.
+For CAN Capture mode only. Passive — no frames are ever transmitted.
 
-Copyright (c) 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).
+```
+SN65HVD230 Pin 8 (Rs)  → GND          (normal high-speed mode)
+SN65HVD230 Pin 1 (TXD) → 3.3V         (hardware-enforced recessive, never transmit)
+SN65HVD230 Pin 4 (RXD) → ESP32 GPIO16  (TWAI receive)
+ESP32 GPIO17            → not connected (physically isolated)
+Motorcycle CAN_H        → SN65HVD230 CANH
+Motorcycle CAN_L        → SN65HVD230 CANL
+120Ω termination resistor → remove from module (do not add extra load to vehicle bus)
+```
+
+> [!CAUTION]
+> CAN hardware qualification is required before connecting to a motorcycle. Software listen-only mode alone does not guarantee electrical safety. The GPIO17 TX pin must remain physically disconnected from the transceiver TXD input.
+
+## Automatic error logging
+
+PulseShift automatically logs errors to internal flash (LittleFS) with no action needed:
+
+- CAN initialization failures and bus errors
+- Driver queue overruns and hardware FIFO overruns
+- Unexpected reset reasons
+- Storage mount failures
+- Stale/missing RPM events
+
+Logs survive power-off and ESP32 restarts. They are never erased on reconnection.
+
+## Serial Monitor commands (115200 baud)
+
+Open Serial Monitor in Arduino IDE (Ctrl+Shift+M), set baud to **115200**.
+
+| Command | Description |
+|---|---|
+| `HELP` | Show available commands |
+| `STATUS` | Current system state, storage, CAN controller stats |
+| `LOGS` | Display saved error log |
+| `DUMP` | Export raw CAN capture as CSV (copy from Serial Monitor) |
+| `CLEAR YES` | Erase stored logs after explicit confirmation |
+
+Demo-mode extra commands:
+
+| Command | Description |
+|---|---|
+| `rpm <value>` | Set synthetic RPM (0–20000) |
+| `demo start` | Resume automated sweep |
+| `demo stop` | Pause synthetic frames |
+| `profile <classic\|racing\|minimal>` | Change LED style |
+| `brightness <0-255>` | Adjust brightness |
+
+## Configuration (`UserConfig.h`)
+
+Edit `PulseShift/UserConfig.h` before uploading:
+
+| Setting | Default | Notes |
+|---|---|---|
+| `PULSESHIFT_OPERATING_MODE` | `DEMO` | Change to `CAN_CAPTURE` for motorcycle recording |
+| `PULSESHIFT_LED_DATA_GPIO` | `27` | LED strip DIN via 330Ω |
+| `PULSESHIFT_LED_COUNT` | `6` | Number of LEDs (1–32) |
+| `PULSESHIFT_LED_BRIGHTNESS` | `40` | 0–255 (not a hardware current limit) |
+| `PULSESHIFT_DEMO_SHIFT_RPM` | `6000` | RPM where shift alert triggers |
+| `PULSESHIFT_CAN_BITRATE` | `0` | Set to bitrate (e.g. 500000) for CAN modes |
+
+## What still requires real motorcycle testing
+
+- **The NS125 RPM CAN ID and decoding formula are unknown.** No CAN ID has been identified from the motorcycle's bus. The firmware deliberately shows "unavailable" rather than guessing.
+- **CAN bitrate is unverified.** The bus may operate at 125, 250, or 500 kbps. CAN Capture mode will only work after setting the correct bitrate in `UserConfig.h`.
+- **Hardware qualification** — SN65HVD230 wiring, transceiver RS pin mode, termination removal, and automotive protection must be verified by a qualified person before connecting to the vehicle.
+- **Shift RPM thresholds** — the 6000 RPM shift point is a placeholder. Real calibration depends on the engine and rider preference.
+
+## Safety notes
+
+- GPIO17 (CAN TX) must remain physically isolated from the SN65HVD230 TXD input at all times during motorcycle use.
+- PulseShift never transmits CAN frames. The TWAI controller is configured in listen-only mode.
+- Do not change wiring while powered. Power LEDs before connecting USB.
+- Some 5V WS2812B strips require a 74AHCT125 level shifter for reliable 3.3V signal recognition from the ESP32.
+
+## Directory structure
+
+```
+PulseShift-Firmware/
+├── PulseShift/           ← Open PulseShift.ino here in Arduino IDE
+│   ├── PulseShift.ino    ← Sketch entry point
+│   ├── UserConfig.h      ← Edit this to change settings
+│   ├── ConfigCompat.h    ← Legacy name compatibility
+│   ├── config.h          ← Internal config (do not edit)
+│   ├── main.cpp          ← setup() and loop()
+│   ├── can_transport.*   ← TWAI driver wrapper
+│   ├── can_recorder.*    ← Raw CAN capture to LittleFS
+│   ├── shift_light.*     ← WS2812B LED control
+│   ├── rpm_decoder.*     ← CAN RPM decoding framework
+│   ├── diag_logger.*     ← Automatic error logging
+│   ├── storage_manager.* ← LittleFS and NVS management
+│   ├── dashboard.*       ← OLED display (optional)
+│   └── ...               ← Other supporting files
+├── test/                 ← Optional host-side C++ unit tests
+├── tools/                ← Optional: can_investigate.py for log analysis
+├── docs/                 ← Hardware and CAN investigation notes
+└── README.md
+```
+
+## Copyright
+
+Copyright © 2026 Aritra Saha. All rights reserved. See [COPYRIGHT](COPYRIGHT).

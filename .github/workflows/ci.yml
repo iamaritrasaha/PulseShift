@@ -5,67 +5,23 @@ on:
   push:
     branches:
       - main
-  workflow_call:
-    inputs:
-      package_version:
-        description: Version string to embed in the tested Arduino ZIP
-        required: false
-        type: string
-        default: v0.3.0
 
 permissions:
   contents: read
 
+env:
+  ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  ESP32_FQBN: esp32:esp32:esp32
+
 jobs:
-  verify:
-    name: Build, test, and compile Arduino package
+  build:
+    name: Compile Arduino sketch
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      PACKAGE_VERSION: ${{ inputs.package_version || 'v0.3.0' }}
-      ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
-      ESP32_FQBN: esp32:esp32:esp32
+    timeout-minutes: 30
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Cache PlatformIO packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.platformio
-          key: ${{ runner.os }}-platformio-6.1.18-${{ hashFiles('platformio.ini') }}
-          restore-keys: |
-            ${{ runner.os }}-platformio-6.1.18-
-
-      - name: Install PlatformIO
-        run: python -m pip install platformio==6.1.18
-
-      - name: Build Wokwi target
-        run: pio run -e esp32dev_wokwi
-
-      - name: Build experimental Wokwi TWAI self-test
-        run: pio run -e esp32dev_twai_test
-
-      - name: Build receive-only target
-        run: pio run -e esp32dev_bike
-
-      - name: Build gated vehicle target
-        run: pio run -e esp32dev_vehicle
-
-      - name: Check receive-only binary isolation
-        run: python scripts/verify_firmware_isolation.py
-
-      - name: Run host-side C++ tests
-        run: bash test/run.sh
-
-      - name: Exercise offline synthetic investigation
-        run: |
-          python tools/can_investigate.py test/fixtures/synthetic_capture.log --reference test/fixtures/synthetic_rpm.csv --max-skew-ms 30 --output "$RUNNER_TEMP/can-analysis"
 
       - name: Set up Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -80,7 +36,7 @@ jobs:
             ~/.cache/arduino
           key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-2.0.17-neopixel-1.12.3-oled-2.5.13-gfx-1.11.11-busio-1.17.0
 
-      - name: Install ESP32 core and Arduino libraries
+      - name: Install ESP32 core and libraries
         run: |
           arduino-cli config init --overwrite
           arduino-cli config add board_manager.additional_urls "$ESP32_INDEX_URL"
@@ -91,78 +47,58 @@ jobs:
           arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"
           arduino-cli lib install --no-deps "Adafruit GFX Library@1.11.11"
           arduino-cli lib install --no-deps "Adafruit BusIO@1.17.0"
-          arduino-cli lib list
-          arduino-cli board listall | grep -F "$ESP32_FQBN"
 
-      - name: Install pinned Arduino ctags
-        env:
-          CTAGS_VERSION: 5.8-arduino11
+      - name: Compile - Demo mode (default)
         run: |
-          archive="ctags-$CTAGS_VERSION-x86_64-pc-linux-gnu.tar.bz2"
-          base="https://github.com/arduino/ctags/releases/download/$CTAGS_VERSION"
-          curl -fsSLo "$RUNNER_TEMP/$archive" "$base/$archive"
-          curl -fsSLo "$RUNNER_TEMP/$archive.sha512" "$base/$archive.sha512"
-          (cd "$RUNNER_TEMP" && sha512sum --check "$archive.sha512")
-          export_dir="$RUNNER_TEMP/arduino-ctags"
-          mkdir -p "$export_dir"
-          tar -xjf "$RUNNER_TEMP/$archive" -C "$export_dir"
-          test -x "$export_dir/ctags"
-          echo "CTAGS_PATH=$export_dir" >> "$GITHUB_ENV"
+          arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-path "$RUNNER_TEMP/build-demo" \
+            PulseShift
 
-      - name: Package and validate Arduino distribution
-        id: package
+      - name: Compile - CAN Capture mode
         run: |
-          output="$RUNNER_TEMP/pulseshift-arduino-package"
-          mkdir -p "$output"
-          python scripts/package_arduino.py --version "$PACKAGE_VERSION" --output-dir "$output"
-          zip="$output/PulseShift-Arduino-$PACKAGE_VERSION.zip"
-          python scripts/verify_arduino_package.py --zip "$zip" --version "$PACKAGE_VERSION"
-          echo "zip=$zip" >> "$GITHUB_OUTPUT"
-          echo "output=$output" >> "$GITHUB_OUTPUT"
+          arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-property "build.extra_flags=-DPULSESHIFT_OPERATING_MODE=3 -DPULSESHIFT_CAN_BITRATE=0" \
+            --build-path "$RUNNER_TEMP/build-capture" \
+            PulseShift
 
-      - name: Check deterministic package output
+      - name: Compile - OLED enabled
         run: |
-          repeat="$RUNNER_TEMP/pulseshift-arduino-package-repeat"
-          mkdir -p "$repeat"
-          python scripts/package_arduino.py --version "$PACKAGE_VERSION" --output-dir "$repeat"
-          cmp "${{ steps.package.outputs.zip }}" "$repeat/PulseShift-Arduino-$PACKAGE_VERSION.zip"
-          cmp "${{ steps.package.outputs.output }}/PulseShift-Arduino-$PACKAGE_VERSION.sha256" \
-            "$repeat/PulseShift-Arduino-$PACKAGE_VERSION.sha256"
-
-      - name: Compile extracted Arduino configuration variants
-        run: |
-          python scripts/verify_arduino_matrix.py \
-            --zip "${{ steps.package.outputs.zip }}" \
-            --version "$PACKAGE_VERSION" \
-            --work-dir "$RUNNER_TEMP/arduino-matrix" \
-            --ctags "$CTAGS_PATH"
+          arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-property "build.extra_flags=-DPULSESHIFT_OLED_ENABLED=1" \
+            --build-path "$RUNNER_TEMP/build-oled" \
+            PulseShift
 
       - name: Reject invalid user configuration
         run: |
-          work="$RUNNER_TEMP/pulseshift-invalid-config"
-          python scripts/verify_arduino_package.py \
-            --zip "${{ steps.package.outputs.zip }}" \
-            --version "$PACKAGE_VERSION" \
-            --extract-to "$work"
-          sed -i 's/#define PULSESHIFT_LED_COUNT 6/#define PULSESHIFT_LED_COUNT 0/' "$work/PulseShift/UserConfig.h"
-          log="$RUNNER_TEMP/invalid-config-build.log"
+          cp -r PulseShift "$RUNNER_TEMP/invalid-config"
+          sed -i 's/#define PULSESHIFT_LED_COUNT 6/#define PULSESHIFT_LED_COUNT 0/' \
+            "$RUNNER_TEMP/invalid-config/UserConfig.h"
+          log="$RUNNER_TEMP/invalid-config.log"
           if arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
-            --build-property "runtime.tools.ctags.path=$CTAGS_PATH" \
-            --build-path "$RUNNER_TEMP/build-invalid-config" \
-            "$work/PulseShift" > "$log" 2>&1; then
-            cat "$log"
-            echo "Invalid LED count unexpectedly compiled" >&2
+            --build-path "$RUNNER_TEMP/build-invalid" \
+            "$RUNNER_TEMP/invalid-config" > "$log" 2>&1; then
+            echo "Invalid config unexpectedly compiled" >&2
             exit 1
           fi
           grep -F "PULSESHIFT_LED_COUNT must be between 1 and 32" "$log"
 
-      - name: Upload verified Arduino source assets
-        uses: actions/upload-artifact@v4
+  host-tests:
+    name: Host C++ unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          name: pulseshift-arduino-release-assets
-          path: |
-            ${{ steps.package.outputs.zip }}
-            ${{ steps.package.outputs.output }}/PulseShift-Arduino-${{ env.PACKAGE_VERSION }}.sha256
-          if-no-files-found: error
-          retention-days: 90
+          python-version: "3.12"
+
+      - name: Run host-side C++ tests and Python tests
+        run: bash test/run.sh

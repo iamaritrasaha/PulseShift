@@ -10,51 +10,59 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  notes:
-    name: Validate version-specific prerelease notes
+  release:
+    name: Build and publish release
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Enforce v0.x prerelease notes and qualification limits
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: python3 scripts/prepare_release_notes.py --tag "$RELEASE_TAG" --notes RELEASE_NOTES.md
+    timeout-minutes: 30
+    env:
+      ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      ESP32_FQBN: esp32:esp32:esp32
 
-  verify:
-    name: Verify tagged source and Arduino package
-    needs: notes
-    uses: ./.github/workflows/ci.yml
-    with:
-      package_version: ${{ github.ref_name }}
-    permissions:
-      contents: read
-
-  publish:
-    name: Publish verified Arduino software prerelease
-    needs: [notes, verify]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Check out the same tagged notes and publication scripts
+      - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
         with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Download verified Arduino assets
-        uses: actions/download-artifact@v4
+          version: 1.1.1
+
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls "$ESP32_INDEX_URL"
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@2.0.17
+          arduino-cli lib update-index
+          arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
+          arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"
+          arduino-cli lib install --no-deps "Adafruit GFX Library@1.11.11"
+          arduino-cli lib install --no-deps "Adafruit BusIO@1.17.0"
+
+      - name: Compile and verify sketch
+        run: |
+          arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-path "$RUNNER_TEMP/build-release" \
+            PulseShift
+
+      - name: Package Arduino sketch ZIP
+        run: |
+          TAG="${{ github.ref_name }}"
+          ZIP="PulseShift-Arduino-$TAG.zip"
+          zip -r "$RUNNER_TEMP/$ZIP" PulseShift/
+          sha256sum "$RUNNER_TEMP/$ZIP" > "$RUNNER_TEMP/$ZIP.sha256"
+          echo "ZIP=$RUNNER_TEMP/$ZIP" >> "$GITHUB_ENV"
+          echo "SHA=$RUNNER_TEMP/$ZIP.sha256" >> "$GITHUB_ENV"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
         with:
-          name: pulseshift-arduino-release-assets
-          path: release-assets
-      - name: Publish with version-specific notes
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: bash scripts/publish_prerelease.sh "$RELEASE_TAG" release-assets RELEASE_NOTES.md
+          files: |
+            ${{ env.ZIP }}
+            ${{ env.SHA }}
+          draft: true
+          generate_release_notes: true

@@ -3,11 +3,12 @@
 from pathlib import Path
 import shutil,subprocess,sys,tempfile,unittest
 ROOT=Path(__file__).resolve().parents[1]
+@unittest.skipUnless(shutil.which("g++"), "g++ compiler not found in PATH")
 class RebrandConfiguration(unittest.TestCase):
     def compile(self,flags=(),legacy=False,assertions="",standard="c++17"):
         with tempfile.TemporaryDirectory() as td:
             work=Path(td);(work/"include").mkdir()
-            headers_dir = ROOT/"PulseShift/src" if (ROOT/"PulseShift/src").exists() else ROOT/"include"
+            headers_dir = ROOT/"PulseShift" if (ROOT/"PulseShift").exists() else ROOT/"include"
             for source in headers_dir.glob("*.h"):
                 shutil.copyfile(source,work/"include"/source.name)
             cfg_path = ROOT/"PulseShift/UserConfig.h" if (ROOT/"PulseShift/UserConfig.h").exists() else ROOT/"UserConfig.h"
@@ -91,8 +92,8 @@ static_assert(config::startRpm==0 && config::shiftRpm==6000 && config::maxRpm==6
         with tempfile.TemporaryDirectory() as td:
             for mode in (3,4):
                 obj=Path(td)/f"legacy-{mode}.o"
-                headers_dir = ROOT/"PulseShift/src" if (ROOT/"PulseShift/src").exists() else ROOT/"include"
-                src_file = ROOT/"PulseShift/src/simulated_ecu.cpp" if (ROOT/"PulseShift/src/simulated_ecu.cpp").exists() else ROOT/"src/simulated_ecu.cpp"
+                headers_dir = ROOT/"PulseShift" if (ROOT/"PulseShift").exists() else ROOT/"include"
+                src_file = ROOT/"PulseShift/simulated_ecu.cpp" if (ROOT/"PulseShift/simulated_ecu.cpp").exists() else ROOT/"src/simulated_ecu.cpp"
                 subprocess.run(["g++","-std=c++17","-Wall","-Wextra","-Werror",
                     f"-DREVIX_MODE={mode}","-I",str(headers_dir),"-c",
                     str(src_file),"-o",str(obj)],check=True)
@@ -100,46 +101,7 @@ static_assert(config::startRpm==0 && config::shiftRpm==6000 && config::maxRpm==6
                 self.assertNotIn("ReplayTransport",symbols)
                 self.assertNotIn("demonstrationFrame",symbols)
 
-class RebrandPackage(unittest.TestCase):
-    def test_new_layout_checksum_and_reproducibility(self):
-        import hashlib,zipfile
-        with tempfile.TemporaryDirectory() as td:
-            base=Path(td)
-            archives=[]
-            for folder in ("first","second"):
-                dest=base/folder
-                subprocess.run([sys.executable,str(ROOT/"scripts/package_arduino.py"),
-                    "--version","v0.3.0","--output-dir",str(dest)],check=True,capture_output=True)
-                archive=dest/"PulseShift-Arduino-v0.3.0.zip";archives.append(archive)
-                checksum=archive.with_suffix(".sha256").read_text().strip()
-                self.assertEqual(checksum,hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name)
-                subprocess.run([sys.executable,str(ROOT/"scripts/verify_arduino_package.py"),
-                    "--version","v0.3.0","--zip",str(archive)],check=True,capture_output=True)
-            self.assertEqual(archives[0].read_bytes(),archives[1].read_bytes())
-            with zipfile.ZipFile(archives[0]) as z:
-                self.assertIn("PulseShift/PulseShift.ino",z.namelist())
-                self.assertIn("PulseShift/ConfigCompat.h",z.namelist())
-                self.assertTrue(all(name.startswith("PulseShift/") for name in z.namelist()))
-                sketch=z.read("PulseShift/PulseShift.ino").decode()
-                self.assertNotRegex(sketch,r"#\s*include[^\n]*\.cpp")
-                self.assertNotIn("void setup",sketch)
-                self.assertNotIn("void loop",sketch)
-
-    def test_legacy_sketch_layout_is_not_a_current_package(self):
-        import hashlib,zipfile
-        with tempfile.TemporaryDirectory() as td:
-            dest=Path(td)
-            subprocess.run([sys.executable,str(ROOT/"scripts/package_arduino.py"),
-                "--version","v0.3.0","--output-dir",str(dest)],check=True,capture_output=True)
-            archive=dest/"PulseShift-Arduino-v0.3.0.zip"
-            with zipfile.ZipFile(archive) as z:
-                files={name.replace("PulseShift/","REVIX_LINK/").replace("/PulseShift.ino","/REVIX_LINK.ino"):z.read(name) for name in z.namelist()}
-            with zipfile.ZipFile(archive,"w") as z:
-                for name,data in files.items():z.writestr(name,data)
-            archive.with_suffix(".sha256").write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name+"\n")
-            result=subprocess.run([sys.executable,str(ROOT/"scripts/verify_arduino_package.py"),
-                "--version","v0.3.0","--zip",str(archive)],capture_output=True,text=True)
-            self.assertNotEqual(result.returncode,0)
-            self.assertIn("missing required files",result.stderr)
+# RebrandPackage tests removed: package_arduino.py and verify_arduino_package.py
+# scripts removed in Arduino IDE simplification. The sketch itself is the package.
 
 if __name__=="__main__":unittest.main()

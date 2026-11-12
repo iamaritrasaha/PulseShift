@@ -1,4 +1,0 @@
-[wokwi]
-version = 1
-firmware = 'build/wokwi/PulseShift.ino.bin'
-elf = 'build/wokwi/PulseShift.ino.elf'

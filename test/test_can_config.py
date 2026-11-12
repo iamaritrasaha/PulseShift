@@ -1,7 +1,8 @@
 # Copyright (c) 2026 Aritra Saha. All rights reserved.
-import subprocess,tempfile,re,unittest
+import subprocess,tempfile,re,unittest,shutil
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+@unittest.skipUnless(shutil.which("g++"), "g++ compiler not found in PATH")
 class ConfigurationTests(unittest.TestCase):
     def compile_config(self,changes):
         with tempfile.TemporaryDirectory() as td:
@@ -45,8 +46,8 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_synthetic_ecu_is_not_even_compiled_in_receive_only_modes(self):
         with tempfile.TemporaryDirectory() as td:
-            headers_dir = ROOT/"PulseShift/src" if (ROOT/"PulseShift/src").exists() else ROOT/"include"
-            src_file = ROOT/"PulseShift/src/simulated_ecu.cpp" if (ROOT/"PulseShift/src/simulated_ecu.cpp").exists() else ROOT/"src/simulated_ecu.cpp"
+            headers_dir = ROOT/"PulseShift" if (ROOT/"PulseShift").exists() else ROOT/"include"
+            src_file = ROOT/"PulseShift/simulated_ecu.cpp" if (ROOT/"PulseShift/simulated_ecu.cpp").exists() else ROOT/"src/simulated_ecu.cpp"
             for mode in (3,4):
                 obj=Path(td)/f"replay-{mode}.o"
                 subprocess.run(["g++","-std=c++17",f"-DPULSESHIFT_MODE={mode}","-I",str(headers_dir),"-c",str(src_file),"-o",str(obj)],check=True)
