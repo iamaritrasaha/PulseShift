@@ -9,11 +9,6 @@ bool CanTransport::begin() {
   if (beginAttempted_) return healthy();
   beginAttempted_ = true;
 
-  // Fix D9: Guarantee TX pin is in a safe, non-floating input state regardless of configuration
-  gpio_reset_pin(gpio_num_t(config::txPin));
-  gpio_set_direction(gpio_num_t(config::txPin), GPIO_MODE_INPUT);
-  gpio_set_pull_mode(gpio_num_t(config::txPin), GPIO_PULLUP_ONLY);
-
   if (!configured()) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.println("CAN DISABLED: no verified bitrate/profile configured");
