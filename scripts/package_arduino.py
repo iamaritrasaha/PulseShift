@@ -18,27 +18,35 @@ ROOT = Path(__file__).resolve().parents[1]
 SKETCH_NAME = "PulseShift"
 VERSION_RE = re.compile(r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 SOURCE_FILES = (
-    "src/main.cpp",
-    "src/can_transport.cpp",
-    "src/rpm_decoder.cpp",
-    "src/vehicle_profile.cpp",
-    "src/dashboard.cpp",
-    "src/frame_log.cpp",
-    "src/shift_light.cpp",
-    "src/simulated_ecu.cpp",
-    "include/can_frame.h",
-    "include/demo_commands.h",
-    "include/event_summary.h",
-    "include/can_transport.h",
-    "include/config.h",
-    "include/dashboard.h",
-    "include/dashboard_model.h",
-    "include/frame_log.h",
-    "include/rpm_decoder.h",
-    "include/vehicle_profile.h",
-    "include/shift_light.h",
-    "include/simulated_ecu.h",
-    "include/tx_tracker.h",
+    "PulseShift/src/main.cpp",
+    "PulseShift/src/can_transport.cpp",
+    "PulseShift/src/rpm_decoder.cpp",
+    "PulseShift/src/vehicle_profile.cpp",
+    "PulseShift/src/dashboard.cpp",
+    "PulseShift/src/frame_log.cpp",
+    "PulseShift/src/shift_light.cpp",
+    "PulseShift/src/simulated_ecu.cpp",
+    "PulseShift/src/storage_manager.cpp",
+    "PulseShift/src/diag_logger.cpp",
+    "PulseShift/src/can_recorder.cpp",
+    "PulseShift/src/serial_protocol.cpp",
+    "PulseShift/src/button_handler.h",
+    "PulseShift/src/can_frame.h",
+    "PulseShift/src/can_recorder.h",
+    "PulseShift/src/can_transport.h",
+    "PulseShift/src/config.h",
+    "PulseShift/src/dashboard.h",
+    "PulseShift/src/dashboard_model.h",
+    "PulseShift/src/diag_logger.h",
+    "PulseShift/src/event_summary.h",
+    "PulseShift/src/frame_log.h",
+    "PulseShift/src/rpm_decoder.h",
+    "PulseShift/src/serial_protocol.h",
+    "PulseShift/src/shift_light.h",
+    "PulseShift/src/simulated_ecu.h",
+    "PulseShift/src/storage_manager.h",
+    "PulseShift/src/tx_tracker.h",
+    "PulseShift/src/vehicle_profile.h",
 )
 REQUIRED_PACKAGE_FILES = {
     f"{SKETCH_NAME}/{SKETCH_NAME}.ino",
@@ -71,11 +79,11 @@ def stage_sketch(destination: Path, version: str) -> None:
         encoding="utf-8",
         newline="\n",
     )
-    user_config = ROOT / "UserConfig.h"
+    user_config = ROOT / SKETCH_NAME / "UserConfig.h"
     if not user_config.is_file() or user_config.is_symlink():
         fail("required user configuration is missing or is a symlink: UserConfig.h")
     shutil.copyfile(user_config, destination / "UserConfig.h")
-    compat = ROOT / "ConfigCompat.h"
+    compat = ROOT / SKETCH_NAME / "ConfigCompat.h"
     if not compat.is_file() or compat.is_symlink():
         fail("required configuration compatibility header is missing or a symlink")
     shutil.copyfile(compat, destination / "ConfigCompat.h")

@@ -200,10 +200,7 @@ foreach ($p in $knownPaths) {
     }
 }
 
-$diagTestScript = Join-Path $PSScriptRoot "repository\test\test_offline_diagnostics.py"
-if (-not (Test-Path $diagTestScript)) {
-    $diagTestScript = Join-Path $PSScriptRoot "test\test_offline_diagnostics.py"
-}
+$diagTestScript = Join-Path $PSScriptRoot "test\test_offline_diagnostics.py"
 
 if ($pythonExe -and (Test-Path $diagTestScript)) {
     try {

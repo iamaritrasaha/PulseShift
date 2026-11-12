@@ -2,23 +2,23 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p .pio/host
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -Iinclude src/rpm_decoder.cpp src/vehicle_profile.cpp src/simulated_ecu.cpp src/shift_light.cpp test/test_core.cpp -o .pio/host/test_core
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -IPulseShift -IPulseShift/src PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp test/test_core.cpp -o .pio/host/test_core
 
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -Iinclude src/shift_light.cpp test/test_shift_refresh.cpp -o .pio/host/test_shift_refresh
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -IPulseShift -IPulseShift/src PulseShift/src/shift_light.cpp test/test_shift_refresh.cpp -o .pio/host/test_shift_refresh
 .pio/host/test_shift_refresh
 .pio/host/test_core
 
 for diagnostics in 0 1; do
-  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -DPULSESHIFT_OLED_ENABLED=1 -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics -Itest/stubs -Iinclude src/rpm_decoder.cpp src/vehicle_profile.cpp src/simulated_ecu.cpp src/shift_light.cpp src/dashboard.cpp src/frame_log.cpp test/test_io.cpp -o .pio/host/test_io_$diagnostics
+  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -DPULSESHIFT_OLED_ENABLED=1 -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics -Itest/stubs -IPulseShift -IPulseShift/src PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp PulseShift/src/dashboard.cpp PulseShift/src/frame_log.cpp test/test_io.cpp -o .pio/host/test_io_$diagnostics
   .pio/host/test_io_$diagnostics
 done
 
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -Iinclude src/rpm_decoder.cpp src/vehicle_profile.cpp src/shift_light.cpp test/test_vehicle.cpp -o .pio/host/test_vehicle
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -IPulseShift -IPulseShift/src PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp PulseShift/src/shift_light.cpp test/test_vehicle.cpp -o .pio/host/test_vehicle
 .pio/host/test_vehicle
-python3 -m unittest discover -s test -p 'test_can_*.py'
+python3 -m unittest discover -s test -p 'test_*.py'
 
 for mode in 3 4; do
-  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -DPULSESHIFT_MODE=$mode -Itest/stubs -Iinclude src/can_transport.cpp src/frame_log.cpp src/rpm_decoder.cpp src/vehicle_profile.cpp test/test_transport.cpp -o .pio/host/test_transport_$mode
+  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -DPULSESHIFT_MODE=$mode -Itest/stubs -IPulseShift -IPulseShift/src PulseShift/src/can_transport.cpp PulseShift/src/frame_log.cpp PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp test/test_transport.cpp -o .pio/host/test_transport_$mode
   .pio/host/test_transport_$mode
 done
 
@@ -26,7 +26,7 @@ done
 # qualified synthetic calibration without adding an override to vehicle firmware.
 for mode in 1 4; do
   for diagnostics in 0 1; do
-    g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -DPULSESHIFT_MODE=$mode -DPULSESHIFT_OLED_ENABLED=1 -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics -Itest/stubs -Iinclude src/rpm_decoder.cpp src/vehicle_profile.cpp src/shift_light.cpp src/dashboard.cpp test/test_dashboard_calibration.cpp -Wl,--wrap=_Z22selectedVehicleProfilev -o .pio/host/test_dashboard-$mode-$diagnostics
+    g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer -DPULSESHIFT_MODE=$mode -DPULSESHIFT_OLED_ENABLED=1 -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics -Itest/stubs -IPulseShift -IPulseShift/src PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp PulseShift/src/shift_light.cpp PulseShift/src/dashboard.cpp test/test_dashboard_calibration.cpp -Wl,--wrap=_Z22selectedVehicleProfilev -o .pio/host/test_dashboard-$mode-$diagnostics
     .pio/host/test_dashboard-$mode-$diagnostics
   done
 done

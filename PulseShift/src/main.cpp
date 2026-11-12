@@ -6,7 +6,6 @@
 #include "rpm_decoder.h"
 #include "frame_log.h"
 #include "dashboard.h"
-#include "demo_commands.h"
 #include "storage_manager.h"
 #include "diag_logger.h"
 #include "can_recorder.h"
