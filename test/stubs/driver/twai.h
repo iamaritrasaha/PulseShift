@@ -10,7 +10,7 @@ enum twai_mode_t { TWAI_MODE_NORMAL, TWAI_MODE_NO_ACK, TWAI_MODE_LISTEN_ONLY };
 enum twai_state_t { TWAI_STATE_STOPPED, TWAI_STATE_RUNNING, TWAI_STATE_BUS_OFF };
 constexpr uint32_t TWAI_ALERT_BUS_ERROR=1, TWAI_ALERT_BUS_OFF=2, TWAI_ALERT_RX_QUEUE_FULL=4,
  TWAI_ALERT_RX_FIFO_OVERRUN=8, TWAI_ALERT_RX_DATA=16, TWAI_ALERT_TX_SUCCESS=32,
- TWAI_ALERT_TX_FAILED=64, TWAI_ALERT_TX_IDLE=128;
+ TWAI_ALERT_TX_FAILED=64, TWAI_ALERT_TX_IDLE=128, TWAI_ALERT_ERR_PASS=256, TWAI_ALERT_ABOVE_ERR_WARN=512;
 struct twai_general_config_t { gpio_num_t tx_io,rx_io; twai_mode_t mode; unsigned tx_queue_len=5,rx_queue_len=5; uint32_t alerts_enabled=0; };
 #define TWAI_GENERAL_CONFIG_DEFAULT(tx,rx,mode) twai_general_config_t{tx,rx,mode}
 struct twai_timing_config_t { uint32_t bitrate; };

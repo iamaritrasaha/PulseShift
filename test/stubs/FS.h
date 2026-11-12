@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+namespace fs {
 class File {
  public:
   operator bool() const { return false; }
@@ -13,14 +14,13 @@ class File {
   size_t size() const { return 0; }
 };
 
-namespace fs {
 class FS {
  public:
   bool begin() { return true; }
   void end() {}
-  File open(const char*, const char* = "r") { (void)open; return File(); }
-  bool exists(const char*) { return false; }
-  bool remove(const char*) { return false; }
+  File open(const char* = nullptr, const char* = "r") { return File(); }
+  bool exists(const char* = nullptr) { return false; }
+  bool remove(const char* = nullptr) { return false; }
   size_t totalBytes() { return 1000000; }
   size_t usedBytes() { return 0; }
 };
