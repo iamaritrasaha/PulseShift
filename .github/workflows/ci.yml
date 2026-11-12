@@ -57,19 +57,23 @@ jobs:
 
       - name: Compile - CAN Capture mode
         run: |
+          cp -r PulseShift "$RUNNER_TEMP/config-capture"
+          sed -i 's/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_DEMO/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_CAN_CAPTURE/' \
+            "$RUNNER_TEMP/config-capture/UserConfig.h"
           arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
-            --build-property "build.extra_flags=-DPULSESHIFT_OPERATING_MODE=3 -DPULSESHIFT_CAN_BITRATE=0" \
             --build-path "$RUNNER_TEMP/build-capture" \
-            PulseShift
+            "$RUNNER_TEMP/config-capture"
 
       - name: Compile - OLED enabled
         run: |
+          cp -r PulseShift "$RUNNER_TEMP/config-oled"
+          sed -i 's/#define PULSESHIFT_OLED_ENABLED 0/#define PULSESHIFT_OLED_ENABLED 1/' \
+            "$RUNNER_TEMP/config-oled/UserConfig.h"
           arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
-            --build-property "build.extra_flags=-DPULSESHIFT_OLED_ENABLED=1" \
             --build-path "$RUNNER_TEMP/build-oled" \
-            PulseShift
+            "$RUNNER_TEMP/config-oled"
 
       - name: Reject invalid user configuration
         run: |
