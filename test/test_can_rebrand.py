@@ -1,17 +1,20 @@
 # Copyright (c) 2026 Aritra Saha. All rights reserved.
 """Configuration compatibility and naming regressions, without hardware access."""
 from pathlib import Path
-import shutil,subprocess,tempfile,unittest
+import shutil,subprocess,sys,tempfile,unittest
 ROOT=Path(__file__).resolve().parents[1]
 class RebrandConfiguration(unittest.TestCase):
     def compile(self,flags=(),legacy=False,assertions="",standard="c++17"):
         with tempfile.TemporaryDirectory() as td:
             work=Path(td);(work/"include").mkdir()
-            for source in (ROOT/"include").glob("*.h"):
+            headers_dir = ROOT/"PulseShift/src" if (ROOT/"PulseShift/src").exists() else ROOT/"include"
+            for source in headers_dir.glob("*.h"):
                 shutil.copyfile(source,work/"include"/source.name)
-            source=ROOT/("test/fixtures/legacy_UserConfig.h" if legacy else "UserConfig.h")
+            cfg_path = ROOT/"PulseShift/UserConfig.h" if (ROOT/"PulseShift/UserConfig.h").exists() else ROOT/"UserConfig.h"
+            source=ROOT/("test/fixtures/legacy_UserConfig.h" if legacy else cfg_path)
             shutil.copyfile(source,work/"UserConfig.h")
-            shutil.copyfile(ROOT/"ConfigCompat.h",work/"ConfigCompat.h")
+            compat_path = ROOT/"PulseShift/ConfigCompat.h" if (ROOT/"PulseShift/ConfigCompat.h").exists() else ROOT/"ConfigCompat.h"
+            shutil.copyfile(compat_path,work/"ConfigCompat.h")
             text='#include "include/config.h"\n'+assertions
             return subprocess.run(["g++",f"-std={standard}","-Wall","-Wextra","-Werror",
                 "-pedantic","-I",str(work/"include"),"-x","c++","-fsyntax-only","-",*flags],
@@ -88,9 +91,11 @@ static_assert(config::startRpm==1500 && config::shiftRpm==5800 && config::maxRpm
         with tempfile.TemporaryDirectory() as td:
             for mode in (3,4):
                 obj=Path(td)/f"legacy-{mode}.o"
+                headers_dir = ROOT/"PulseShift/src" if (ROOT/"PulseShift/src").exists() else ROOT/"include"
+                src_file = ROOT/"PulseShift/src/simulated_ecu.cpp" if (ROOT/"PulseShift/src/simulated_ecu.cpp").exists() else ROOT/"src/simulated_ecu.cpp"
                 subprocess.run(["g++","-std=c++17","-Wall","-Wextra","-Werror",
-                    f"-DREVIX_MODE={mode}","-I",str(ROOT/"include"),"-c",
-                    str(ROOT/"src/simulated_ecu.cpp"),"-o",str(obj)],check=True)
+                    f"-DREVIX_MODE={mode}","-I",str(headers_dir),"-c",
+                    str(src_file),"-o",str(obj)],check=True)
                 symbols=subprocess.check_output(["nm","-C",str(obj)],text=True)
                 self.assertNotIn("ReplayTransport",symbols)
                 self.assertNotIn("demonstrationFrame",symbols)
@@ -103,12 +108,12 @@ class RebrandPackage(unittest.TestCase):
             archives=[]
             for folder in ("first","second"):
                 dest=base/folder
-                subprocess.run(["python3",str(ROOT/"scripts/package_arduino.py"),
+                subprocess.run([sys.executable,str(ROOT/"scripts/package_arduino.py"),
                     "--version","v0.3.0","--output-dir",str(dest)],check=True,capture_output=True)
                 archive=dest/"PulseShift-Arduino-v0.3.0.zip";archives.append(archive)
                 checksum=archive.with_suffix(".sha256").read_text().strip()
                 self.assertEqual(checksum,hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name)
-                subprocess.run(["python3",str(ROOT/"scripts/verify_arduino_package.py"),
+                subprocess.run([sys.executable,str(ROOT/"scripts/verify_arduino_package.py"),
                     "--version","v0.3.0","--zip",str(archive)],check=True,capture_output=True)
             self.assertEqual(archives[0].read_bytes(),archives[1].read_bytes())
             with zipfile.ZipFile(archives[0]) as z:
@@ -124,7 +129,7 @@ class RebrandPackage(unittest.TestCase):
         import hashlib,zipfile
         with tempfile.TemporaryDirectory() as td:
             dest=Path(td)
-            subprocess.run(["python3",str(ROOT/"scripts/package_arduino.py"),
+            subprocess.run([sys.executable,str(ROOT/"scripts/package_arduino.py"),
                 "--version","v0.3.0","--output-dir",str(dest)],check=True,capture_output=True)
             archive=dest/"PulseShift-Arduino-v0.3.0.zip"
             with zipfile.ZipFile(archive) as z:
@@ -132,7 +137,7 @@ class RebrandPackage(unittest.TestCase):
             with zipfile.ZipFile(archive,"w") as z:
                 for name,data in files.items():z.writestr(name,data)
             archive.with_suffix(".sha256").write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name+"\n")
-            result=subprocess.run(["python3",str(ROOT/"scripts/verify_arduino_package.py"),
+            result=subprocess.run([sys.executable,str(ROOT/"scripts/verify_arduino_package.py"),
                 "--version","v0.3.0","--zip",str(archive)],capture_output=True,text=True)
             self.assertNotEqual(result.returncode,0)
             self.assertIn("missing required files",result.stderr)

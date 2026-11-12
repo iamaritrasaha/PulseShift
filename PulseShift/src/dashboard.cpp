@@ -149,7 +149,7 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE
   // In CAPTURE mode: run startup sweep first, then display field status
   if (!shiftLight_.isStartupComplete()) {
-    const bool ledsChanged = shiftLight_.update(now, shownRpm, status);
+    const bool ledsChanged = shiftLight_.update(now, shownRpm, ViewStatus::Live);
     if (ledsChanged) {
       const uint8_t count = shiftLight_.ledCount();
       for (uint8_t i = 0; i < count; ++i) {

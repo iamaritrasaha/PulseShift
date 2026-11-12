@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -24,7 +25,7 @@ class ReleasePreparation(unittest.TestCase):
         cls.text=(ROOT/"RELEASE_NOTES.md").read_text()
         cls.tag=cls.text.splitlines()[0].split(" | ",1)[0].split()[-1]
         notes.validate(cls.tag,cls.text)
-        subprocess.run(["python3",str(ROOT/"scripts/package_arduino.py"),"--version",cls.tag,
+        subprocess.run([sys.executable,str(ROOT/"scripts/package_arduino.py"),"--version",cls.tag,
                         "--output-dir",str(cls.assets)],check=True,capture_output=True)
         cls.bin=cls.base/"bin"
         cls.bin.mkdir()

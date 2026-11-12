@@ -209,29 +209,30 @@ void ShiftLightEngine::renderActive(uint32_t nowMs, uint16_t rpm) {
 }
 
 bool ShiftLightEngine::update(uint32_t nowMs, uint16_t rpm, ViewStatus status) {
-  // Safety blanking must bypass the visual refresh interval when transitioning away from Live
+  // Safety blanking must bypass the visual refresh interval.
   if (status == ViewStatus::Live && lastUpdateMs_ != 0 &&
       uint32_t(nowMs - lastUpdateMs_) < cfg_.animationIntervalMs) {
     return false;
   }
-  lastUpdateMs_ = (status == ViewStatus::Live || !startupComplete_) ? nowMs : 0;
+  // Resume valid data immediately after blanking instead of throttling recovery.
+  lastUpdateMs_ = (status == ViewStatus::Live) ? nowMs : 0;
 
-  // Fix D2: Let the startup sweep run to completion on power-on regardless of CAN link state
-  if (!startupComplete_) {
-    renderStartup(nowMs);
-    if (startupComplete_) {
-      if (status == ViewStatus::Live) {
-        renderActive(nowMs, rpm);
-      } else {
-        alertActive_ = false;
-        clearAllPixels();
-      }
-    }
-  } else if (status == ViewStatus::Fault || status == ViewStatus::Unconfigured || status != ViewStatus::Live) {
+  if (status == ViewStatus::Fault || status == ViewStatus::Unconfigured) {
+    startupComplete_ = true;
+    alertActive_ = false;
+    clearAllPixels();
+  } else if (status != ViewStatus::Live) {
     alertActive_ = false;
     clearAllPixels();
   } else {
-    renderActive(nowMs, rpm);
+    if (!startupComplete_) {
+      renderStartup(nowMs);
+      if (startupComplete_) {
+        renderActive(nowMs, rpm);
+      }
+    } else {
+      renderActive(nowMs, rpm);
+    }
   }
 
   const uint8_t n = cfg_.ledCount;
