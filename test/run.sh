@@ -14,15 +14,15 @@ mkdir -p "$BUILD_DIR"
 # Core logic tests (no Arduino stubs needed)
 g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
     -fsanitize=address,undefined -fno-omit-frame-pointer \
-    -IPulseShift \
-    PulseShift/rpm_decoder.cpp PulseShift/vehicle_profile.cpp \
-    PulseShift/simulated_ecu.cpp PulseShift/shift_light.cpp \
+    -IPulseShift -IPulseShift/src \
+    PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
+    PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp \
     test/test_core.cpp -o "$BUILD_DIR/test_core"
 
 g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
     -fsanitize=address,undefined -fno-omit-frame-pointer \
-    -IPulseShift \
-    PulseShift/shift_light.cpp test/test_shift_refresh.cpp \
+    -IPulseShift -IPulseShift/src \
+    PulseShift/src/shift_light.cpp test/test_shift_refresh.cpp \
     -o "$BUILD_DIR/test_shift_refresh"
 
 "$BUILD_DIR/test_shift_refresh"
@@ -33,10 +33,10 @@ for diagnostics in 0 1; do
   g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
       -fsanitize=address,undefined -fno-omit-frame-pointer \
       -DPULSESHIFT_OLED_ENABLED=1 -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
-      -Itest/stubs -IPulseShift \
-      PulseShift/rpm_decoder.cpp PulseShift/vehicle_profile.cpp \
-      PulseShift/simulated_ecu.cpp PulseShift/shift_light.cpp \
-      PulseShift/dashboard.cpp PulseShift/frame_log.cpp \
+      -Itest/stubs -IPulseShift -IPulseShift/src \
+      PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
+      PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp \
+      PulseShift/src/dashboard.cpp PulseShift/src/frame_log.cpp \
       test/test_io.cpp -o "$BUILD_DIR/test_io_$diagnostics"
   "$BUILD_DIR/test_io_$diagnostics"
 done
@@ -44,23 +44,23 @@ done
 # Vehicle profile and RPM tests
 g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
     -fsanitize=address,undefined -fno-omit-frame-pointer \
-    -IPulseShift \
-    PulseShift/rpm_decoder.cpp PulseShift/vehicle_profile.cpp \
-    PulseShift/shift_light.cpp test/test_vehicle.cpp \
+    -IPulseShift -IPulseShift/src \
+    PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
+    PulseShift/src/shift_light.cpp test/test_vehicle.cpp \
     -o "$BUILD_DIR/test_vehicle"
 "$BUILD_DIR/test_vehicle"
 
 # Python integration tests
 python3 -m unittest discover -s test -p 'test_*.py'
 
-# CAN transport tests (modes 3 and 4 — CAN capture and vehicle)
+# CAN transport tests (modes 3 and 4: CAN capture and vehicle)
 for mode in 3 4; do
   g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
       -fsanitize=address,undefined -fno-omit-frame-pointer \
       -DPULSESHIFT_MODE=$mode \
-      -Itest/stubs -IPulseShift \
-      PulseShift/can_transport.cpp PulseShift/frame_log.cpp \
-      PulseShift/rpm_decoder.cpp PulseShift/vehicle_profile.cpp \
+      -Itest/stubs -IPulseShift -IPulseShift/src \
+      PulseShift/src/can_transport.cpp PulseShift/src/frame_log.cpp \
+      PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
       test/test_transport.cpp -o "$BUILD_DIR/test_transport_$mode"
   "$BUILD_DIR/test_transport_$mode"
 done
@@ -72,9 +72,9 @@ for mode in 1 4; do
         -fsanitize=address,undefined -fno-omit-frame-pointer \
         -DPULSESHIFT_MODE=$mode -DPULSESHIFT_OLED_ENABLED=1 \
         -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
-        -Itest/stubs -IPulseShift \
-        PulseShift/rpm_decoder.cpp PulseShift/vehicle_profile.cpp \
-        PulseShift/shift_light.cpp PulseShift/dashboard.cpp \
+        -Itest/stubs -IPulseShift -IPulseShift/src \
+        PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
+        PulseShift/src/shift_light.cpp PulseShift/src/dashboard.cpp \
         test/test_dashboard_calibration.cpp \
         -Wl,--wrap=_Z22selectedVehicleProfilev \
         -o "$BUILD_DIR/test_dashboard-$mode-$diagnostics"

@@ -1,5 +1,5 @@
 // ============================================================================
-// PulseShift — ESP32 Motorcycle Shift Light & CAN Diagnostic Logger
+// PulseShift: ESP32 Motorcycle Shift Light & CAN Diagnostic Logger
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 //
 // Arduino IDE Setup:
@@ -21,21 +21,22 @@
 #include <Arduino.h>
 #include <stdlib.h>
 #include <string.h>
-#include "config.h"
-#include "rpm_decoder.h"
-#include "frame_log.h"
-#include "dashboard.h"
-#include "storage_manager.h"
-#include "diag_logger.h"
-#include "can_recorder.h"
-#include "button_handler.h"
-#include "serial_protocol.h"
+#include "UserConfig.h"
+#include "src/config.h"
+#include "src/rpm_decoder.h"
+#include "src/frame_log.h"
+#include "src/dashboard.h"
+#include "src/storage_manager.h"
+#include "src/diag_logger.h"
+#include "src/can_recorder.h"
+#include "src/button_handler.h"
+#include "src/serial_protocol.h"
 
 #if PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
-#include "simulated_ecu.h"
+#include "src/simulated_ecu.h"
 #endif
 #if PULSESHIFT_MODE != PULSESHIFT_REPLAY
-#include "can_transport.h"
+#include "src/can_transport.h"
 #endif
 
 namespace {

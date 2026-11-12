@@ -1,7 +1,11 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 #include <stdint.h>
+#if __has_include("../UserConfig.h")
+#include "../UserConfig.h"
+#elif __has_include("UserConfig.h")
 #include "UserConfig.h"
+#endif
 #include "shift_light.h"
 #include "vehicle_profile.h"
 

@@ -45,10 +45,11 @@ class ConfigurationTests(unittest.TestCase):
     def test_synthetic_ecu_is_not_even_compiled_in_receive_only_modes(self):
         with tempfile.TemporaryDirectory() as td:
             headers_dir = ROOT/"PulseShift" if (ROOT/"PulseShift").exists() else ROOT/"include"
-            src_file = ROOT/"PulseShift/simulated_ecu.cpp" if (ROOT/"PulseShift/simulated_ecu.cpp").exists() else ROOT/"src/simulated_ecu.cpp"
+            src_dir = ROOT/"PulseShift/src" if (ROOT/"PulseShift/src").exists() else headers_dir
+            src_file = ROOT/"PulseShift/src/simulated_ecu.cpp" if (ROOT/"PulseShift/src/simulated_ecu.cpp").exists() else ROOT/"PulseShift/simulated_ecu.cpp"
             for mode in (3,4):
                 obj=Path(td)/f"replay-{mode}.o"
-                subprocess.run(["g++","-std=c++17",f"-DPULSESHIFT_MODE={mode}","-I",str(headers_dir),"-c",str(src_file),"-o",str(obj)],check=True)
+                subprocess.run(["g++","-std=c++17",f"-DPULSESHIFT_MODE={mode}","-I",str(headers_dir),"-I",str(src_dir),"-c",str(src_file),"-o",str(obj)],check=True)
                 symbols=subprocess.check_output(["nm","-C",str(obj)],text=True)
                 self.assertNotIn("ReplayTransport",symbols)
                 self.assertNotIn("demonstrationFrame",symbols)

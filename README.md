@@ -1,13 +1,13 @@
 # PulseShift
 
-Customizable ESP32 motorcycle shift-light firmware. Six WS2812B LEDs light up progressively with engine RPM. At 6000 RPM all LEDs flash red — the shift alert. No motorcycle is needed to try it: the default Demo mode runs a full RPM simulation on its own.
+Customizable ESP32 motorcycle shift-light firmware. Six WS2812B LEDs light up progressively with engine RPM. At 6000 RPM all LEDs flash red as the shift alert. No motorcycle is needed to try it: the default Demo mode runs a full RPM simulation on its own.
 
 ## What it does
 
-- **Demo mode** — runs an autonomous synthetic RPM sweep from 0 to 6000 RPM and back, showing the shift light in action. No CAN connection needed.
-- **CAN Capture mode** — passively records raw CAN bus frames from the motorcycle to internal flash (LittleFS), for identifying the RPM message.
-- **Vehicle RPM mode** — live shift light driven by decoded motorcycle CAN data (requires a verified vehicle profile — currently unavailable for the NS125).
-- **Automatic error logging** — CAN faults, storage errors, and reset reasons are saved to flash and readable from Serial Monitor.
+- **Demo mode**: runs an autonomous synthetic RPM sweep from 0 to 6000 RPM and back, showing the shift light in action. No CAN connection needed.
+- **CAN Capture mode**: passively records raw CAN bus frames from the motorcycle to internal flash (LittleFS), for identifying the RPM message.
+- **Vehicle RPM mode**: live shift light driven by decoded motorcycle CAN data (requires a verified vehicle profile, currently unavailable for the NS125).
+- **Automatic error logging**: CAN faults, storage errors, and reset reasons are saved to flash and readable from Serial Monitor.
 
 ## Parts
 
@@ -20,7 +20,7 @@ Customizable ESP32 motorcycle shift-light firmware. Six WS2812B LEDs light up pr
 | Regulated 5V supply, ≥ 1A | For LEDs only |
 | SN65HVD230 3.3V CAN transceiver | For CAN modes only |
 
-## Arduino IDE — Board Settings
+## Arduino IDE: Board Settings
 
 | Setting | Value |
 |---|---|
@@ -60,22 +60,22 @@ Then install **esp32 by Espressif Systems** (version 2.0.17 recommended).
 
 That's it. No scripts, no command line.
 
-## LED behavior — 0 to 6000 RPM
+## LED behavior: 0 to 6000 RPM
 
 | RPM | LEDs |
 |---|---|
 | 0 | All off |
-| 1–1000 | LED 1 (green) |
-| 1001–2000 | LED 1–2 (green) |
-| 2001–3000 | LED 1–3 (green) |
-| 3001–4000 | LED 1–4 (green/yellow) |
-| 4001–5000 | LED 1–5 (yellow/orange) |
-| 5001–5999 | LED 1–6 (orange/red) |
-| ≥ 6000 | All LEDs flash red — **shift!** |
+| 1-1000 | LED 1 (green) |
+| 1001-2000 | LED 1-2 (green) |
+| 2001-3000 | LED 1-3 (green) |
+| 3001-4000 | LED 1-4 (green/yellow) |
+| 4001-5000 | LED 1-5 (yellow/orange) |
+| 5001-5999 | LED 1-6 (orange/red) |
+| >= 6000 | All LEDs flash red: **shift!** |
 
 Thresholds are in `UserConfig.h` as `PULSESHIFT_DEMO_START_RPM`, `PULSESHIFT_DEMO_SHIFT_RPM`, and `PULSESHIFT_DEMO_MAX_RPM`.
 
-## Wiring (Demo — no CAN needed)
+## Wiring (Demo: no CAN needed)
 
 ```
 ESP32 GPIO27 → 330Ω → LED strip DIN
@@ -90,7 +90,7 @@ USB          → ESP32 power and upload
 
 ## Passive CAN wiring (SN65HVD230)
 
-For CAN Capture mode only. Passive — no frames are ever transmitted.
+For CAN Capture mode only. Passive: no frames are ever transmitted.
 
 ```
 SN65HVD230 Pin 8 (Rs)  → GND          (normal high-speed mode)
@@ -134,7 +134,7 @@ Demo-mode extra commands:
 
 | Command | Description |
 |---|---|
-| `rpm <value>` | Set synthetic RPM (0–20000) |
+| `rpm <value>` | Set synthetic RPM (0-20000) |
 | `demo start` | Resume automated sweep |
 | `demo stop` | Pause synthetic frames |
 | `profile <classic\|racing\|minimal>` | Change LED style |
@@ -148,8 +148,8 @@ Edit `PulseShift/UserConfig.h` before uploading:
 |---|---|---|
 | `PULSESHIFT_OPERATING_MODE` | `DEMO` | Change to `CAN_CAPTURE` for motorcycle recording |
 | `PULSESHIFT_LED_DATA_GPIO` | `27` | LED strip DIN via 330Ω |
-| `PULSESHIFT_LED_COUNT` | `6` | Number of LEDs (1–32) |
-| `PULSESHIFT_LED_BRIGHTNESS` | `40` | 0–255 (not a hardware current limit) |
+| `PULSESHIFT_LED_COUNT` | `6` | Number of LEDs (1-32) |
+| `PULSESHIFT_LED_BRIGHTNESS` | `40` | 0-255 (not a hardware current limit) |
 | `PULSESHIFT_DEMO_SHIFT_RPM` | `6000` | RPM where shift alert triggers |
 | `PULSESHIFT_CAN_BITRATE` | `0` | Set to bitrate (e.g. 500000) for CAN modes |
 
@@ -157,8 +157,8 @@ Edit `PulseShift/UserConfig.h` before uploading:
 
 - **The NS125 RPM CAN ID and decoding formula are unknown.** No CAN ID has been identified from the motorcycle's bus. The firmware deliberately shows "unavailable" rather than guessing.
 - **CAN bitrate is unverified.** The bus may operate at 125, 250, or 500 kbps. CAN Capture mode will only work after setting the correct bitrate in `UserConfig.h`.
-- **Hardware qualification** — SN65HVD230 wiring, transceiver RS pin mode, termination removal, and automotive protection must be verified by a qualified person before connecting to the vehicle.
-- **Shift RPM thresholds** — the 6000 RPM shift point is a placeholder. Real calibration depends on the engine and rider preference.
+- **Hardware qualification**: SN65HVD230 wiring, transceiver RS pin mode, termination removal, and automotive protection must be verified by a qualified person before connecting to the vehicle.
+- **Shift RPM thresholds**: the 6000 RPM shift point is a placeholder. Real calibration depends on the engine and rider preference.
 
 ## Safety notes
 
@@ -174,15 +174,16 @@ PulseShift-Firmware/
 ├── PulseShift/           ← Open PulseShift.ino here in Arduino IDE
 │   ├── PulseShift.ino    ← Main sketch entry point (setup and loop)
 │   ├── UserConfig.h      ← Edit this to change settings
-│   ├── config.h          ← Internal config
-│   ├── can_transport.*   ← TWAI driver wrapper (listen-only)
-│   ├── can_recorder.*    ← Raw CAN capture to LittleFS
-│   ├── shift_light.*     ← WS2812B LED control
-│   ├── rpm_decoder.*     ← CAN RPM decoding framework
-│   ├── diag_logger.*     ← Automatic error logging
-│   ├── storage_manager.* ← LittleFS and NVS management (safe formatting)
-│   ├── dashboard.*       ← OLED display (optional)
-│   └── ...               ← Supporting headers
+│   └── src/              ← Implementation compiled recursively (no tab clutter)
+│       ├── config.h          ← Internal config
+│       ├── can_transport.*   ← TWAI driver wrapper (listen-only)
+│       ├── can_recorder.*    ← Raw CAN capture to LittleFS
+│       ├── shift_light.*     ← WS2812B LED control
+│       ├── rpm_decoder.*     ← CAN RPM decoding framework
+│       ├── diag_logger.*     ← Automatic error logging
+│       ├── storage_manager.* ← LittleFS and NVS management (safe formatting)
+│       ├── dashboard.*       ← OLED display (optional)
+│       └── ...               ← Supporting headers and sources
 ├── test/                 ← Host-side C++ and Python verification tests
 ├── tools/                ← can_investigate.py for log analysis
 ├── docs/                 ← Hardware and CAN investigation notes

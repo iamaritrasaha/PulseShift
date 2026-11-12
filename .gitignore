@@ -9,7 +9,7 @@ build/
 __pycache__/
 *.pyc
 
-# VS Code editor settings (optional — keep or remove per preference)
+# VS Code editor settings (optional: keep or remove per preference)
 .vscode/*.log
 .vscode/c_cpp_properties.json
 .vscode/launch.json
