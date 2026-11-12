@@ -33,13 +33,14 @@ void FrameLog::push(const CanFrame& f, DecodeResult result) {
 }
 void FrameLog::pump() {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-  if (!count_) return;
-  auto& line = lines_[tail_];
-  const int free = Serial.availableForWrite();
-  // Whole lines only: periodic diagnostics cannot split a captured frame.
-  if (free < line.size) return;
-  Serial.write(reinterpret_cast<const uint8_t*>(line.text), line.size);
-  tail_ = (tail_+1) % 64; --count_;
+  while (count_ > 0) {
+    auto& line = lines_[tail_];
+    const int free = Serial.availableForWrite();
+    // Whole lines only: periodic diagnostics cannot split a captured frame.
+    if (free < line.size) break;
+    Serial.write(reinterpret_cast<const uint8_t*>(line.text), line.size);
+    tail_ = (tail_+1) % 64; --count_;
+  }
 #endif
 }
 

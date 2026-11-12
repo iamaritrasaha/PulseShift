@@ -161,6 +161,20 @@
 #define PULSESHIFT_SERIAL_BAUD 115200
 #endif
 
+// DEFAULT: GPIO0 (BOOT button on ESP32 DevKit V1).
+// Cycles through field capture stages (Short press) or toggles recording (Long press).
+#ifndef PULSESHIFT_BOOT_BUTTON_GPIO
+#define PULSESHIFT_BOOT_BUTTON_GPIO 0
+#endif
+// DEFAULT: 1000000 bytes (~1 MB). Max raw CAN capture file size in LittleFS.
+#ifndef PULSESHIFT_MAX_CAPTURE_BYTES
+#define PULSESHIFT_MAX_CAPTURE_BYTES 1000000
+#endif
+// DEFAULT: 131072 bytes (128 KB). Max persistent diagnostic event log size.
+#ifndef PULSESHIFT_MAX_DIAG_LOG_BYTES
+#define PULSESHIFT_MAX_DIAG_LOG_BYTES 131072
+#endif
+
 // Export legacy names and reject old/new conflicts before validation.
 #define PULSESHIFT_CONFIG_VALUES_READY 1
 #include "ConfigCompat.h"
@@ -279,4 +293,12 @@
      (PULSESHIFT_OLED_ENABLED && (PULSESHIFT_OLED_SDA_GPIO == 1 || PULSESHIFT_OLED_SDA_GPIO == 3 || \
                             PULSESHIFT_OLED_SCL_GPIO == 1 || PULSESHIFT_OLED_SCL_GPIO == 3)))
 #error "Enabled Serial diagnostics reserve UART0 GPIO1 and GPIO3"
+#endif
+
+// Fix D8: PSRAM conflict check on GPIO16/17 for ESP32-WROVER modules
+#if defined(BOARD_HAS_PSRAM) || defined(CONFIG_SPIRAM_SUPPORT)
+#if (PULSESHIFT_CAN_RX_GPIO == 16 || PULSESHIFT_CAN_RX_GPIO == 17 || \
+     PULSESHIFT_CAN_TX_GPIO == 16 || PULSESHIFT_CAN_TX_GPIO == 17)
+#error "GPIO16/17 are reserved for external PSRAM on WROVER boards. Use non-PSRAM GPIOs or verify board is standard WROOM-32."
+#endif
 #endif

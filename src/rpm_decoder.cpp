@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "rpm_decoder.h"
+
 DecodeResult decodeRpm(const CanFrame& f, const RpmMapping& m, uint16_t& rpm) {
   if (!validEnvelope(f)) return DecodeResult::Malformed;
   if (f.remote) return DecodeResult::Remote;
@@ -16,6 +17,7 @@ DecodeResult decodeRpm(const CanFrame& f, const RpmMapping& m, uint16_t& rpm) {
   rpm = uint16_t(scaled / m.denominator);
   return DecodeResult::Valid;
 }
+
 DecodeResult VehicleDecoder::decode(const CanFrame& f, uint16_t& rpm) {
   if (!validEnvelope(f)) return DecodeResult::Malformed;
   if (f.remote) return DecodeResult::Remote;
@@ -23,13 +25,15 @@ DecodeResult VehicleDecoder::decode(const CanFrame& f, uint16_t& rpm) {
   const auto& p = profile_;
   if (f.id != p.arbitrationId || f.extended != p.extended) return DecodeResult::WrongId;
   if (f.dlc != p.requiredDlc) return DecodeResult::WrongDlc;
+
   uint32_t raw = 0;
+  // Fix D3: Check return value of extractSignal()
   if (p.multiplexer.enabled) {
-    extractSignal(f, p.multiplexer.signal, raw);
+    if (!extractSignal(f, p.multiplexer.signal, raw)) return DecodeResult::Malformed;
     if (raw != p.multiplexer.expected) return DecodeResult::WrongMux;
   }
   if (p.validity.enabled) {
-    extractSignal(f, p.validity.signal, raw);
+    if (!extractSignal(f, p.validity.signal, raw)) return DecodeResult::Malformed;
     if (raw != p.validity.expected) return DecodeResult::InvalidValue;
   }
   const auto& c = p.checksum;
@@ -40,14 +44,11 @@ DecodeResult VehicleDecoder::decode(const CanFrame& f, uint16_t& rpm) {
     if (sum != f.data[c.checksumByte]) return DecodeResult::BadChecksum;
   }
   if (p.additionalValidation && !p.additionalValidation(f)) return DecodeResult::RuleRejected;
-  extractSignal(f, p.rpm, raw);
-  // Definition limits guarantee the signed 64-bit operation cannot overflow.
-  const int64_t scaled = int64_t(raw) * p.scaleNumerator + p.offsetNumerator;
-  if (scaled < int64_t(p.minimumRpm) * p.scaleDenominator ||
-      scaled > int64_t(p.maximumRpm) * p.scaleDenominator) return DecodeResult::OutOfRange;
+
+  // Fix D4: Evaluate rolling counter continuity before RPM range checking
   if (p.counter.enabled) {
     uint32_t next = 0;
-    extractSignal(f, p.counter.signal, next);
+    if (!extractSignal(f, p.counter.signal, next)) return DecodeResult::Malformed;
     if (next >= p.counter.modulus) return DecodeResult::BadCounter;
     const bool continuous = hasCounter_ && uint32_t(f.timestampMs - counterAt_) < p.timeoutMs;
     const bool correct = !continuous || next == (counter_ + 1) % p.counter.modulus;
@@ -56,9 +57,18 @@ DecodeResult VehicleDecoder::decode(const CanFrame& f, uint16_t& rpm) {
     hasCounter_ = true; counter_ = next; counterAt_ = f.timestampMs;
     if (!correct) return DecodeResult::BadCounter;
   }
+
+  // Extract RPM
+  if (!extractSignal(f, p.rpm, raw)) return DecodeResult::Malformed;
+  // Definition limits guarantee the signed 64-bit operation cannot overflow.
+  const int64_t scaled = int64_t(raw) * p.scaleNumerator + p.offsetNumerator;
+  if (scaled < int64_t(p.minimumRpm) * p.scaleDenominator ||
+      scaled > int64_t(p.maximumRpm) * p.scaleDenominator) return DecodeResult::OutOfRange;
+
   rpm = uint16_t(scaled / p.scaleDenominator);
   return DecodeResult::Valid;
 }
+
 DecodeResult RpmState::ingest(const CanFrame& f) {
   if (validEnvelope(f)) { hasFrame_ = true; busExpired_ = false; frameAt_ = f.timestampMs; lastId_ = f.id; }
   uint16_t decoded = 0;
@@ -73,6 +83,7 @@ DecodeResult RpmState::ingest(const CanFrame& f) {
   }
   return lastResult_;
 }
+
 const char* decodeName(DecodeResult r) {
   switch (r) {
     case DecodeResult::Valid: return "VALID";

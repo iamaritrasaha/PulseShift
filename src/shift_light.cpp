@@ -152,12 +152,12 @@ void ShiftLightEngine::renderActive(uint32_t nowMs, uint16_t rpm) {
         logicalPixels_[i] = RgbColor{255, 0, 0};
       }
     } else if (cfg_.alertMode == ShiftAlertMode::FlashRed) {
-      const bool on = ((nowMs - alertStartMs_) % 100) < 50;
+      const bool on = (((nowMs - alertStartMs_) / 50) % 2) == 0;
       for (uint8_t i = 0; i < n; ++i) {
         logicalPixels_[i] = on ? RgbColor{255, 0, 0} : RgbColor{0, 0, 0};
       }
     } else if (cfg_.alertMode == ShiftAlertMode::FlashWhite) {
-      const bool on = ((nowMs - alertStartMs_) % 100) < 50;
+      const bool on = (((nowMs - alertStartMs_) / 50) % 2) == 0;
       for (uint8_t i = 0; i < n; ++i) {
         logicalPixels_[i] = on ? RgbColor{255, 255, 255} : RgbColor{0, 0, 0};
       }
@@ -209,30 +209,29 @@ void ShiftLightEngine::renderActive(uint32_t nowMs, uint16_t rpm) {
 }
 
 bool ShiftLightEngine::update(uint32_t nowMs, uint16_t rpm, ViewStatus status) {
-  // Safety blanking must bypass the visual refresh interval.
+  // Safety blanking must bypass the visual refresh interval when transitioning away from Live
   if (status == ViewStatus::Live && lastUpdateMs_ != 0 &&
       uint32_t(nowMs - lastUpdateMs_) < cfg_.animationIntervalMs) {
     return false;
   }
-  // Resume valid data immediately after blanking instead of throttling recovery.
-  lastUpdateMs_ = status == ViewStatus::Live ? nowMs : 0;
+  lastUpdateMs_ = (status == ViewStatus::Live || !startupComplete_) ? nowMs : 0;
 
-  if (status == ViewStatus::Fault || status == ViewStatus::Unconfigured) {
-    startupComplete_ = true;
-    alertActive_ = false;
-    clearAllPixels();
-  } else if (status != ViewStatus::Live) {
+  // Fix D2: Let the startup sweep run to completion on power-on regardless of CAN link state
+  if (!startupComplete_) {
+    renderStartup(nowMs);
+    if (startupComplete_) {
+      if (status == ViewStatus::Live) {
+        renderActive(nowMs, rpm);
+      } else {
+        alertActive_ = false;
+        clearAllPixels();
+      }
+    }
+  } else if (status == ViewStatus::Fault || status == ViewStatus::Unconfigured || status != ViewStatus::Live) {
     alertActive_ = false;
     clearAllPixels();
   } else {
-    if (!startupComplete_) {
-      renderStartup(nowMs);
-      if (startupComplete_) {
-        renderActive(nowMs, rpm);
-      }
-    } else {
-      renderActive(nowMs, rpm);
-    }
+    renderActive(nowMs, rpm);
   }
 
   const uint8_t n = cfg_.ledCount;

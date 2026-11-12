@@ -1,47 +1,65 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "can_transport.h"
+#include "diag_logger.h"
 #include <Arduino.h>
 #include <sdkconfig.h>
 #include <driver/gpio.h>
+
 bool CanTransport::begin() {
   if (beginAttempted_) return healthy();
   beginAttempted_ = true;
+
+  // Fix D9: Guarantee TX pin is in a safe, non-floating input state regardless of configuration
+  gpio_reset_pin(gpio_num_t(config::txPin));
+  gpio_set_direction(gpio_num_t(config::txPin), GPIO_MODE_INPUT);
+  gpio_set_pull_mode(gpio_num_t(config::txPin), GPIO_PULLUP_ONLY);
+
   if (!configured()) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.println("CAN DISABLED: no verified bitrate/profile configured");
 #endif
+    DiagLogger::instance().logCanInit(0, -1, "NOT_CONFIGURED");
     return false;
   }
+
 #if PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST
   constexpr auto mode = TWAI_MODE_LISTEN_ONLY;
 #else
   constexpr auto mode = TWAI_MODE_NO_ACK;
 #endif
-  twai_general_config_t general = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t(config::txPin), gpio_num_t(config::rxPin), mode);
+
+  twai_general_config_t general = TWAI_GENERAL_CONFIG_DEFAULT(
+      gpio_num_t(config::txPin), gpio_num_t(config::rxPin), mode);
   general.tx_queue_len = 0;
   general.rx_queue_len = 64;
-  general.alerts_enabled = TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL |
-    TWAI_ALERT_RX_FIFO_OVERRUN | TWAI_ALERT_RX_DATA;
+  general.alerts_enabled = TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF |
+                           TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN |
+                           TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN;
+
 #if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
   general.alerts_enabled |= TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_TX_FAILED | TWAI_ALERT_TX_IDLE;
 #endif
+
   twai_timing_config_t timing{};
   switch (bitrate_) {
     case 125000: timing = TWAI_TIMING_CONFIG_125KBITS(); break;
     case 250000: timing = TWAI_TIMING_CONFIG_250KBITS(); break;
     case 500000: timing = TWAI_TIMING_CONFIG_500KBITS(); break;
     case 1000000: timing = TWAI_TIMING_CONFIG_1MBITS(); break;
-    default: fault("unsupported bitrate"); return false;
+    default:
+      DiagLogger::instance().logCanInit(bitrate_, -2, "UNSUPPORTED_BITRATE");
+      fault("unsupported bitrate");
+      return false;
   }
+
   twai_filter_config_t filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
   auto err = twai_driver_install(&general, &timing, &filter);
-  installed_ = err == ESP_OK;
+  installed_ = (err == ESP_OK);
+
 #if PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST
   // Arduino 2.0.17's prebuilt SDK lacks LISTEN_ONLY_DOM workaround. Disconnect
   // the TX pad while the controller is still STOPPED. Keep it disconnected for
   // the entire passive capture; no code here ever re-enables that output.
-  // Bench hardware must hold transceiver TXD recessive with an external pull-up
-  // and hold RS high in hardware throughout reset and power transitions.
   if (err == ESP_OK) err = gpio_reset_pin(gpio_num_t(config::txPin));
   if (err == ESP_OK) err = gpio_set_direction(gpio_num_t(config::txPin), GPIO_MODE_INPUT);
   if (err == ESP_OK) err = gpio_set_pull_mode(gpio_num_t(config::txPin), GPIO_PULLUP_ONLY);
@@ -51,18 +69,26 @@ bool CanTransport::begin() {
 #endif
   }
 #endif
+
   if (err == ESP_OK) err = twai_start();
-  running_ = err == ESP_OK;
+  running_ = (err == ESP_OK);
+
+  DiagLogger::instance().logCanInit(bitrate_, static_cast<int>(err), esp_err_to_name(err));
+
   if (!running_) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("CAN INIT: %s\r\n", esp_err_to_name(err));
 #endif
     fault("initialization failed");
   }
+
   return running_;
 }
+
 void CanTransport::fault(const char* reason) {
   if (!tracker_.halt()) return;
+  DiagLogger::instance().logCanHalted(reason);
+
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
   if (log_) log_->status("CAN HALTED: %s", reason);
   else Serial.printf("CAN HALTED: %s\r\n", reason);
@@ -70,6 +96,7 @@ void CanTransport::fault(const char* reason) {
 #else
   (void)reason;
 #endif
+
   if (running_) {
     const auto err = twai_stop();
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -81,6 +108,7 @@ void CanTransport::fault(const char* reason) {
   }
   running_ = false; // Manual reboot required. No automatic recovery loop.
 }
+
 void CanTransport::diagnostics() const {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
   if (!installed_) return;
@@ -99,27 +127,36 @@ void CanTransport::diagnostics() const {
       (unsigned long)rx_, (unsigned long)acceptedRx_, (unsigned long)busErrorAlerts_.total());
     return;
   }
-  Serial.printf("CAN status=%s state=%d pendingTX=%lu pendingRX=%lu TEC=%lu REC=%lu failed=%lu busErrors=%lu missed=%lu overrun=%lu arbLost=%lu queued=%lu completed=%lu RX=%lu acceptedFrames=%lu matched=%lu alerts=0x%08lX busErrorAlerts=%lu halted=%d\r\n",
+  Serial.printf("CAN status=%s state=%d pendingTX=%lu pendingRX=%lu TEC=%lu REC=%lu failed=%lu busErrors=%lu missed=%lu overrun=%lu arbLost=%lu queued=%lu completed=%lu RX=%lu acceptedFrames=%lu matched=%lu alerts=0x%08lX busErrorAlerts=%lu rxOverflowAlerts=%lu halted=%d\r\n",
     esp_err_to_name(err), int(s.state), (unsigned long)s.msgs_to_tx, (unsigned long)s.msgs_to_rx,
     (unsigned long)s.tx_error_counter, (unsigned long)s.rx_error_counter, (unsigned long)s.tx_failed_count,
     (unsigned long)s.bus_error_count, (unsigned long)s.rx_missed_count, (unsigned long)s.rx_overrun_count,
     (unsigned long)s.arb_lost_count, (unsigned long)queued_, (unsigned long)completed_,
-    (unsigned long)rx_, (unsigned long)acceptedRx_, (unsigned long)matched_, (unsigned long)alertsSeen_, (unsigned long)busErrorAlerts_.total(), tracker_.halted());
+    (unsigned long)rx_, (unsigned long)acceptedRx_, (unsigned long)matched_, (unsigned long)alertsSeen_,
+    (unsigned long)busErrorAlerts_.total(), (unsigned long)rxOverflowAlerts_.total(), tracker_.halted());
 #endif
 }
+
 void CanTransport::poll(uint32_t now) {
   if (!healthy()) return;
+
   uint32_t alerts = 0;
   auto err = twai_read_alerts(&alerts, 0);
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) { fault("alert read failed"); return; }
   alertsSeen_ |= alerts;
-  if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
-    fault("bus-off or RX overflow; inspect counters"); return;
+
+  // True bus-off state is fatal in listen-only mode
+  if (alerts & TWAI_ALERT_BUS_OFF) {
+    fault("bus-off detected; inspect bus wiring and bitrate");
+    return;
   }
+
+  // Fix D1: RX queue full and hardware FIFO overrun are buffer congestion warnings, NOT fatal controller faults
+  if (alerts & (TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
+    rxOverflowAlerts_.record();
+  }
+
 #if PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST
-  // In listen-only mode, isolated bus errors are non-fatal: the CAN controller
-  // recovers automatically and an automotive bus may produce transient errors at
-  // startup or under electrical disturbance. Count them for diagnostics.
   if (alerts & TWAI_ALERT_BUS_ERROR) busErrorAlerts_.record();
   const auto warnings = busErrorAlerts_.take(now, 1000);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -130,11 +167,18 @@ void CanTransport::poll(uint32_t now) {
 #else
   (void)warnings;
 #endif
+
+  // Track inactivity
+  if (rx_ > 0 && wasActive_ && uint32_t(now - lastRxMs_) >= 5000) {
+    wasActive_ = false;
+    DiagLogger::instance().logCanInactivity(now - lastRxMs_);
+  }
 #else
   if (alerts & TWAI_ALERT_BUS_ERROR) {
     fault("bus error in self-test; inspect counters"); return;
   }
 #endif
+
 #if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
   if (alerts & TWAI_ALERT_TX_FAILED) { fault("TX failed"); return; }
   if (alerts & TWAI_ALERT_TX_SUCCESS) {
@@ -153,29 +197,66 @@ void CanTransport::poll(uint32_t now) {
   }
   if (tracker_.timedOut(now, config::txTimeoutMs)) fault(tracker_.txSeen() ? "RX timeout" : "TX completion timeout");
 #else
+  // Fix D1: In listen-only mode, rx_missed_count and rx_overrun_count are recorded as diagnostic metrics,
+  // NOT fatal halts. Only genuine driver state divergence is fatal.
   twai_status_info_t status{};
-  if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0 ||
-      status.rx_missed_count != 0 || status.rx_overrun_count != 0)
+  if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0) {
     fault("controller status failure");
+    return;
+  }
+
+  lastBusErrorCount_ = status.bus_error_count;
+
+  if (status.rx_missed_count != lastMissedCount_) {
+    const uint32_t delta = status.rx_missed_count - lastMissedCount_;
+    lastMissedCount_ = status.rx_missed_count;
+    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_MISSED",
+                                   "frames dropped by driver queue delta=%lu total=%lu",
+                                   (unsigned long)delta, (unsigned long)lastMissedCount_);
+  }
+
+  if (status.rx_overrun_count != lastOverrunCount_) {
+    const uint32_t delta = status.rx_overrun_count - lastOverrunCount_;
+    lastOverrunCount_ = status.rx_overrun_count;
+    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_OVERRUN",
+                                   "hardware FIFO overrun delta=%lu total=%lu",
+                                   (unsigned long)delta, (unsigned long)lastOverrunCount_);
+  }
 #endif
 }
+
 bool CanTransport::receive(CanFrame& f, uint32_t now) {
   if (!healthy()) return false;
   twai_message_t msg{};
   auto err = twai_receive(&msg, 0);
   if (err == ESP_ERR_TIMEOUT) return false;
   if (err != ESP_OK) { fault("RX driver failure"); return false; }
-  f = {}; f.id = msg.identifier; f.dlc = msg.data_length_code;
-  f.extended = msg.extd; f.remote = msg.rtr; f.timestampMs = now;
+
+  f = {};
+  f.id = msg.identifier;
+  f.dlc = msg.data_length_code;
+  f.extended = msg.extd;
+  f.remote = msg.rtr;
+  f.timestampMs = now;
   if (!f.remote) memcpy(f.data, msg.data, f.dlc <= 8 ? f.dlc : 8);
   f.payloadSize = f.remote ? 0 : (f.dlc <= 8 ? f.dlc : 8);
+
+  lastRxMs_ = now;
+  if (!wasActive_) {
+    wasActive_ = true;
+    DiagLogger::instance().logCanResume(rx_ + 1);
+  }
+
   ++rx_;
   if (validEnvelope(f)) ++acceptedRx_;
+
 #if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
   if (!tracker_.onReceive(f)) { fault("RX payload/sequence mismatch"); return false; }
 #endif
+
   return true;
 }
+
 #if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
 bool CanTransport::sendTest(const CanFrame& f, uint32_t now) {
   if (!canSend() || !validEnvelope(f) || f.remote) return false;

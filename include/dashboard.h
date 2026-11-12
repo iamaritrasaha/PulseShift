@@ -12,10 +12,15 @@ class Dashboard {
  public:
   bool begin();
   void update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
+  void triggerButtonFeedback(uint32_t now) { feedbackUntilMs_ = now + 200; }
+  void notifyRxActivity(uint32_t now) { lastRxActivityMs_ = now; }
+
   ShiftLightEngine& shiftLight() { return shiftLight_; }
   const ShiftLightEngine& shiftLight() const { return shiftLight_; }
 
  private:
+  void renderFieldStatus(uint32_t now, bool healthy, bool configured);
+
 #if PULSESHIFT_OLED_ENABLED
   Adafruit_SSD1306 display_{128, 64, &Wire, -1};
 #endif
@@ -28,4 +33,8 @@ class Dashboard {
   uint32_t lastId_ = 0;
   bool lastAlertActive_ = false;
   bool lastStartupActive_ = false, drawn_ = false;
+
+  uint32_t feedbackUntilMs_ = 0;
+  uint32_t lastRxActivityMs_ = 0;
+  RgbColor lastFieldPixels_[6]{};
 };
