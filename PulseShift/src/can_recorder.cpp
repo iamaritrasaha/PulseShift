@@ -28,6 +28,7 @@ const char* CanRecorder::stageName(Stage s) const {
 CanRecorder::State CanRecorder::state() const {
   if (!StorageManager::instance().isMounted()) return State::Unmounted;
   if (writeError_) return State::WriteFailure;
+  if (damagedRecording_) return State::DamagedRecording;
   if (flashPreserved_) return State::PreservedPriorSession;
   if (storageFull_) return State::StorageFull;
   if (!recording_) return State::Paused;
@@ -38,6 +39,7 @@ const char* CanRecorder::stateName(State s) const {
   switch (s) {
     case State::Unmounted:             return "UNMOUNTED";
     case State::WriteFailure:          return "WRITE_FAILURE";
+    case State::DamagedRecording:      return "DAMAGED_CAPTURE_PRESERVED";
     case State::StorageFull:           return "STORAGE_FULL";
     case State::PreservedPriorSession: return "FLASH_CAPTURE_PRESERVED";
     case State::Paused:                return "PAUSED";
@@ -74,59 +76,141 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
   droppedFrames_ = 0;
   storageFull_ = false;
   flashPreserved_ = false;
+  damagedRecording_ = false;
   writeError_ = false;
   dumpCursor_ = 0;
+  dumpCumValid_ = 0;
+  dumpCumCorrupt_ = 0;
+  dumpExportedCount_ = 0;
   recording_ = true;
   lastFlushMs_ = millis();
 
   auto& sm = StorageManager::instance();
-  if (sm.isMounted()) {
-    if (!sm.exists(CAPTURE_PATH)) {
-      writeHeader();
-    } else {
-      const size_t sz = sm.size(CAPTURE_PATH);
-      if (sz < sizeof(CaptureHeader)) {
-        writeHeader();
-      } else {
-        CaptureHeader hdr{};
-        File f = sm.open(CAPTURE_PATH, "r");
-        bool validHeader = false;
-        if (f) {
-          if (f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr)) {
-            if (memcmp(hdr.magic, "PULSECAP", 8) == 0 && hdr.headerVersion == 1) {
-              validHeader = true;
-            }
-          }
-          f.close();
-        }
+  if (!sm.isMounted()) {
+    initialized_ = true;
+    return;
+  }
 
-        if (validHeader && sz > sizeof(CaptureHeader)) {
-          const size_t recordsInFile = (sz - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
-          // If boot count or session ID differs, this capture was recorded in an earlier boot/session
-          if (hdr.bootCount != bootCount_ || hdr.sessionId != sessionId_) {
-            flashPreserved_ = true;
-            storageFull_ = true;
-            recording_ = false;
-            sessionId_ = hdr.sessionId;
-            DiagLogger::instance().logEvent(DiagLevel::Warn, "FLASH_CAPTURE_PRESERVED",
-                                           "Prior session %lu capture preserved (%lu records, %lu bytes). Use DUMP to export, or CLEAR YES to overwrite.",
-                                           (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
+  const char* tempPath = "/temp_cap.bin";
+  const char* backupPath = "/backup_cap.bin";
+
+  // Power-failure recovery:
+  // If backupPath exists, a previous truncate operation was interrupted by power failure.
+  if (sm.exists(backupPath)) {
+    if (!sm.exists(CAPTURE_PATH)) {
+      // Interrupted after original was renamed to backup, before replacement was committed.
+      // Check if tempPath has a valid header and data.
+      bool tempValid = false;
+      if (sm.exists(tempPath) && sm.size(tempPath) >= sizeof(CaptureHeader)) {
+        File tf = sm.open(tempPath, "r");
+        if (tf) {
+          CaptureHeader thdr{};
+          if (tf.read(reinterpret_cast<uint8_t*>(&thdr), sizeof(thdr)) == sizeof(thdr) &&
+              memcmp(thdr.magic, "PULSECAP", 8) == 0 && thdr.headerVersion == 1) {
+            tempValid = true;
+          }
+          tf.close();
+        }
+      }
+      if (tempValid && sm.rename(tempPath, CAPTURE_PATH)) {
+        sm.remove(backupPath);
+        DiagLogger::instance().logEvent(DiagLevel::Warn, "TRUNCATE_RECOVERED",
+                                       "Committed valid replacement from interrupted truncation.");
+      } else {
+        // Restore from backup
+        if (sm.rename(backupPath, CAPTURE_PATH)) {
+          DiagLogger::instance().logEvent(DiagLevel::Warn, "TRUNCATE_RECOVERED",
+                                         "Restored original capture from interrupted truncation backup.");
+        }
+        if (sm.exists(tempPath)) sm.remove(tempPath);
+      }
+    } else {
+      // CAPTURE_PATH exists, so the replacement was already committed before power loss.
+      // Clean up obsolete backup and temp files.
+      sm.remove(backupPath);
+      if (sm.exists(tempPath)) sm.remove(tempPath);
+    }
+  } else if (sm.exists(tempPath)) {
+    // Stale temp file from interrupted truncation before renaming backup. Clean up.
+    sm.remove(tempPath);
+  }
+
+  // Inspect CAPTURE_PATH
+  if (!sm.exists(CAPTURE_PATH)) {
+    writeHeader();
+  } else {
+    const size_t sz = sm.size(CAPTURE_PATH);
+    if (sz == 0) {
+      writeHeader();
+    } else if (sz < sizeof(CaptureHeader)) {
+      // Incomplete recording: size is less than a complete header.
+      // Preserve it: safe recovery is not possible without destroying data.
+      damagedRecording_ = true;
+      storageFull_ = true;
+      recording_ = false;
+      DiagLogger::instance().logEvent(DiagLevel::Error, "DAMAGED_CAPTURE_PRESERVED",
+                                     "Incomplete capture file preserved (%lu bytes < header size). Use CLEAR YES to reinitialize.",
+                                     (unsigned long)sz);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-            Serial.printf("FLASH CAPTURE PRESERVED: session %lu has %lu records (%lu bytes). Use DUMP to export, or CLEAR YES to overwrite.\r\n",
-                          (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
+      Serial.printf("DAMAGED CAPTURE PRESERVED: Incomplete file (%lu bytes < 76). Not overwritten. Use CLEAR YES to reinitialize.\r\n",
+                    (unsigned long)sz);
 #endif
-          } else {
-            // Same session/boot: recover any trailing partial record at EOF
-            const size_t dataLen = sz - sizeof(CaptureHeader);
-            const size_t remainder = dataLen % sizeof(CanLogRecord);
-            if (remainder != 0) {
-              truncateToSize(CAPTURE_PATH, sz - remainder);
+    } else {
+      CaptureHeader hdr{};
+      File f = sm.open(CAPTURE_PATH, "r");
+      bool validHeader = false;
+      if (f) {
+        if (f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr)) {
+          if (memcmp(hdr.magic, "PULSECAP", 8) == 0 && hdr.headerVersion == 1) {
+            validHeader = true;
+          }
+        }
+        f.close();
+      }
+
+      if (!validHeader) {
+        // Header corrupted or invalid: preserve file without overwriting.
+        damagedRecording_ = true;
+        storageFull_ = true;
+        recording_ = false;
+        DiagLogger::instance().logEvent(DiagLevel::Error, "DAMAGED_CAPTURE_PRESERVED",
+                                       "Damaged capture file preserved (%lu bytes, invalid header). Use CLEAR YES to reinitialize.",
+                                       (unsigned long)sz);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.printf("DAMAGED CAPTURE PRESERVED: Header invalid (%lu bytes). Not overwritten. Use CLEAR YES to reinitialize.\r\n",
+                      (unsigned long)sz);
+#endif
+      } else if (sz > sizeof(CaptureHeader)) {
+        const size_t recordsInFile = (sz - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
+        // If boot count or session ID differs, this capture was recorded in an earlier boot/session
+        if (hdr.bootCount != bootCount_ || hdr.sessionId != sessionId_) {
+          flashPreserved_ = true;
+          storageFull_ = true;
+          recording_ = false;
+          sessionId_ = hdr.sessionId;
+          DiagLogger::instance().logEvent(DiagLevel::Warn, "FLASH_CAPTURE_PRESERVED",
+                                         "Prior session %lu capture preserved (%lu records, %lu bytes). Use DUMP to export, or CLEAR YES to overwrite.",
+                                         (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.printf("FLASH CAPTURE PRESERVED: session %lu has %lu records (%lu bytes). Use DUMP to export, or CLEAR YES to overwrite.\r\n",
+                        (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
+#endif
+        } else {
+          // Same session/boot: recover any trailing partial record at EOF
+          const size_t dataLen = sz - sizeof(CaptureHeader);
+          const size_t remainder = dataLen % sizeof(CanLogRecord);
+          if (remainder != 0) {
+            const bool truncOk = truncateToSize(CAPTURE_PATH, sz - remainder);
+            if (truncOk) {
               DiagLogger::instance().logEvent(DiagLevel::Warn, "CAPTURE_RECOVERED",
                                              "Truncated %u partial bytes at EOF", (unsigned)remainder);
+            } else {
+              DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_FAILED",
+                                             "Could not safely truncate %u partial bytes at EOF; original preserved.", (unsigned)remainder);
             }
-            if (sm.size(CAPTURE_PATH) >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
-              storageFull_ = true;
-            }
+          }
+          if (sm.size(CAPTURE_PATH) >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
+            storageFull_ = true;
           }
         }
       }
@@ -156,6 +240,12 @@ bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
   }
 
   const char* tempPath = "/temp_cap.bin";
+  const char* backupPath = "/backup_cap.bin";
+
+  // Clean any stale temp or backup files from earlier interrupted attempts
+  if (sm.exists(tempPath)) sm.remove(tempPath);
+  if (sm.exists(backupPath)) sm.remove(backupPath);
+
   File temp = sm.open(tempPath, "w");
   if (!temp) {
     orig.close();
@@ -203,9 +293,27 @@ bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
     return false;
   }
 
-  // Safely replace original only after validated replacement is ready
-  sm.remove(path);
-  sm.rename(tempPath, path);
+  // Power-failure-safe replacement:
+  // Step 1: Rename original to backup
+  if (!sm.rename(path, backupPath)) {
+    sm.remove(tempPath);
+    DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_BACKUP_FAILED",
+                                   "Failed to backup original; original capture preserved.");
+    return false;
+  }
+
+  // Step 2: Rename verified replacement to original path
+  if (!sm.rename(tempPath, path)) {
+    // Rollback: restore backup back to original path
+    sm.rename(backupPath, path);
+    sm.remove(tempPath);
+    DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_REPLACE_FAILED",
+                                   "Failed to commit replacement; backup restored.");
+    return false;
+  }
+
+  // Step 3: Verified replacement is committed at path. Now remove backup.
+  sm.remove(backupPath);
   return true;
 }
 
@@ -365,6 +473,12 @@ void CanRecorder::dumpPage(uint32_t pageIndex) {
     return;
   }
 
+  if (damagedRecording_) {
+    Serial.printf("[CAPTURE ERROR] Preserved capture file is damaged (%lu bytes). Header invalid. Use CLEAR YES to reinitialize.\r\n",
+                  (unsigned long)sm.size(CAPTURE_PATH));
+    return;
+  }
+
   if (!sm.exists(CAPTURE_PATH)) {
     Serial.println("[CAPTURE] No capture file found.");
     return;
@@ -402,6 +516,13 @@ void CanRecorder::dumpPage(uint32_t pageIndex) {
   if (pageIndex < 1) pageIndex = 1;
   if (pageIndex > pages) pageIndex = pages;
 
+  // When starting from page 1, reset cumulative counters
+  if (pageIndex == 1) {
+    dumpCumValid_ = 0;
+    dumpCumCorrupt_ = 0;
+    dumpExportedCount_ = 0;
+  }
+
   const uint32_t startRec = (pageIndex - 1) * DUMP_PAGE_SIZE;
   const uint32_t recsInThisPage = (startRec + DUMP_PAGE_SIZE <= recs) ? DUMP_PAGE_SIZE : (recs - startRec);
   const uint32_t endRec = startRec + recsInThisPage;
@@ -426,8 +547,8 @@ void CanRecorder::dumpPage(uint32_t pageIndex) {
   const size_t offset = sizeof(CaptureHeader) + (startRec * sizeof(CanLogRecord));
   f.seek(offset, SeekSet);
 
-  uint32_t validCount = 0;
-  uint32_t corruptCount = 0;
+  uint32_t pageValid = 0;
+  uint32_t pageCorrupt = 0;
   CanLogRecord rec{};
   for (uint32_t i = 0; i < recsInThisPage; ++i) {
     if (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) != sizeof(rec)) {
@@ -436,7 +557,7 @@ void CanRecorder::dumpPage(uint32_t pageIndex) {
     }
     const uint16_t expected = computeCrc16(reinterpret_cast<const uint8_t*>(&rec), 18);
     const bool crcOk = (rec.checksum == expected);
-    if (crcOk) ++validCount; else ++corruptCount;
+    if (crcOk) ++pageValid; else ++pageCorrupt;
 
     const bool ext = (rec.id & 0x80000000UL) != 0;
     const bool rtr = (rec.id & 0x40000000UL) != 0;
@@ -463,16 +584,26 @@ void CanRecorder::dumpPage(uint32_t pageIndex) {
 
   f.close();
 
+  dumpCumValid_ += pageValid;
+  dumpCumCorrupt_ += pageCorrupt;
+  dumpExportedCount_ += (pageValid + pageCorrupt);
+
   // Print END marker
   if (pageIndex == pages) {
-    Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
-                  (unsigned long)(startRec + validCount), (unsigned long)corruptCount, (unsigned long)totalBytes);
+    Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE expected=%lu exported=%lu valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
+                  (unsigned long)recs, (unsigned long)dumpExportedCount_,
+                  (unsigned long)dumpCumValid_, (unsigned long)dumpCumCorrupt_, (unsigned long)totalBytes);
     dumpCursor_ = 0; // Reset cursor upon full completion
+    dumpCumValid_ = 0;
+    dumpCumCorrupt_ = 0;
+    dumpExportedCount_ = 0;
   } else {
     dumpCursor_ = endRec;
-    Serial.printf("=== END PULSESHIFT PAGE %lu/%lu (RECORDS %lu-%lu OF %lu) [Next: 'DUMP NEXT' or 'DUMP ALL'] ===\r\n",
+    Serial.printf("=== END PULSESHIFT PAGE %lu/%lu (RECORDS %lu-%lu OF %lu) [page_valid=%lu page_corrupt=%lu cum_valid=%lu cum_corrupt=%lu expected_total=%lu] ===\r\n",
                   (unsigned long)pageIndex, (unsigned long)pages,
-                  (unsigned long)(startRec + 1), (unsigned long)endRec, (unsigned long)recs);
+                  (unsigned long)(startRec + 1), (unsigned long)endRec, (unsigned long)recs,
+                  (unsigned long)pageValid, (unsigned long)pageCorrupt,
+                  (unsigned long)dumpCumValid_, (unsigned long)dumpCumCorrupt_, (unsigned long)recs);
   }
 }
 
@@ -497,6 +628,13 @@ void CanRecorder::dumpAll() {
     Serial.println("[CAPTURE] No capture file found.");
     return;
   }
+
+  if (damagedRecording_) {
+    Serial.printf("[CAPTURE ERROR] Preserved capture file is damaged (%lu bytes). Header invalid. Use CLEAR YES to reinitialize.\r\n",
+                  (unsigned long)sm.size(CAPTURE_PATH));
+    return;
+  }
+
   File f = sm.open(CAPTURE_PATH, "r");
   if (!f) {
     Serial.println("[CAPTURE ERROR] Could not open capture file.");
@@ -557,7 +695,12 @@ void CanRecorder::dumpAll() {
 
   f.close();
   dumpCursor_ = 0;
-  Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
+  dumpCumValid_ = 0;
+  dumpCumCorrupt_ = 0;
+  dumpExportedCount_ = 0;
+  const uint32_t totalExported = validCount + corruptCount;
+  Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE expected=%lu exported=%lu valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
+                (unsigned long)recs, (unsigned long)totalExported,
                 (unsigned long)validCount, (unsigned long)corruptCount, (unsigned long)totalBytes);
 }
 
@@ -573,6 +716,11 @@ void CanRecorder::dumpStatus() {
   Serial.printf("Export Cursor: Record %lu (Page %lu of %lu)\r\n",
                 (unsigned long)dumpCursor_, (unsigned long)currentPg, (unsigned long)pages);
   Serial.printf("Remaining to Export: %lu records\r\n", (unsigned long)remaining);
+  if (dumpExportedCount_ > 0) {
+    Serial.printf("Exported So Far: %lu / %lu records (valid: %lu, corrupt: %lu)\r\n",
+                  (unsigned long)dumpExportedCount_, (unsigned long)recs,
+                  (unsigned long)dumpCumValid_, (unsigned long)dumpCumCorrupt_);
+  }
   Serial.println("Commands:");
   Serial.println("  DUMP        : Export next page (records 500 at a time)");
   Serial.println("  DUMP NEXT   : Export next page");
@@ -584,6 +732,9 @@ void CanRecorder::dumpStatus() {
 
 void CanRecorder::dumpCancel() {
   dumpCursor_ = 0;
+  dumpCumValid_ = 0;
+  dumpCumCorrupt_ = 0;
+  dumpExportedCount_ = 0;
   Serial.println("[DUMP] Export cursor reset to beginning (Page 1).");
 }
 
@@ -600,19 +751,25 @@ void CanRecorder::dumpPageNumber(uint32_t pageNumber) {
 void CanRecorder::clear() {
   flush();
   auto& sm = StorageManager::instance();
-  if (sm.isMounted() && sm.exists(CAPTURE_PATH)) {
-    sm.remove(CAPTURE_PATH);
+  if (sm.isMounted()) {
+    if (sm.exists(CAPTURE_PATH)) sm.remove(CAPTURE_PATH);
+    if (sm.exists("/temp_cap.bin")) sm.remove("/temp_cap.bin");
+    if (sm.exists("/backup_cap.bin")) sm.remove("/backup_cap.bin");
   }
   sm.nextSessionId();
   sessionId_ = sm.currentSessionId();
   bootCount_ = sm.bootCount();
   flashPreserved_ = false;
+  damagedRecording_ = false;
   recordedFrames_ = 0;
   droppedFrames_ = 0;
   storageFull_ = false;
   writeError_ = false;
   recording_ = true;
   dumpCursor_ = 0;
+  dumpCumValid_ = 0;
+  dumpCumCorrupt_ = 0;
+  dumpExportedCount_ = 0;
   writeHeader();
   DiagLogger::instance().logEvent(DiagLevel::Info, "CAPTURE_CLEAR", "Capture cleared; fresh session started.");
 }

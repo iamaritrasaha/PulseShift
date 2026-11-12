@@ -46,6 +46,7 @@ class CanRecorder {
   enum class State : uint8_t {
     Unmounted,
     WriteFailure,
+    DamagedRecording,
     StorageFull,
     PreservedPriorSession,
     Paused,
@@ -71,6 +72,7 @@ class CanRecorder {
   bool isRecording() const { return recording_; }
   bool isStorageFull() const { return storageFull_; }
   bool isFlashPreserved() const { return flashPreserved_; }
+  bool isDamagedRecording() const { return damagedRecording_; }
   bool isWriteError() const { return writeError_; }
 
   State state() const;
@@ -83,6 +85,9 @@ class CanRecorder {
   uint32_t totalRecords() const;
   uint32_t totalPages() const;
   uint32_t dumpCursor() const { return dumpCursor_; }
+  uint32_t dumpCumValid() const { return dumpCumValid_; }
+  uint32_t dumpCumCorrupt() const { return dumpCumCorrupt_; }
+  uint32_t dumpExportedCount() const { return dumpExportedCount_; }
 
   void dumpPage(uint32_t pageIndex);
   void dumpNext();
@@ -112,8 +117,12 @@ class CanRecorder {
   bool recording_ = true;
   bool storageFull_ = false;
   bool flashPreserved_ = false;
+  bool damagedRecording_ = false;
   bool writeError_ = false;
   uint32_t dumpCursor_ = 0;
+  uint32_t dumpCumValid_ = 0;
+  uint32_t dumpCumCorrupt_ = 0;
+  uint32_t dumpExportedCount_ = 0;
   Stage currentStage_ = STAGE_KEY_ON_ENGINE_OFF;
 
   uint32_t sessionId_ = 0;

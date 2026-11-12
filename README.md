@@ -272,19 +272,30 @@ PulseShift provides a completely self-contained workflow requiring **only the Ar
    - > [!IMPORTANT]
      > Do **not** use `Ctrl+A` in Arduino IDE 2.3.x, as it can fail to select lines outside the visible virtual scrollback window. Always use the dedicated **Copy Output** button.
    - Open Windows **Notepad**, paste the copied text (Ctrl+V), and save the file as `capture.txt` or `capture.csv`.
-   - **Verify Completeness**: Check the bottom of the exported file. It must conclude with:
-     ```text
-     === END PULSESHIFT RAW CAN CAPTURE valid=1450 corrupt=0 totalBytes=29076 ===
-     ```
-     Ensure `corrupt=0` to confirm that all records passed hardware CRC16 verification.
+   - **Verify Completeness and Integrity**: Check the bottom of the exported file. It concludes with:
+     `	ext
+     === END PULSESHIFT RAW CAN CAPTURE expected=1450 exported=1450 valid=1450 corrupt=0 totalBytes=29076 ===
+     `
+     - Confirm exported == expected to verify no pagination pages were skipped during copying.
+     - Confirm corrupt=0 to verify that all records across all pages passed CRC16 integrity verification.
 
 ---
 
-### Storage Safety and Session Preservation
+### Storage Safety Guarantees and Operational Limitations
 
-- **Stop-on-Full Policy**: If internal flash storage reaches capacity (1,000,000 bytes / ~50,000 frames), recording stops safely (`STORAGE_FULL`). Older records are never overwritten, wiped, or truncated in a circular buffer.
-- **Reboot Preservation**: When you finish testing at the motorcycle, power down, and plug the ESP32 into your computer via USB, the firmware automatically detects the existing capture from the prior session (`FLASH_CAPTURE_PRESERVED`). Recording is locked to protect your motorcycle run from accidental overwriting. Type `DUMP` to export the preserved data, or `CLEAR YES` when you are ready to start a fresh capture session.
-- **Power Loss Recovery**: If power is cut mid-record, the firmware automatically detects and truncates any partial record at end-of-file during mount, ensuring all completed records remain 100% intact.
+#### Storage Safety Guarantees
+
+- **Power-Failure-Safe Truncation**: When cleaning up partial trailing bytes at end-of-file, the firmware never deletes the original file before a replacement is committed. It creates /temp_cap.bin, checks all write return codes, verifies file size and header magic, renames the original to /backup_cap.bin, and only commits the replacement when fully verified. If power is interrupted at any step, the original capture is automatically restored from backup on the next boot.
+- **Damaged Capture Preservation**: If a capture file is damaged, has an invalid header, or contains fewer than 76 bytes, the firmware preserves it untouched (DAMAGED_CAPTURE_PRESERVED) and halts recording. It will never overwrite damaged files without an explicit CLEAR YES command.
+- **Stop-on-Full Policy**: If internal flash storage reaches capacity (1,000,000 bytes / ~50,000 frames) or free flash drops below the 32 KB safety headroom, recording stops safely (STORAGE_FULL). Older records are never overwritten or circularly truncated.
+- **Reboot Preservation**: When disconnecting the ESP32 from the motorcycle and plugging it into a PC, the prior session is automatically preserved (FLASH_CAPTURE_PRESERVED). Recording is locked to protect field data until exported or reinitialized with CLEAR YES.
+- **Cumulative Multi-Page Integrity Accounting**: The final export marker tracks cumulative valid and corrupt counts across all pages, and reports expected vs exported record counts so any missing or skipped export page is detected immediately.
+
+#### Operational Limitations
+
+- **Flash Storage Quota**: Capture capacity is limited to 1,000,000 bytes (~50,000 frames, or ~5.5 minutes at 150 frames/second). Once full, new frames are dropped while existing recordings are safely kept.
+- **No Physical Flash Hardware Repair**: The firmware detects and quarantines logical corruption via CRC16 checksums and header validation, but cannot repair physically worn or degraded SPI flash sectors.
+- **Serial Export Throughput**: At 115200 baud, dumping 50,000 frames takes approximately 90-120 seconds. Paginated export (500 records / ~10 KB per page) is provided so users can export and copy manageable blocks without overwhelming Serial Monitor scrollback buffers.
 
 ---
 

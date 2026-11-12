@@ -315,7 +315,10 @@ private:
     const char* stageStr = rec.stageName(rec.currentStage());
     const size_t bytes = rec.currentFileSize();
 
-    if (rec.state() == CanRecorder::State::PreservedPriorSession) {
+    if (rec.state() == CanRecorder::State::DamagedRecording) {
+      Serial.printf("[LIVE] Bus: %s (%lu bps) | Flash: DAMAGED PRESERVED (%lu B) | Type 'CLEAR YES' to reinitialize\r\n",
+                    healthy ? "OK" : "FAULT", (unsigned long)br, (unsigned long)bytes);
+    } else if (rec.state() == CanRecorder::State::PreservedPriorSession) {
       Serial.printf("[LIVE] Bus: %s (%lu bps) | Flash: PRESERVED (%lu B) | Type 'DUMP' to export or 'CLEAR YES' to wipe\r\n",
                     healthy ? "OK" : "FAULT", (unsigned long)br, (unsigned long)bytes);
     } else if (rec.state() == CanRecorder::State::StorageFull) {
@@ -442,7 +445,10 @@ private:
       CanRecorder::instance().setRecording(false);
       Serial.println("[CAPTURE] Recording paused. Frames in memory flushed to flash.");
     } else if (strcasecmp(cmd, "CAPTURE RESUME") == 0 || strcasecmp(cmd, "CAPTURE START") == 0) {
-      if (CanRecorder::instance().isFlashPreserved()) {
+      if (CanRecorder::instance().isDamagedRecording()) {
+        Serial.println("[CAPTURE] Cannot resume: flash contains damaged or incomplete recording.");
+        Serial.println("[CAPTURE] Type 'CLEAR YES' to reinitialize a fresh capture.");
+      } else if (CanRecorder::instance().isFlashPreserved()) {
         Serial.println("[CAPTURE] Cannot resume: flash contains preserved capture from prior session.");
         Serial.println("[CAPTURE] Type 'DUMP' to export, or 'CLEAR YES' to start a fresh capture.");
       } else if (CanRecorder::instance().isStorageFull()) {
@@ -570,8 +576,10 @@ private:
                   sm.isMounted() ? "YES" : "NO", sm.mountFailed() ? "YES" : "NO");
     Serial.printf("Total Space: %lu bytes | Used: %lu bytes | Free: %lu bytes\r\n",
                   (unsigned long)sm.totalBytes(), (unsigned long)sm.usedBytes(), (unsigned long)sm.freeBytes());
-    Serial.printf("Storage Full: %s | Capture Preserved: %s\r\n",
-                  sm.isStorageFull() ? "YES" : "NO", rec.isFlashPreserved() ? "YES" : "NO");
+    Serial.printf("Storage Full: %s | Capture Preserved: %s | Damaged Preserved: %s\r\n",
+                  sm.isStorageFull() ? "YES" : "NO",
+                  rec.isFlashPreserved() ? "YES" : "NO",
+                  rec.isDamagedRecording() ? "YES" : "NO");
     Serial.printf("Diagnostic Log Size: %lu bytes (Max: %lu)\r\n",
                   (unsigned long)sm.size(DiagLogger::LOG_PATH), (unsigned long)DiagLogger::MAX_LOG_SIZE);
     Serial.printf("CAN Capture File Size: %lu bytes (Max: %lu)\r\n",
@@ -621,6 +629,11 @@ private:
       Serial.println("  Observation: LittleFS filesystem mount failed.");
       Serial.println("  Possible Causes: Unformatted flash partition on fresh board, or flash hardware fault.");
       Serial.println("  Recommendation: Type 'CLEAR YES' to format the partition for first-time use.");
+    } else if (rec.isDamagedRecording()) {
+      Serial.println("DIAGNOSTIC: DAMAGED_CAPTURE_PRESERVED");
+      Serial.println("  Observation: Incomplete or damaged capture file is preserved on flash.");
+      Serial.println("  Possible Causes: Unexpected power loss during header write or flash corruption.");
+      Serial.println("  Recommendation: Type 'CLEAR YES' to start a fresh capture.");
     } else if (rec.isFlashPreserved()) {
       Serial.println("DIAGNOSTIC: FLASH_CAPTURE_PRESERVED");
       Serial.println("  Observation: Valid capture data from a prior session is preserved on flash.");

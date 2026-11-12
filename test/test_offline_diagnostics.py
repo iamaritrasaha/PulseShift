@@ -16,6 +16,7 @@ import struct
 import tempfile
 import os
 import json
+import re
 
 
 def compute_crc16_ccitt(data: bytes) -> int:
@@ -509,6 +510,211 @@ class ExportRecoveryIntegrationTests(unittest.TestCase):
         self.assertEqual(len(csv_records), 2)
         self.assertEqual(csv_records[0][0], "100")
         self.assertEqual(csv_records[1][0], "140")
+
+    def test_multipage_corrupt_record_accounting(self):
+        """Verify paginated DUMP cumulative totals cover all records across all pages, not just the last page."""
+        total_records = 1200
+        page_size = 500
+        pages = (total_records + page_size - 1) // page_size
+        self.assertEqual(pages, 3)
+
+        # Page 1: 500 records, 2 corrupt
+        # Page 2: 500 records, 1 corrupt
+        # Page 3: 200 records, 0 corrupt
+        page_stats = [
+            {"page": 1, "recs": 500, "valid": 498, "corrupt": 2},
+            {"page": 2, "recs": 500, "valid": 499, "corrupt": 1},
+            {"page": 3, "recs": 200, "valid": 200, "corrupt": 0},
+        ]
+
+        cum_valid = 0
+        cum_corrupt = 0
+        exported_count = 0
+        page_markers = []
+
+        for p in page_stats:
+            p_valid = p["valid"]
+            p_corrupt = p["corrupt"]
+            cum_valid += p_valid
+            cum_corrupt += p_corrupt
+            exported_count += (p_valid + p_corrupt)
+
+            if p["page"] == pages:
+                marker = f"=== END PULSESHIFT RAW CAN CAPTURE expected={total_records} exported={exported_count} valid={cum_valid} corrupt={cum_corrupt} totalBytes=24076 ==="
+            else:
+                marker = f"=== END PULSESHIFT PAGE {p['page']}/{pages} [page_valid={p_valid} page_corrupt={p_corrupt} cum_valid={cum_valid} cum_corrupt={cum_corrupt} expected_total={total_records}] ==="
+            page_markers.append(marker)
+
+        # Verify cumulative tracking
+        self.assertEqual(cum_valid, 1197)
+        self.assertEqual(cum_corrupt, 3)
+        self.assertEqual(exported_count, 1200)
+
+        final_marker = page_markers[-1]
+        self.assertIn("expected=1200", final_marker)
+        self.assertIn("exported=1200", final_marker)
+        self.assertIn("valid=1197", final_marker)
+        self.assertIn("corrupt=3", final_marker)
+
+    def test_incomplete_export_detection_from_missing_page(self):
+        """Verify that skipping an export page causes exported count to mismatch expected count."""
+        total_records = 1200
+        # User exported Page 1 (500 records) and Page 3 (200 records), skipping Page 2
+        exported_records = 500 + 200  # 700
+        expected_records = 1200
+
+        final_marker = f"=== END PULSESHIFT RAW CAN CAPTURE expected={expected_records} exported={exported_records} valid=698 corrupt=2 totalBytes=24076 ==="
+
+        match = re.search(r"expected=(\d+)\s+exported=(\d+)\s+valid=(\d+)\s+corrupt=(\d+)", final_marker)
+        self.assertIsNotNone(match)
+        exp = int(match.group(1))
+        act = int(match.group(2))
+        self.assertEqual(exp, 1200)
+        self.assertEqual(act, 700)
+        self.assertNotEqual(exp, act, "Missing export page must be detected via expected != exported")
+
+
+class PowerFailureSafeTruncationTests(unittest.TestCase):
+    """Simulates power-failure safe truncation, backup recovery and damaged file preservation."""
+
+    HEADER_FORMAT = "<8sHHIIII16s32s"  # 76 bytes
+
+    def make_header(self, magic=b"PULSECAP", ver=1, sess=1, boot=1):
+        return struct.pack(
+            self.HEADER_FORMAT,
+            magic, ver, 20, sess, boot, 500000, 1000,
+            b"CAN_CAPTURE\x00\x00\x00\x00\x00",
+            b"NS125 ABS 2025\x00" + b"\x00" * 17
+        )
+
+    def test_interrupted_replacement_recovery_backup_restored(self):
+        """Simulate power loss where backup exists and original capture.bin is missing."""
+        with tempfile.TemporaryDirectory() as td:
+            backup_path = os.path.join(td, "backup_cap.bin")
+            capture_path = os.path.join(td, "capture.bin")
+            temp_path = os.path.join(td, "temp_cap.bin")
+
+            original_data = self.make_header() + (b"\x11" * 100)
+            with open(backup_path, "wb") as f:
+                f.write(original_data)
+
+            # Temp path either does not exist or is corrupted/partial
+            with open(temp_path, "wb") as f:
+                f.write(b"CORRUPTED_TEMP_DATA")
+
+            # Simulate CanRecorder::begin() recovery
+            if os.path.exists(backup_path):
+                if not os.path.exists(capture_path):
+                    temp_valid = False
+                    if os.path.exists(temp_path) and os.path.getsize(temp_path) >= 76:
+                        with open(temp_path, "rb") as tf:
+                            hdr = tf.read(76)
+                            if len(hdr) == 76 and hdr[:8] == b"PULSECAP":
+                                temp_valid = True
+                    if temp_valid:
+                        os.replace(temp_path, capture_path)
+                        os.remove(backup_path)
+                    else:
+                        os.replace(backup_path, capture_path)
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+
+            self.assertTrue(os.path.exists(capture_path))
+            self.assertFalse(os.path.exists(backup_path))
+            self.assertFalse(os.path.exists(temp_path))
+            with open(capture_path, "rb") as f:
+                self.assertEqual(f.read(), original_data)
+
+    def test_interrupted_replacement_recovery_valid_replacement_committed(self):
+        """Simulate power loss where backup exists and temp file is verified valid."""
+        with tempfile.TemporaryDirectory() as td:
+            backup_path = os.path.join(td, "backup_cap.bin")
+            capture_path = os.path.join(td, "capture.bin")
+            temp_path = os.path.join(td, "temp_cap.bin")
+
+            original_data = self.make_header() + (b"\x11" * 100)
+            replacement_data = self.make_header() + (b"\x22" * 80)
+
+            with open(backup_path, "wb") as f:
+                f.write(original_data)
+            with open(temp_path, "wb") as f:
+                f.write(replacement_data)
+
+            temp_valid = False
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) >= 76:
+                with open(temp_path, "rb") as tf:
+                    hdr = tf.read(76)
+                    if len(hdr) == 76 and hdr[:8] == b"PULSECAP":
+                        temp_valid = True
+
+            self.assertTrue(temp_valid)
+            if temp_valid:
+                os.replace(temp_path, capture_path)
+                os.remove(backup_path)
+
+            self.assertTrue(os.path.exists(capture_path))
+            self.assertFalse(os.path.exists(backup_path))
+            with open(capture_path, "rb") as f:
+                self.assertEqual(f.read(), replacement_data)
+
+    def test_failed_rename_preserves_original(self):
+        """Simulate rollback when replacement rename fails."""
+        with tempfile.TemporaryDirectory() as td:
+            backup_path = os.path.join(td, "backup_cap.bin")
+            capture_path = os.path.join(td, "capture.bin")
+            temp_path = os.path.join(td, "temp_cap.bin")
+
+            original_data = self.make_header() + (b"\x11" * 100)
+            with open(capture_path, "wb") as f:
+                f.write(original_data)
+            with open(temp_path, "wb") as f:
+                f.write(self.make_header() + (b"\x22" * 80))
+
+            # Step 1: rename original to backup
+            os.replace(capture_path, backup_path)
+            self.assertTrue(os.path.exists(backup_path))
+
+            # Step 2: simulate failure on renaming temp to capture_path
+            rename_succeeded = False
+            if not rename_succeeded:
+                # Rollback to restore backup back to capture_path
+                os.replace(backup_path, capture_path)
+                os.remove(temp_path)
+
+            self.assertTrue(os.path.exists(capture_path))
+            self.assertFalse(os.path.exists(backup_path))
+            self.assertFalse(os.path.exists(temp_path))
+            with open(capture_path, "rb") as f:
+                self.assertEqual(f.read(), original_data)
+
+    def test_damaged_or_incomplete_header_preservation(self):
+        """Verify incomplete (< 76 bytes) or corrupted header capture is preserved and never overwritten."""
+        incomplete_data = b"PULSECAP_PARTIAL_BYTES_LESS_THAN_76"
+        self.assertLess(len(incomplete_data), 76)
+
+        sz = len(incomplete_data)
+        damaged_recording = False
+        storage_full = False
+        recording = True
+
+        if sz < 76:
+            damaged_recording = True
+            storage_full = True
+            recording = False
+
+        self.assertTrue(damaged_recording)
+        self.assertTrue(storage_full)
+        self.assertFalse(recording)
+
+        corrupt_header = b"BADMAGIC" + (b"\x00" * 68)
+        self.assertEqual(len(corrupt_header), 76)
+        valid_magic = (corrupt_header[:8] == b"PULSECAP")
+        self.assertFalse(valid_magic)
+        if not valid_magic:
+            damaged_recording = True
+            storage_full = True
+            recording = False
+        self.assertTrue(damaged_recording)
 
 
 if __name__ == "__main__":

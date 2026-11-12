@@ -130,21 +130,38 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
 
         self.assertIn("DUMP_PAGE_SIZE = 500", content)
         self.assertIn("PreservedPriorSession", content)
+        self.assertIn("DamagedRecording", content)
         self.assertIn("StorageFull", content)
         self.assertIn("WriteFailure", content)
         self.assertIn("RecordingOk", content)
 
     def test_safe_truncation_and_preservation(self):
-        """Verify truncateToSize validates replacement file before removing original."""
+        """Verify truncateToSize validates replacement file, uses backup, and supports rollback."""
         rec_cpp = os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.cpp")
         with open(rec_cpp, "r", encoding="utf-8") as f:
             content = f.read()
 
         # Must check free space before attempting truncate
         self.assertIn("StorageManager::MIN_FREE_BYTES", content)
-        # Must verify replacement before removing original
+        # Must verify replacement before touching original
         self.assertIn("validReplacement", content)
         self.assertIn("TRUNCATE_FAILED", content)
+        # Must use backup path and check all rename return codes
+        self.assertIn("/backup_cap.bin", content)
+        self.assertIn("TRUNCATE_BACKUP_FAILED", content)
+        self.assertIn("TRUNCATE_REPLACE_FAILED", content)
+        self.assertIn("TRUNCATE_RECOVERED", content)
+        # Must preserve damaged capture
+        self.assertIn("DAMAGED_CAPTURE_PRESERVED", content)
+
+    def test_dump_integrity_and_page_accounting(self):
+        """Verify paginated DUMP includes expected/exported record counts and cumulative totals."""
+        rec_cpp = os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.cpp")
+        with open(rec_cpp, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("expected=%lu exported=%lu valid=%lu corrupt=%lu", content)
+        self.assertIn("page_valid=%lu page_corrupt=%lu cum_valid=%lu cum_corrupt=%lu expected_total=%lu", content)
 
     def test_live_streaming_default_disabled(self):
         """Verify raw frame streaming is disabled by default to avoid flooding Serial Monitor."""
