@@ -40,6 +40,7 @@ void DiagLogger::begin(uint32_t bootCount, uint32_t sessionId) {
   sessionId_ = sessionId;
   errorCount_ = 0;
   warnCount_ = 0;
+  logFull_ = false;
   bufferPos_ = 0;
   lastFlushMs_ = millis();
 
@@ -73,6 +74,10 @@ void DiagLogger::logEvent(DiagLevel level, const char* tag, const char* format, 
   if (n > 0) {
     writeBuffered(line, size_t(n));
   }
+
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+  Serial.printf("DIAG,%lu,%s,%s,%s\r\n", (unsigned long)millis(), levelToName(level), tag, msg);
+#endif
 
   // If critical/error, flush immediately
   if (level == DiagLevel::Critical || level == DiagLevel::Error) {
@@ -159,22 +164,20 @@ void DiagLogger::writeBuffered(const char* str, size_t len) {
   }
 }
 
+void DiagLogger::pump(uint32_t now) {
+  if (bufferPos_ > 0 && uint32_t(now - lastFlushMs_) >= 2000) {
+    flush();
+  }
+}
+
 void DiagLogger::checkRotate() {
   auto& sm = StorageManager::instance();
   if (!sm.isMounted()) return;
 
   if (sm.exists(LOG_PATH)) {
     const size_t sz = sm.size(LOG_PATH);
-    if (sz >= MAX_LOG_SIZE) {
-      // Bounded log policy: rename or trim log so flash never gets exhausted
-      sm.remove("/diag_old.log");
-      // LittleFS has no rename in standard FS.h wrapper on all cores, so remove old and recreate
-      sm.remove(LOG_PATH);
-      File f = sm.open(LOG_PATH, "w");
-      if (f) {
-        f.println("[LOG ROTATED: bounded capacity reached; previous log cleared]");
-        f.close();
-      }
+    if (sz >= MAX_LOG_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
+      logFull_ = true;
     }
   }
 }
@@ -184,12 +187,16 @@ void DiagLogger::flush() {
   if (bufferPos_ == 0) return;
 
   auto& sm = StorageManager::instance();
-  if (!sm.isMounted() || sm.isStorageFull()) {
-    bufferPos_ = 0; // Discard buffered bytes if storage unavailable
+  if (!sm.isMounted() || sm.isStorageFull() || logFull_) {
+    bufferPos_ = 0;
     return;
   }
 
   checkRotate();
+  if (logFull_) {
+    bufferPos_ = 0;
+    return;
+  }
 
   File f = sm.open(LOG_PATH, "a");
   if (f) {
@@ -234,6 +241,7 @@ void DiagLogger::dumpToSerial() {
 
 void DiagLogger::clear() {
   bufferPos_ = 0;
+  logFull_ = false;
   auto& sm = StorageManager::instance();
   if (sm.isMounted() && sm.exists(LOG_PATH)) {
     sm.remove(LOG_PATH);

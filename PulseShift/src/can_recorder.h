@@ -60,6 +60,7 @@ class CanRecorder {
   void setRecording(bool enable) { recording_ = enable; }
   bool isRecording() const { return recording_; }
   bool isStorageFull() const { return storageFull_; }
+  bool isFlashPreserved() const { return flashPreserved_; }
 
   uint32_t recordedFrames() const { return recordedFrames_; }
   uint32_t droppedFrames() const { return droppedFrames_; }
@@ -75,6 +76,7 @@ class CanRecorder {
   ~CanRecorder() = default;
 
   void writeHeader();
+  bool truncateToSize(const char* path, size_t newSize);
 
   CanLogRecord ring_[RING_CAPACITY]{};
   uint8_t head_ = 0;
@@ -84,6 +86,7 @@ class CanRecorder {
   bool initialized_ = false;
   bool recording_ = true;
   bool storageFull_ = false;
+  bool flashPreserved_ = false;
   Stage currentStage_ = STAGE_KEY_ON_ENGINE_OFF;
 
   uint32_t sessionId_ = 0;

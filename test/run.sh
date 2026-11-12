@@ -14,6 +14,7 @@ mkdir -p "$BUILD_DIR"
 # Core logic tests (no Arduino stubs needed)
 g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
     -fsanitize=address,undefined -fno-omit-frame-pointer \
+    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_MODE=1 \
     -IPulseShift -IPulseShift/src \
     PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
     PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp \
@@ -32,6 +33,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
 for diagnostics in 0 1; do
   g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
       -fsanitize=address,undefined -fno-omit-frame-pointer \
+      -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_MODE=1 \
       -DPULSESHIFT_OLED_ENABLED=1 -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
       -Itest/stubs -IPulseShift -IPulseShift/src \
       PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
@@ -70,6 +72,7 @@ for mode in 1 4; do
   for diagnostics in 0 1; do
     g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
         -fsanitize=address,undefined -fno-omit-frame-pointer \
+        -DPULSESHIFT_TEST_BUILD \
         -DPULSESHIFT_MODE=$mode -DPULSESHIFT_OLED_ENABLED=1 \
         -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
         -Itest/stubs -IPulseShift -IPulseShift/src \

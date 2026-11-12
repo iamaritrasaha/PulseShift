@@ -1,13 +1,16 @@
 # PulseShift
 
-Customizable ESP32 motorcycle shift-light firmware. Six WS2812B LEDs light up progressively with engine RPM. At 6000 RPM all LEDs flash red as the shift alert. No motorcycle is needed to try it: the default Demo mode runs a full RPM simulation on its own.
+Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware. The firmware boots directly into passive CAN capture mode to acquire, stream, and record motorcycle CAN traffic from the Bajaj Pulsar NS125 ABS (2025), enabling exact identification of the motorcycle's RPM message. Once the vehicle profile is verified, six WS2812B LEDs light up progressively with engine RPM, flashing red at 6000 RPM as the shift alert.
 
 ## What it does
 
-- **Demo mode**: runs an autonomous synthetic RPM sweep from 0 to 6000 RPM and back, showing the shift light in action. No CAN connection needed.
-- **CAN Capture mode**: passively records raw CAN bus frames from the motorcycle to internal flash (LittleFS), for identifying the RPM message.
-- **Vehicle RPM mode**: live shift light driven by decoded motorcycle CAN data (requires a verified vehicle profile, currently unavailable for the NS125).
-- **Automatic error logging**: CAN faults, storage errors, and reset reasons are saved to flash and readable from Serial Monitor.
+- **CAN Capture mode (Default production mode)**: Boots directly into passive listen-only mode at 500000 bps, receiving real motorcycle CAN frames, streaming them live to a connected PC over USB, and recording frames with CRC16 checksums to internal flash (LittleFS).
+- **Vehicle RPM mode**: Live shift light driven by decoded motorcycle CAN data (requires a verified vehicle profile, activated once NS125 CAN traffic is analyzed).
+- **Intelligent diagnostics & error logging**: Real-time diagnostic events (CAN overflows, bus errors, storage full alerts, reset reasons) are streamed over USB and safely recorded to flash without circular wipes.
+- **Understandable LED hardware status**: In CAN capture mode, the six LEDs display controller health, frame arrival heartbeat, active recording stage (1, 2, or 3), and flash storage status.
+
+> [!IMPORTANT]
+> **Production Integrity Policy**: The production firmware contains no simulation, artificial RPM generation, or synthetic ECU traffic. If no motorcycle CAN frames arrive, the system truthfully reports `NO_CAN_TRAFFIC`. Mock CAN frames are strictly restricted to isolated host automated unit tests.
 
 ## Parts
 
@@ -225,48 +228,134 @@ PulseShift automatically logs errors to internal flash (LittleFS) with no action
 
 Logs survive power-off and ESP32 restarts. They are never erased on reconnection.
 
-## Serial Monitor commands (115200 baud)
+## Real Motorcycle CAN Acquisition Workflow
 
-Open Serial Monitor in Arduino IDE (Ctrl+Shift+M), set baud to **115200**.
+During real motorcycle investigation on the Bajaj Pulsar NS125 ABS, keep a Windows PC connected to the ESP32 via USB.
+
+### 1. Standalone PC Capture Tool (`tools/pulseshift_capture.py`)
+
+Run the dedicated PC capture utility to record incoming CAN frames directly to timestamped CSV files and log diagnostics:
+
+```bash
+uv run --with pyserial python tools/pulseshift_capture.py --port COM5
+```
+
+Or using standard Python:
+
+```bash
+pip install pyserial
+python tools/pulseshift_capture.py --port COM5
+```
+
+> [!IMPORTANT]
+> **COM Port Exclusivity**: Close the Arduino IDE Serial Monitor and Serial Plotter before running `pulseshift_capture.py`. Windows allows only one application to open a COM port at a time.
+
+### 2. Three-Stage Recording Protocol
+
+PulseShift tags every captured CAN frame with a stage identifier:
+
+1. **STAGE 1 (Key ON, Engine OFF)**: Baseline network traffic. Captures ABS, dashboard, and ECU initialization broadcasts while engine RPM is strictly 0.
+2. **STAGE 2 (Engine Idling)**: Steady idle speed (~1300-1500 RPM). Identifies cyclic engine telemetry frames.
+3. **STAGE 3 (Gentle RPM Sweeps)**: Throttle sweeps from idle to 4000-6000 RPM. Identifies data bytes that correlate monotonically with engine speed.
+
+**Switching Stages:**
+- **Physical Button**: Short-press the ESP32 BOOT button (GPIO0) to advance to the next stage.
+- **PC Keyboard**: Press `1`, `2`, or `3` and Enter in the `pulseshift_capture.py` console.
+
+### 3. LED Hardware Status in CAN Capture Mode
+
+When operating in CAN Capture mode, the six LEDs provide immediate visual hardware feedback:
+
+| LED | Status / Condition | Visual Indication |
+|---|---|---|
+| **LED 0** | Waiting for CAN Traffic | Gentle Yellow breathing pulse (0.5 Hz) |
+| **LED 0** | Active CAN Reception | Solid Cyan/Green |
+| **LED 0** | Fatal Controller Failure | Flashing Red alert (10 Hz) |
+| **LED 1** | CAN Frame Arrival | Crisp Green heartbeat pulse on every packet |
+| **LED 2** | Stage 1 (Key ON, Engine OFF) | Amber (LED 2 lit, LEDs 3-4 dark) |
+| **LED 3** | Stage 2 (Engine Idling) | Amber (LEDs 2-3 lit, LED 4 dark) |
+| **LED 4** | Stage 3 (Gentle RPM Sweeps) | Amber (LEDs 2-4 lit) |
+| **LED 5** | LittleFS Storage Error | Flashing Magenta alert |
+| **LED 5** | Storage Full / Preserved | Flashing Amber warning |
+| **LED 5** | Storage Normal | Dark / Off |
+| **All 6** | Stage Transition Feedback | 200ms white confirmation flash |
+
+---
+
+## PC USB Connection Safety and Power Isolation
+
+When testing on an operating motorcycle with a PC connected via USB:
+
+1. **Prevent Ground Loops**: Use a **laptop running on its internal battery** (unplugged from AC mains). Connecting an AC-mains-earthed desktop computer to a vehicle 12V battery system creates hazardous ground loop currents through the USB shield that can destroy the PC motherboard, ESP32, or motorcycle ECU.
+2. **Isolate 5V Power Rails**:
+   - The ESP32 and SN65HVD230 transceiver are powered directly by the PC USB 5V rail.
+   - The WS2812B LED strip is powered by the vehicle 5V buck converter (connected to the strip +5V terminal).
+   - **DO NOT connect the vehicle 5V buck converter output to the ESP32 VIN pin while USB is connected to a PC.**
+   - All ground lines (ESP32 GND, PC USB ground, LED strip GND, buck converter GND, motorcycle chassis GND) must be securely bonded together.
+
+---
+
+## Serial Communication & Commands (115200 baud)
+
+PulseShift streams real-time machine-readable frames over USB Serial alongside human-readable diagnostics.
+
+### Machine-Readable Streaming Format
+
+```text
+FRAME,timestamp_ms,stage,can_id,extended,rtr,dlc,payload_hex
+```
+
+Example: `FRAME,10452,2,00000123,0,0,8,0102030405060708`
+
+- `timestamp_ms`: Milliseconds since ESP32 boot.
+- `stage`: 1 (KeyOn), 2 (Idle), 3 (GentleRPM).
+- `can_id`: Standard 3-digit or Extended 8-digit hex arbitration ID.
+- `extended`: 0 for 11-bit standard ID, 1 for 29-bit extended ID.
+- `rtr`: 0 for data frame, 1 for remote transmission request.
+- `dlc`: Data length code (0 to 8).
+- `payload_hex`: Hexadecimal payload string.
+
+Periodic telemetry lines (`STAT,timestamp,rx_total,accepted,missed,overrun,bus_errors,serial_dropped,rec,rec_dropped`), stage events (`STAGE,...`), and diagnostic alerts (`DIAG,timestamp,level,tag,message`) are streamed continuously.
+
+### Serial Commands
 
 | Command | Description |
 |---|---|
 | `HELP` | Show available commands |
-| `STATUS` | Current system state, storage, CAN controller stats |
-| `LOGS` | Display saved error log |
-| `DUMP` | Export raw CAN capture as CSV (copy from Serial Monitor) |
+| `STATUS` | Current system state, storage usage, and TWAI controller counters |
+| `LOGS` | Dump saved persistent diagnostic log from flash |
+| `DUMP` | Export raw recorded CAN frames with CRC16 checksums |
 | `STAGE <1\|2\|3>` | Set field capture stage (1=KeyOn, 2=Idle, 3=GentleRPM) |
-| `CLEAR YES` | Erase stored logs after explicit confirmation |
+| `CLEAR` | Request instructions for erasing stored logs |
+| `CLEAR YES` | Confirm erase of stored diagnostic logs and CAN capture file |
 
-Demo-mode extra commands:
-
-| Command | Description |
-|---|---|
-| `rpm <value>` | Set synthetic RPM (0-20000) |
-| `demo start` | Resume automated sweep |
-| `demo stop` | Pause synthetic frames |
-| `profile <classic\|racing\|minimal>` | Change LED style |
-| `brightness <0-255>` | Adjust brightness |
+---
 
 ## Configuration (`UserConfig.h`)
 
 Edit `PulseShift/UserConfig.h` before uploading:
 
-| Setting | Default | Notes |
+| Setting | Default | Description |
 |---|---|---|
-| `PULSESHIFT_OPERATING_MODE` | `DEMO` | Change to `CAN_CAPTURE` for motorcycle recording |
-| `PULSESHIFT_LED_DATA_GPIO` | `27` | LED strip DIN via 330-470 ohm resistor |
-| `PULSESHIFT_LED_COUNT` | `6` | Number of LEDs (1-32) |
-| `PULSESHIFT_LED_BRIGHTNESS` | `40` | 0-255 (not a hardware current limit) |
-| `PULSESHIFT_DEMO_SHIFT_RPM` | `6000` | RPM where shift alert triggers across all 6 LEDs |
-| `PULSESHIFT_CAN_BITRATE` | `0` | Set to bitrate (e.g. 500000) for CAN modes |
+| `PULSESHIFT_OPERATING_MODE` | `CAN_CAPTURE` | Production mode: passive listen-only CAN acquisition |
+| `PULSESHIFT_CAN_BITRATE` | `500000` | Manual CAN bitrate in bits/s (500000 bps default) |
+| `PULSESHIFT_LED_BRIGHTNESS` | `255` | Master LED brightness (0-255). Full scale 255 default |
+| `PULSESHIFT_LED_DATA_GPIO` | `27` | ESP32 GPIO connected to WS2812B DIN (via 330-470 ohm resistor) |
+| `PULSESHIFT_LED_COUNT` | `6` | Number of addressable LEDs (1-32) |
+| `PULSESHIFT_CAN_RX_GPIO` | `16` | ESP32 GPIO connected to SN65HVD230 Pin 4 (RXD) |
+| `PULSESHIFT_CAN_TX_GPIO` | `17` | Reserved; disconnected from transceiver (air gap) |
+| `PULSESHIFT_BOOT_BUTTON_GPIO`| `0` | Physical button for stage cycling |
+| `PULSESHIFT_SERIAL_BAUD` | `115200` | USB Serial baud rate |
+
+> [!NOTE]
+> **Power Budget Note**: Six WS2812B LEDs at full scale white (brightness 255) draw ~360mA total. Combined with the ESP32 (~90-120mA) and transceiver (~15mA), worst-case power demand is ~465mA (peak ~600mA) on the 5V rail. A regulated 5V power supply rated for at least 1A is recommended.
 
 ## What still requires real motorcycle testing
 
-- **The NS125 RPM CAN ID and decoding formula are unknown.** No CAN ID has been confirmed from the motorcycle's bus. The firmware deliberately shows "unavailable" rather than guessing.
-- **CAN bitrate is unverified.** The bus may operate at 125, 250, or 500 kbps. CAN Capture mode will only work after setting the correct bitrate in `UserConfig.h`.
-- **Hardware qualification**: SN65HVD230 wiring, transceiver RS pin mode, termination removal, and automotive protection must be verified by a qualified person before connecting to the vehicle.
-- **Shift RPM thresholds**: The 6000 RPM shift point is a placeholder. Real calibration depends on the engine and rider preference.
+- **The NS125 RPM CAN ID and decoding formula are unknown.** No CAN ID has been confirmed from the motorcycle's bus. The firmware deliberately shows "unavailable" in Vehicle RPM mode rather than guessing.
+- **CAN bitrate verification**: 500000 bps is the default standard for modern OBD-II and Euro-5 motorcycle buses. If no frames appear, try 250000 or 125000 bps in `UserConfig.h`.
+- **Hardware qualification**: SN65HVD230 wiring, transceiver RS pin mode, termination removal, and automotive protection must be verified before connecting to the vehicle.
+- **Shift RPM thresholds**: The 6000 RPM shift point is a baseline. Real calibration depends on the rider and engine power curve.
 
 ## Safety notes
 

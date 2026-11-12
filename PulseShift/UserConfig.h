@@ -41,10 +41,12 @@
 #ifndef PULSESHIFT_LED_COUNT
 #define PULSESHIFT_LED_COUNT 6
 #endif
-// DEFAULT: 40/255. OPTIONAL: 0..255 brightness; 0 is dark, 255 is full scale.
-// Software brightness is not a hardware current limiter.
+// DEFAULT: 255 (maximum brightness). OPTIONAL: 0..255 brightness; 0 is dark, 255 is full scale.
+// Six WS2812B LEDs at full white draw ~360mA total. Combined with the ESP32 (~90-120mA) and
+// transceiver (~15mA), worst-case power demand is ~465mA (peak ~600mA) on the 5V rail.
+// A regulated 5V power supply rated for at least 1A is recommended.
 #ifndef PULSESHIFT_LED_BRIGHTNESS
-#define PULSESHIFT_LED_BRIGHTNESS 40
+#define PULSESHIFT_LED_BRIGHTNESS 255
 #endif
 
 // Symbolic style choices: green/yellow/orange/red, vivid racing colors,

@@ -2,7 +2,7 @@
 #include "simulated_ecu.h"
 #include "config.h"
 
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
 RpmMapping demonstrationMapping() {
   RpmMapping m;
   m.enabled = true;

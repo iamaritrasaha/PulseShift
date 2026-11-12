@@ -30,6 +30,7 @@ class StorageManager {
   File open(const char* path, const char* mode);
   bool exists(const char* path);
   bool remove(const char* path);
+  bool rename(const char* from, const char* to);
   size_t size(const char* path);
 
   // NVS metadata management

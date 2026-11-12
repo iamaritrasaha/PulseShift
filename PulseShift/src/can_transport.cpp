@@ -17,21 +17,21 @@ bool CanTransport::begin() {
     return false;
   }
 
-#if PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST
-  constexpr auto mode = TWAI_MODE_LISTEN_ONLY;
-#else
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   constexpr auto mode = TWAI_MODE_NO_ACK;
+#else
+  constexpr auto mode = TWAI_MODE_LISTEN_ONLY;
 #endif
 
   twai_general_config_t general = TWAI_GENERAL_CONFIG_DEFAULT(
       gpio_num_t(config::txPin), gpio_num_t(config::rxPin), mode);
   general.tx_queue_len = 0;
-  general.rx_queue_len = 64;
+  general.rx_queue_len = 128;
   general.alerts_enabled = TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF |
                            TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN |
                            TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN;
 
-#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   general.alerts_enabled |= TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_TX_FAILED | TWAI_ALERT_TX_IDLE;
 #endif
 
@@ -51,7 +51,7 @@ bool CanTransport::begin() {
   auto err = twai_driver_install(&general, &timing, &filter);
   installed_ = (err == ESP_OK);
 
-#if PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST)
   // Arduino 2.0.17's prebuilt SDK lacks LISTEN_ONLY_DOM workaround. Disconnect
   // the TX pad while the controller is still STOPPED. Keep it disconnected for
   // the entire passive capture; no code here ever re-enables that output.
@@ -140,17 +140,31 @@ void CanTransport::poll(uint32_t now) {
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) { fault("alert read failed"); return; }
   alertsSeen_ |= alerts;
 
-  // True bus-off or RX overflow state is fatal in listen-only mode
-  if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
-    if (alerts & (TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
-      rxOverflowAlerts_.record();
-      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_OVERFLOW", "rx queue full or FIFO overrun");
-    }
-    fault("bus-off or RX overflow; inspect counters");
+  // Fatal hardware bus-off state
+  if (alerts & TWAI_ALERT_BUS_OFF) {
+    fault("bus-off detected");
     return;
   }
 
-#if PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST
+  // Non-fatal RX overflow: record and rate-limit warnings without halting
+  if (alerts & (TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN)) {
+    rxOverflowAlerts_.record();
+  }
+  const auto overflowWarnings = rxOverflowAlerts_.take(now, 1000);
+  if (overflowWarnings) {
+    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_RX_OVERFLOW",
+                                   "rx queue full or FIFO overrun count=%lu total=%lu",
+                                   (unsigned long)overflowWarnings,
+                                   (unsigned long)rxOverflowAlerts_.total());
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    if (log_) log_->status("CAN WARNING rxOverflowAlerts=%lu total=%lu",
+                           (unsigned long)overflowWarnings, (unsigned long)rxOverflowAlerts_.total());
+    else Serial.printf("CAN WARNING: RX overflow alerts=%lu total=%lu\r\n",
+                       (unsigned long)overflowWarnings, (unsigned long)rxOverflowAlerts_.total());
+#endif
+  }
+
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST)
   if (alerts & TWAI_ALERT_BUS_ERROR) busErrorAlerts_.record();
   const auto warnings = busErrorAlerts_.take(now, 1000);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -173,7 +187,7 @@ void CanTransport::poll(uint32_t now) {
   }
 #endif
 
-#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   if (alerts & TWAI_ALERT_TX_FAILED) { fault("TX failed"); return; }
   if (alerts & TWAI_ALERT_TX_SUCCESS) {
     if (!tracker_.onTxSuccess()) { fault("unexpected TX success"); return; }
@@ -192,23 +206,27 @@ void CanTransport::poll(uint32_t now) {
   if (tracker_.timedOut(now, config::txTimeoutMs)) fault(tracker_.txSeen() ? "RX timeout" : "TX completion timeout");
 #else
   twai_status_info_t status{};
-  if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0 ||
-      status.rx_missed_count != 0 || status.rx_overrun_count != 0) {
-    lastBusErrorCount_ = status.bus_error_count;
-    lastMissedCount_ = status.rx_missed_count;
-    lastOverrunCount_ = status.rx_overrun_count;
-    if (status.rx_missed_count != 0) {
-      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_MISSED",
-                                     "frames dropped by driver queue missed=%lu",
-                                     (unsigned long)status.rx_missed_count);
-    }
-    if (status.rx_overrun_count != 0) {
-      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_OVERRUN",
-                                     "hardware FIFO overrun count=%lu",
-                                     (unsigned long)status.rx_overrun_count);
-    }
-    fault("controller status failure");
+  if (twai_get_status_info(&status) != ESP_OK) {
+    fault("status read failed");
     return;
+  }
+  if (status.state == TWAI_STATE_BUS_OFF) {
+    fault("controller bus-off state");
+    return;
+  }
+
+  // Monitor dropped frames and report non-fatal overflows
+  if (status.rx_missed_count != lastMissedCount_ || status.rx_overrun_count != lastOverrunCount_) {
+    const uint32_t newMissed = (status.rx_missed_count >= lastMissedCount_) ? (status.rx_missed_count - lastMissedCount_) : status.rx_missed_count;
+    const uint32_t newOverrun = (status.rx_overrun_count >= lastOverrunCount_) ? (status.rx_overrun_count - lastOverrunCount_) : status.rx_overrun_count;
+    if (newMissed > 0 || newOverrun > 0) {
+      DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_RX_OVERFLOW",
+                                     "rx overflow missed=%lu overrun=%lu (new missed=%lu overrun=%lu)",
+                                     (unsigned long)status.rx_missed_count,
+                                     (unsigned long)status.rx_overrun_count,
+                                     (unsigned long)newMissed,
+                                     (unsigned long)newOverrun);
+    }
   }
 
   lastBusErrorCount_ = status.bus_error_count;
@@ -222,7 +240,13 @@ bool CanTransport::receive(CanFrame& f, uint32_t now) {
   twai_message_t msg{};
   auto err = twai_receive(&msg, 0);
   if (err == ESP_ERR_TIMEOUT) return false;
-  if (err != ESP_OK) { fault("RX driver failure"); return false; }
+  if (err != ESP_OK) {
+    twai_status_info_t s{};
+    if (twai_get_status_info(&s) == ESP_OK && s.state == TWAI_STATE_BUS_OFF) {
+      fault("RX driver bus-off");
+    }
+    return false;
+  }
 
   f = {};
   f.id = msg.identifier;
@@ -242,14 +266,14 @@ bool CanTransport::receive(CanFrame& f, uint32_t now) {
   ++rx_;
   if (validEnvelope(f)) ++acceptedRx_;
 
-#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   if (!tracker_.onReceive(f)) { fault("RX payload/sequence mismatch"); return false; }
 #endif
 
   return true;
 }
 
-#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
 bool CanTransport::sendTest(const CanFrame& f, uint32_t now) {
   if (!canSend() || !validEnvelope(f) || f.remote) return false;
   twai_message_t msg{};

@@ -32,10 +32,10 @@
 #include "src/button_handler.h"
 #include "src/serial_protocol.h"
 
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
 #include "src/simulated_ecu.h"
 #endif
-#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
 #include "src/can_transport.h"
 #endif
 
@@ -62,12 +62,21 @@ public:
     diag.logStorageState(fsOk, sm.usedBytes(), sm.freeBytes(), sm.isStorageFull());
 
     // Initialize raw CAN recorder
-#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
     const uint32_t bitrate = receiveBitrate();
 #else
     const uint32_t bitrate = 0;
 #endif
     CanRecorder::instance().begin(sm.currentSessionId(), sm.bootCount(), bitrate, config::modeName, config::vehicle);
+
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.printf("META,baud=%lu,bitrate=%lu,mode=%s,vehicle=%s,session=%lu,boot=%lu\r\n",
+                  (unsigned long)config::serialBaud,
+                  (unsigned long)bitrate,
+                  config::modeName, config::vehicle,
+                  (unsigned long)sm.currentSessionId(),
+                  (unsigned long)sm.bootCount());
+#endif
 
     // Initialize BOOT button handler (GPIO0)
     button_.begin();
@@ -95,7 +104,7 @@ public:
 #endif
 #endif
 
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.println("SYNTHETIC FRAMES ONLY: does not validate TWAI or physical CAN");
     Serial.println("Type 'help' in Serial Monitor for interactive demo and diagnostic controls.");
@@ -123,14 +132,14 @@ public:
 #endif
 
     // 3. Poll hardware transport
-#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
     transport_.poll(now);
 #endif
 
     // 4. Ingest incoming CAN frames
     CanFrame f;
     for (unsigned i = 0; i < 32; ++i) {
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
       const bool got = transport_.receive(now, f);
 #else
       const bool got = transport_.receive(f, now);
@@ -144,16 +153,19 @@ public:
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
       CanRecorder::instance().push(f);
 #endif
+
+      // Real-time USB Serial streaming for connected PC capture
+      streamFrameSerial(f, static_cast<uint8_t>(CanRecorder::instance().currentStage()));
     }
 
-#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
     if (transport_.canSend() && uint32_t(now - lastSent_) >= config::framePeriodMs) {
       if (transport_.sendTest(demonstrationFrame(now, sequence_), now)) ++sequence_;
       lastSent_ = now;
     }
 #endif
 
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
     constexpr bool healthy = true, configured = true;
 #else
     const bool healthy = transport_.healthy();
@@ -164,8 +176,9 @@ public:
       ;
 #endif
 
-    // 5. Service storage queues
+    // 5. Service storage queues and periodic diagnostic flushes
     CanRecorder::instance().pump(now);
+    DiagLogger::instance().pump(now);
 
     // 6. Evaluate stale timeouts and refresh UI
     rpm_.expire(now, rpm_.timeoutMs(config::staleMs), config::staleMs);
@@ -192,21 +205,81 @@ public:
                     dashboard_.shiftLight().isAlertActive(), !dashboard_.shiftLight().isStartupComplete(),
                     (unsigned long)logger_.dropped());
 #endif
-#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
       transport_.diagnostics();
       if (!healthy) finalReportPrinted_ = true;
+#endif
+    }
+
+    // 8. Structured machine-readable telemetry every 5 seconds
+    if (uint32_t(now - lastStat_) >= 5000) {
+      lastStat_ = now;
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
+      Serial.printf("STAT,%lu,0,0,0,0,0,%lu,%lu,%lu\r\n",
+                    (unsigned long)now,
+                    (unsigned long)serialDroppedFrames_,
+                    (unsigned long)CanRecorder::instance().recordedFrames(),
+                    (unsigned long)CanRecorder::instance().droppedFrames());
+#else
+      Serial.printf("STAT,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\r\n",
+                    (unsigned long)now,
+                    (unsigned long)transport_.totalRx(),
+                    (unsigned long)transport_.acceptedFrames(),
+                    (unsigned long)transport_.missedFrames(),
+                    (unsigned long)transport_.overrunFrames(),
+                    (unsigned long)transport_.busErrors(),
+                    (unsigned long)serialDroppedFrames_,
+                    (unsigned long)CanRecorder::instance().recordedFrames(),
+                    (unsigned long)CanRecorder::instance().droppedFrames());
 #endif
     }
 #endif
   }
 
 private:
+  void streamFrameSerial(const CanFrame& f, uint8_t stage) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    if (Serial.availableForWrite() < 50) {
+      ++serialDroppedFrames_;
+      if (serialDroppedFrames_ == 1 || (serialDroppedFrames_ % 100) == 0) {
+        DiagLogger::instance().logEvent(DiagLevel::Warn, "SERIAL_BOTTLENECK",
+                                       "Serial buffer congested; dropped=%lu",
+                                       (unsigned long)serialDroppedFrames_);
+      }
+      return;
+    }
+
+    char hexData[17] = "";
+    const uint8_t len = (f.dlc <= 8) ? f.dlc : 8;
+    for (uint8_t i = 0; i < len; ++i) {
+      char byteStr[3];
+      snprintf(byteStr, sizeof(byteStr), "%02X", f.data[i]);
+      strcat(hexData, byteStr);
+    }
+
+    Serial.printf("FRAME,%lu,%u,%0*lX,%d,%d,%u,%s\r\n",
+                  (unsigned long)f.timestampMs,
+                  stage,
+                  f.extended ? 8 : 3,
+                  (unsigned long)f.id,
+                  f.extended ? 1 : 0,
+                  f.remote ? 1 : 0,
+                  f.dlc,
+                  hexData);
+#else
+    (void)f; (void)stage;
+#endif
+  }
+
   void handleButton(uint32_t now) {
     const auto evt = button_.poll(now);
     if (evt == ButtonHandler::Event::ShortPress) {
       CanRecorder::instance().nextStage();
       dashboard_.triggerButtonFeedback(now);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
+      Serial.printf("STAGE,%lu,%u,%s\r\n", (unsigned long)now,
+                    (unsigned)CanRecorder::instance().currentStage(),
+                    CanRecorder::instance().stageName(CanRecorder::instance().currentStage()));
       Serial.printf("[BUTTON] Stage changed to %u (%s)\r\n",
                     (unsigned)CanRecorder::instance().currentStage(),
                     CanRecorder::instance().stageName(CanRecorder::instance().currentStage()));
@@ -226,12 +299,14 @@ private:
     return RpmState(selectedVehicleProfile());
 #elif PULSESHIFT_MODE == PULSESHIFT_CAPTURE
     return RpmState(RpmMapping{});
-#else
+#elif defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
     return RpmState(demonstrationMapping());
+#else
+    return RpmState(RpmMapping{});
 #endif
   }
 
-#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
   static uint32_t receiveBitrate() {
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     const auto& p = selectedVehicleProfile();
@@ -286,13 +361,15 @@ private:
       if (s >= 1 && s <= 3) {
         CanRecorder::instance().setStage(static_cast<CanRecorder::Stage>(s));
         dashboard_.triggerButtonFeedback(millis());
+        Serial.printf("STAGE,%lu,%d,%s\r\n", (unsigned long)millis(), s,
+                      CanRecorder::instance().stageName(CanRecorder::instance().currentStage()));
         Serial.printf("[STAGE] Set to %d (%s)\r\n", s,
                       CanRecorder::instance().stageName(CanRecorder::instance().currentStage()));
       } else {
         Serial.println("[ERROR] Stage must be 1 (KeyOn/EngineOff), 2 (Idle), or 3 (GentleRPM)");
       }
     }
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
     else if (strcmp(cmd, "demo start") == 0) {
       transport_.setManualRpm(-1);
       transport_.setPaused(false);
@@ -346,7 +423,7 @@ private:
     Serial.println("  STAGE <1|2|3>   : Set field capture stage (1=KeyOn, 2=Idle, 3=GentleRPM)");
     Serial.println("  CLEAR           : Request erasing stored diagnostic logs and CAN capture");
     Serial.println("  CLEAR YES       : Confirm erase of stored logs");
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
     Serial.println("  demo start      : Resume automated synthetic sweep");
     Serial.println("  demo stop       : Stop synthetic frame reception");
     Serial.println("  rpm <val>       : Inject synthetic RPM (0..20000)");
@@ -362,7 +439,14 @@ private:
     const uint32_t now = millis();
 
     Serial.println("=== PULSESHIFT SYSTEM STATUS ===");
-    Serial.printf("Firmware: PulseShift v0.3.1 (Arduino ESP32 2.0.17 / ESP-IDF 4.4.7)\r\n");
+#if defined(ESP_ARDUINO_VERSION_MAJOR)
+    Serial.printf("Firmware: PulseShift (Arduino ESP32 core %d.%d.%d / ESP-IDF %s / built %s %s)\r\n",
+                  ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR, ESP_ARDUINO_VERSION_PATCH,
+                  ESP.getSdkVersion(), __DATE__, __TIME__);
+#else
+    Serial.printf("Firmware: PulseShift (ESP-IDF %s / built %s %s)\r\n",
+                  ESP.getSdkVersion(), __DATE__, __TIME__);
+#endif
     Serial.printf("Operating Mode: %s\r\n", config::modeName);
     Serial.printf("Target Vehicle: %s\r\n", config::vehicle);
     Serial.printf("Transceiver: %s (Passive listen-only; TX pin %d disconnected/pulled-up)\r\n",
@@ -375,7 +459,8 @@ private:
                   sm.isMounted() ? "YES" : "NO", sm.mountFailed() ? "YES" : "NO");
     Serial.printf("Total Space: %lu bytes | Used: %lu bytes | Free: %lu bytes\r\n",
                   (unsigned long)sm.totalBytes(), (unsigned long)sm.usedBytes(), (unsigned long)sm.freeBytes());
-    Serial.printf("Storage Full: %s\r\n", sm.isStorageFull() ? "YES" : "NO");
+    Serial.printf("Storage Full: %s | Capture Preserved: %s\r\n",
+                  sm.isStorageFull() ? "YES" : "NO", rec.isFlashPreserved() ? "YES" : "NO");
     Serial.printf("Diagnostic Log Size: %lu bytes (Max: %lu)\r\n",
                   (unsigned long)sm.size(DiagLogger::LOG_PATH), (unsigned long)DiagLogger::MAX_LOG_SIZE);
     Serial.printf("CAN Capture File Size: %lu bytes (Max: %lu)\r\n",
@@ -385,10 +470,11 @@ private:
     Serial.printf("Session ID: %lu\r\n", (unsigned long)sm.currentSessionId());
     Serial.printf("Recording Active: %s\r\n", rec.isRecording() ? "YES" : "PAUSED");
     Serial.printf("Current Stage: %u (%s)\r\n", (unsigned)rec.currentStage(), rec.stageName(rec.currentStage()));
-    Serial.printf("Frames Recorded: %lu | In-Memory Dropped: %lu\r\n",
-                  (unsigned long)rec.recordedFrames(), (unsigned long)rec.droppedFrames());
+    Serial.printf("Frames Recorded: %lu | In-Memory Dropped: %lu | Serial Dropped: %lu\r\n",
+                  (unsigned long)rec.recordedFrames(), (unsigned long)rec.droppedFrames(),
+                  (unsigned long)serialDroppedFrames_);
 
-#if PULSESHIFT_MODE != PULSESHIFT_REPLAY
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
     Serial.println("\n--- CAN Hardware Controller ---");
     Serial.printf("Configured Bitrate: %lu bps\r\n", (unsigned long)transport_.bitrate());
     Serial.printf("Controller Healthy: %s\r\n", transport_.healthy() ? "YES" : "HALTED");
@@ -422,7 +508,7 @@ private:
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
   SerialProtocol serialProto_;
 #endif
-#if PULSESHIFT_MODE == PULSESHIFT_REPLAY
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
   ReplayTransport transport_;
 #else
   CanTransport transport_ {
@@ -434,8 +520,10 @@ private:
   };
 #endif
   uint32_t lastReport_ = 0;
+  uint32_t lastStat_ = 0;
+  uint32_t serialDroppedFrames_ = 0;
   bool finalReportPrinted_ = false;
-#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   uint32_t lastSent_ = 0, sequence_ = 0;
 #endif
 };

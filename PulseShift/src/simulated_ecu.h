@@ -3,6 +3,7 @@
 #include "can_frame.h"
 #include "rpm_decoder.h"
 
+#if defined(PULSESHIFT_TEST_BUILD)
 // Demonstration protocol only: ID 555, exact DLC 8, RPM LE16, sequence LE32,
 // bytes 6..7 = A5 5A. Neither the ID nor the encoding describes the NS125.
 RpmMapping demonstrationMapping();
@@ -21,3 +22,4 @@ class ReplayTransport {
   int32_t manualRpm_ = -1;  // -1: automated cyclical pattern; >=0: manual synthetic RPM
   bool paused_ = false;
 };
+#endif

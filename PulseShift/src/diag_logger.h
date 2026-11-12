@@ -34,6 +34,7 @@ class DiagLogger {
   void logCanResume(uint32_t) {}
   void logStageChange(uint8_t, const char*) {}
   void logStorageState(bool, size_t, size_t, bool) {}
+  void pump(uint32_t) {}
   void flush() {}
   void dumpToSerial() {}
   void clear() {}
@@ -48,6 +49,7 @@ class DiagLogger {
   void logCanResume(uint32_t totalRx);
   void logStageChange(uint8_t stage, const char* stageName);
   void logStorageState(bool mounted, size_t used, size_t freeBytes, bool full);
+  void pump(uint32_t now);
   void flush();
   void dumpToSerial();
   void clear();
@@ -55,6 +57,7 @@ class DiagLogger {
 
   uint32_t errorCount() const { return errorCount_; }
   uint32_t warnCount() const { return warnCount_; }
+  bool isLogFull() const { return logFull_; }
   const char* resetReasonString() const { return resetReasonStr_; }
 
  private:
@@ -68,6 +71,7 @@ class DiagLogger {
   uint32_t sessionId_ = 0;
   uint32_t errorCount_ = 0;
   uint32_t warnCount_ = 0;
+  bool logFull_ = false;
   char resetReasonStr_[32]{"UNKNOWN"};
 
   char writeBuffer_[BUFFER_SIZE]{};

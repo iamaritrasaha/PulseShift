@@ -28,7 +28,7 @@ class CanTransport {
   uint32_t busErrorAlerts() const { return busErrorAlerts_.total(); }
   uint32_t rxOverflowAlerts() const { return rxOverflowAlerts_.total(); }
 
-#if PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   bool sendTest(const CanFrame& frame, uint32_t now);
   bool canSend() const { return healthy() && !tracker_.pending(); }
 #endif

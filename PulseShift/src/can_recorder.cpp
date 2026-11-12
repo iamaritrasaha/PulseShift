@@ -38,6 +38,7 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
   recordedFrames_ = 0;
   droppedFrames_ = 0;
   storageFull_ = false;
+  flashPreserved_ = false;
   recording_ = true;
   lastFlushMs_ = millis();
 
@@ -46,15 +47,84 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
     if (!sm.exists(CAPTURE_PATH)) {
       writeHeader();
     } else {
-      // Existing file present: check if already full
       const size_t sz = sm.size(CAPTURE_PATH);
-      if (sz >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
-        storageFull_ = true;
+      if (sz < sizeof(CaptureHeader)) {
+        writeHeader();
+      } else {
+        CaptureHeader hdr{};
+        File f = sm.open(CAPTURE_PATH, "r");
+        bool validHeader = false;
+        if (f) {
+          if (f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr)) {
+            if (memcmp(hdr.magic, "PULSECAP", 8) == 0 && hdr.headerVersion == 1) {
+              validHeader = true;
+            }
+          }
+          f.close();
+        }
+
+        if (validHeader && hdr.sessionId != sessionId_ && sz > sizeof(CaptureHeader)) {
+          // Prior session data exists: preserve it and lock flash recording
+          flashPreserved_ = true;
+          storageFull_ = true;
+          DiagLogger::instance().logEvent(DiagLevel::Warn, "FLASH_CAPTURE_PRESERVED",
+                                         "Prior session %lu capture preserved (%lu bytes). Use CLEAR YES to overwrite.",
+                                         (unsigned long)hdr.sessionId, (unsigned long)sz);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.printf("FLASH CAPTURE PRESERVED: session %lu has %lu bytes. Use CLEAR YES to overwrite.\r\n",
+                        (unsigned long)hdr.sessionId, (unsigned long)sz);
+#endif
+        } else {
+          // Recover from partial write at EOF if power cut mid-record
+          const size_t dataLen = sz - sizeof(CaptureHeader);
+          const size_t remainder = dataLen % sizeof(CanLogRecord);
+          if (remainder != 0) {
+            truncateToSize(CAPTURE_PATH, sz - remainder);
+            DiagLogger::instance().logEvent(DiagLevel::Warn, "CAPTURE_RECOVERED",
+                                           "Truncated %u partial bytes at EOF", (unsigned)remainder);
+          }
+          if (sm.size(CAPTURE_PATH) >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
+            storageFull_ = true;
+          }
+        }
       }
     }
   }
 
   initialized_ = true;
+}
+
+bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
+  auto& sm = StorageManager::instance();
+  if (!sm.isMounted()) return false;
+  File orig = sm.open(path, "r");
+  if (!orig) return false;
+  if (orig.size() <= newSize) {
+    orig.close();
+    return true;
+  }
+  const char* tempPath = "/temp_cap.bin";
+  File temp = sm.open(tempPath, "w");
+  if (!temp) {
+    orig.close();
+    return false;
+  }
+  uint8_t buf[64];
+  size_t copied = 0;
+  while (orig.available() && copied < newSize) {
+    size_t toRead = newSize - copied;
+    if (toRead > sizeof(buf)) toRead = sizeof(buf);
+    const size_t n = orig.read(buf, toRead);
+    if (n == 0) break;
+    temp.write(buf, n);
+    copied += n;
+  }
+  orig.close();
+  temp.flush();
+  temp.close();
+  sm.remove(path);
+  sm.rename(tempPath, path);
+  return true;
 }
 
 void CanRecorder::writeHeader() {
@@ -121,7 +191,7 @@ void CanRecorder::flush() {
   if (count_ == 0) return;
 
   auto& sm = StorageManager::instance();
-  if (!sm.isMounted()) {
+  if (!sm.isMounted() || flashPreserved_) {
     droppedFrames_ += count_;
     count_ = 0;
     head_ = tail_;
@@ -280,6 +350,7 @@ void CanRecorder::clear() {
   if (sm.isMounted() && sm.exists(CAPTURE_PATH)) {
     sm.remove(CAPTURE_PATH);
   }
+  flashPreserved_ = false;
   recordedFrames_ = 0;
   droppedFrames_ = 0;
   storageFull_ = false;

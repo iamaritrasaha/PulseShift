@@ -66,7 +66,7 @@ void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
 
   // LED 0: Controller / System State
   if (!healthy) {
-    // Red blink (100ms on, 100ms off) indicates CAN halted / fatal bus-off
+    // Red blink (100ms on, 100ms off) indicates fatal controller failure / bus-off
     const bool on = ((now / 100) % 2) == 0;
     pix[0] = on ? RgbColor{255, 0, 0} : RgbColor{0, 0, 0};
   } else if (!configured) {
@@ -75,20 +75,21 @@ void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
     const uint8_t f = (phase < 1000) ? (phase * 100 / 1000 + 20) : ((2000 - phase) * 100 / 1000 + 20);
     pix[0] = scaleColor(RgbColor{255, 180, 0}, f);
   } else {
-    // Healthy CAN: Cyan
-    // If frames recently seen (within 1s): Solid Cyan. If waiting: slow pulse Cyan (1Hz)
+    // Healthy CAN controller:
     const bool active = (now - lastRxActivityMs_) < 1000;
     if (active) {
-      pix[0] = RgbColor{0, 200, 255};
+      // Receiving CAN traffic: Cyan/Green
+      pix[0] = RgbColor{0, 220, 200};
     } else {
+      // Waiting for CAN traffic: Gentle yellow breathing pulse (0.5 Hz)
       const uint32_t phase = now % 2000;
-      const uint8_t f = (phase < 1000) ? (phase * 120 / 1000 + 20) : ((2000 - phase) * 120 / 1000 + 20);
-      pix[0] = scaleColor(RgbColor{0, 200, 255}, f);
+      const uint8_t f = (phase < 1000) ? (phase * 120 / 1000 + 25) : ((2000 - phase) * 120 / 1000 + 25);
+      pix[0] = scaleColor(RgbColor{255, 200, 0}, f);
     }
   }
 
   // LED 1: RX Activity Heartbeat
-  // Brief Green pulse whenever CAN frames are actively arriving
+  // Crisp Green pulse whenever CAN frames are actively arriving
   if ((now - lastRxActivityMs_) < 80) {
     pix[1] = RgbColor{0, 255, 0};
   } else {
@@ -98,15 +99,9 @@ void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
   // LEDs 2, 3, 4: Field Capture Stage Indication
   const auto stage = CanRecorder::instance().currentStage();
   if (CanRecorder::instance().isRecording()) {
-    if (stage >= CanRecorder::STAGE_KEY_ON_ENGINE_OFF) {
-      pix[2] = RgbColor{255, 160, 0}; // Amber
-    }
-    if (stage >= CanRecorder::STAGE_ENGINE_IDLING) {
-      pix[3] = RgbColor{255, 160, 0}; // Amber
-    }
-    if (stage >= CanRecorder::STAGE_GENTLE_RPM) {
-      pix[4] = RgbColor{255, 160, 0}; // Amber
-    }
+    pix[2] = (stage >= CanRecorder::STAGE_KEY_ON_ENGINE_OFF) ? RgbColor{255, 160, 0} : RgbColor{0, 0, 0};
+    pix[3] = (stage >= CanRecorder::STAGE_ENGINE_IDLING)     ? RgbColor{255, 160, 0} : RgbColor{0, 0, 0};
+    pix[4] = (stage >= CanRecorder::STAGE_GENTLE_RPM)        ? RgbColor{255, 160, 0} : RgbColor{0, 0, 0};
   } else {
     // Paused: all stage LEDs slow blink Blue
     const bool on = ((now / 500) % 2) == 0;
@@ -118,11 +113,11 @@ void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
   // LED 5: Storage Status
   auto& sm = StorageManager::instance();
   if (!sm.isMounted() || sm.mountFailed()) {
-    // Magenta blink (error)
+    // Magenta blink (storage error)
     const bool on = ((now / 250) % 2) == 0;
     pix[5] = on ? RgbColor{255, 0, 255} : RgbColor{0, 0, 0};
-  } else if (CanRecorder::instance().isStorageFull() || sm.isStorageFull()) {
-    // Slow Amber blink (storage full)
+  } else if (CanRecorder::instance().isStorageFull() || CanRecorder::instance().isFlashPreserved() || sm.isStorageFull()) {
+    // Slow Amber blink (storage full or prior session capture preserved)
     const bool on = ((now / 500) % 2) == 0;
     pix[5] = on ? RgbColor{255, 140, 0} : RgbColor{0, 0, 0};
   } else {

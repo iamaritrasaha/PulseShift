@@ -129,6 +129,20 @@ A motorcycle electrical system experiences substantial voltage transients, inclu
 3. **Common Ground**: Motorcycle chassis/battery ground, buck converter ground, ESP32 GND, LED GND, and SN65HVD230 GND must all be bonded to a single common ground plane.
 4. **Absolute Prohibition**: NEVER connect raw +12V motorcycle power directly to the ESP32 (VIN, 5V, or 3V3 pins) or to the SN65HVD230.
 
+### PC USB Connection and In-Vehicle Investigation Safety
+
+When capturing real motorcycle CAN data with a Windows PC connected to the ESP32:
+
+1. **Laptop on Battery Power (Strictly Recommended)**:
+   - Always run the recording laptop on its internal battery.
+   - Do NOT connect the laptop charger to an AC mains wall outlet while the USB cable is attached to the motorcycle-connected ESP32. AC-earthed power bricks can establish ground potential loops between the building mains ground and the vehicle chassis, inducing damaging circulating currents through the thin USB ground shield and CP2102 chip.
+
+2. **5V Power Rail Separation**:
+   - The ESP32 DevKit V1 and SN65HVD230 are powered safely by the PC USB 5.0V bus.
+   - The WS2812B 6-LED strip draws up to ~360mA at maximum brightness (255) and is powered by the vehicle 5V buck converter.
+   - **DO NOT bridge the vehicle 5V buck converter output to the ESP32 VIN pin while USB is connected.** Backfeeding the PC USB port with vehicle buck converter power can trigger motherboard USB overcurrent protection or damage the USB-to-UART converter.
+   - Only ground lines (ESP32 GND, buck converter GND, LED GND, vehicle chassis GND) must be connected together.
+
 ### Optional Automotive Transient Protection
 
 For long-term reliability on an operating motorcycle:

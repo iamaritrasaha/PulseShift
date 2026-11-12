@@ -134,6 +134,11 @@ bool StorageManager::remove(const char* path) {
   return LittleFS.remove(path);
 }
 
+bool StorageManager::rename(const char* from, const char* to) {
+  if (!mounted_) return false;
+  return LittleFS.rename(from, to);
+}
+
 size_t StorageManager::size(const char* path) {
   if (!mounted_ || !LittleFS.exists(path)) return 0;
   File f = LittleFS.open(path, "r");
