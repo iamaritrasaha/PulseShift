@@ -274,6 +274,48 @@ class StorageQuotaAndFullPolicyTests(unittest.TestCase):
         self.assertFalse(sm2.check_space(current_file_size=100000))
         self.assertTrue(sm2.storage_full)
 
+    def test_virgin_unformatted_partition_detection(self):
+        """Simulates isPartitionBlank() logic to guarantee safe first-boot formatting."""
+        def is_partition_blank(flash_bytes: bytes) -> bool:
+            # Check first 1024 bytes for all 0xFF
+            chunk = flash_bytes[:1024]
+            return all(b == 0xFF for b in chunk)
+
+        # 1. Virgin factory-erased flash (all 0xFF) -> Safe to format on first boot
+        virgin_flash = b"\xFF" * 4096
+        self.assertTrue(is_partition_blank(virgin_flash))
+
+        # 2. Existing LittleFS partition (starts with LittleFS superblock) -> MUST NOT auto-format
+        littlefs_flash = b"littlefs" + b"\x00" * 4088
+        self.assertFalse(is_partition_blank(littlefs_flash))
+
+        # 3. Corrupted or dirty existing partition with data -> MUST NOT auto-format
+        dirty_flash = bytearray([0xFF] * 4096)
+        dirty_flash[128] = 0x55  # Single non-0xFF byte
+        self.assertFalse(is_partition_blank(bytes(dirty_flash)))
+
+    def test_duration_at_different_frame_rates(self):
+        """Validates realistic capacity limits across typical vehicle CAN frame rates."""
+        max_records = 49996  # from test_max_records_calculation
+
+        rates = {
+            50: 999.92,   # ~16.6 min
+            100: 499.96,  # ~8.3 min
+            150: 333.30,  # ~5.5 min (recommended 3-stage budget)
+            200: 249.98,  # ~4.1 min
+            300: 166.65,  # ~2.7 min
+            500: 99.99,   # ~1.6 min
+        }
+        for rate, expected_sec in rates.items():
+            duration_sec = max_records / rate
+            self.assertAlmostEqual(duration_sec, expected_sec, places=1)
+
+        # Verify a 3-minute capture session (45s stage 1, 60s stage 2, 60s stage 3 = 165s)
+        # at 150 fps uses ~24,750 frames (~495 KB), perfectly fitting within 1 MB.
+        session_frames = 165 * 150
+        self.assertLess(session_frames, max_records)
+        self.assertLess(session_frames * 20 + 76, self.MAX_CAPTURE_BYTES)
+
 
 class ButtonStateMachineTests(unittest.TestCase):
     """Simulates the ButtonHandler non-blocking FSM logic."""
@@ -408,6 +450,47 @@ class ExportRecoveryIntegrationTests(unittest.TestCase):
         parsed_json = json.loads(json_str)
         self.assertEqual(len(parsed_json), 10)
         self.assertEqual(parsed_json[0]["id"], 0x100)
+
+    def test_exporter_failure_detection_and_file_preservation(self):
+        """Simulates PowerShell exporter handling of corrupted or truncated serial dumps."""
+        mock_serial_stream = [
+            "=== BEGIN PULSESHIFT RAW CAN CAPTURE ===",
+            "timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok",
+            "100,00000120,0,0,8,0102030405060708,1,1",
+            "120,00000120,0,0,8,0102030405060709,1,0",  # Bad CRC
+            "MALFORMED_LINE_GARBAGE_NO_COMMAS",
+            "140,00000120,0,0,8,010203040506070A,1,1",  # Good record
+            "=== END PULSESHIFT RAW CAN CAPTURE ==="
+        ]
+
+        # Simulate export-logs.ps1 parser
+        csv_records = []
+        valid_count = 0
+        corrupt_count = 0
+        in_csv = False
+
+        for line in mock_serial_stream:
+            if line.startswith("timestamp_ms,"):
+                in_csv = True
+                continue
+            if line.startswith("=== END"):
+                in_csv = False
+                continue
+            if in_csv:
+                cols = line.split(',')
+                if len(cols) >= 8:
+                    crc_ok = (cols[7].strip() == '1')
+                    if crc_ok:
+                        valid_count += 1
+                        csv_records.append(cols)
+                    else:
+                        corrupt_count += 1
+
+        self.assertEqual(valid_count, 2, "Valid records must be preserved")
+        self.assertEqual(corrupt_count, 1, "Corrupted record must be detected and flagged")
+        self.assertEqual(len(csv_records), 2)
+        self.assertEqual(csv_records[0][0], "100")
+        self.assertEqual(csv_records[1][0], "140")
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ class StorageManager {
   bool mountFailed() const { return mountFailed_; }
   bool isStorageFull() const { return storageFull_; }
   void setStorageFull(bool full) { storageFull_ = full; }
+  bool isPartitionBlank() const;
 
   size_t totalBytes();
   size_t usedBytes();

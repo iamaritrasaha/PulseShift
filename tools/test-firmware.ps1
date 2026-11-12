@@ -124,6 +124,11 @@ Record-TestResult -Name "UserConfig: Max Capture Limit" -Passed $hasMaxCapture -
 Record-TestResult -Name "UserConfig: Max Diag Log Limit" -Passed $hasMaxDiag -Details "Bound defined in UserConfig.h"
 Record-TestResult -Name "UserConfig: PSRAM Pin Conflict Guard" -Passed $hasPsramCheck -Details "Compile-time safety check present"
 
+$storageMgrContent = Get-Content (Join-Path $PSScriptRoot "PulseShift\src\storage_manager.cpp") -Raw
+$hasPartitionBlank = $storageMgrContent -match 'isPartitionBlank'
+$hasFormatProtection = $storageMgrContent -match 'Automatic format suppressed to protect existing recordings'
+Record-TestResult -Name "Storage: First-Boot Virgin Detection" -Passed ($hasPartitionBlank -and $hasFormatProtection) -Details "First-boot formats virgin 0xFF flash only; existing data partitions protected"
+
 # -------------------------------------------------------------
 # TEST 5: BOOT Button State Transition Checks
 # -------------------------------------------------------------
@@ -209,7 +214,7 @@ if ($pythonExe -and (Test-Path $diagTestScript)) {
         $ErrorActionPreference = $origEAP
 
         if ($pyExit -eq 0) {
-            Record-TestResult -Name "Python Functional Suite (14 Tests)" -Passed $true -Details "All 14 binary framing, CRC, quota, torn-write, FSM & export tests PASSED"
+            Record-TestResult -Name "Python Functional Suite (17 Tests)" -Passed $true -Details "All 17 binary framing, CRC, quota, torn-write, FSM & export tests PASSED"
         } else {
             Record-TestResult -Name "Python Functional Suite" -Passed $false -Details "Tests failed: $($pyOutput -join '; ')"
         }

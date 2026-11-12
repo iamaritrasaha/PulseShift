@@ -2,14 +2,53 @@
 #include "storage_manager.h"
 #include <Arduino.h>
 #include <Preferences.h>
+#include <esp_partition.h>
+
+bool StorageManager::isPartitionBlank() const {
+  const esp_partition_t* part = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
+  if (!part) return false;
+
+  // Inspect first 1024 bytes of the data partition
+  uint8_t buf[256];
+  for (size_t offset = 0; offset < 1024; offset += sizeof(buf)) {
+    if (esp_partition_read(part, offset, buf, sizeof(buf)) != ESP_OK) {
+      return false;
+    }
+    for (size_t i = 0; i < sizeof(buf); i++) {
+      if (buf[i] != 0xFF) {
+        return false; // Found non-0xFF byte: partition has written data or existing filesystem
+      }
+    }
+  }
+  return true; // All 1024 bytes are 0xFF: virgin unformatted flash
+}
 
 bool StorageManager::begin(bool allowFormatIfCorrupt) {
-  // Step 1: Attempt mount without formatting
+  // Step 1: Attempt non-destructive mount without formatting
   mounted_ = LittleFS.begin(false, "/littlefs", 10, "spiffs");
-  if (!mounted_ && allowFormatIfCorrupt) {
-    // If explicitly permitted (e.g. after user confirmation), attempt format
-    LittleFS.format();
-    mounted_ = LittleFS.begin(false, "/littlefs", 10, "spiffs");
+
+  if (!mounted_) {
+    // Check if the partition is virgin unformatted flash (all 0xFF).
+    // On a brand-new ESP32 out of the box, the partition is unformatted.
+    // Formatting virgin flash on first boot is essential so persistent storage
+    // works without manual USB intervention, while NEVER wiping an existing partition with data.
+    const bool isVirgin = isPartitionBlank();
+
+    if (isVirgin || allowFormatIfCorrupt) {
+      Serial.println(isVirgin 
+        ? "[STORAGE] Virgin unformatted partition detected. Formatting LittleFS on first boot..."
+        : "[STORAGE] Formatting LittleFS as explicitly requested...");
+      if (LittleFS.format()) {
+        mounted_ = LittleFS.begin(false, "/littlefs", 10, "spiffs");
+      }
+    } else {
+      // Partition is NOT blank (contains existing data or previous recordings).
+      // Automatic formatting is strictly suppressed to prevent accidental data loss.
+      Serial.println("[STORAGE WARNING] LittleFS mount failed on partition containing data. "
+                     "Automatic format suppressed to protect existing recordings. "
+                     "Use serial command 'CLEAR YES' via USB if you wish to wipe.");
+    }
   }
 
   mountFailed_ = !mounted_;

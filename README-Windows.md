@@ -71,22 +71,28 @@ To guarantee that PulseShift can **NEVER** interfere with the motorcycle's ECU, 
 
 ### Critical Safety Invariants (SN65HVD230 Transceiver)
 
-1. **GPIO17 (TXD) Physical Isolation:**
+1. **GPIO17 (TXD) Physical Isolation & Passive Recessive Holding:**
    - **DO NOT connect ESP32 GPIO17 to Transceiver Pin 1 (D / TXD).**
-   - Transceiver Pin 1 (`D`) must be **physically isolated from GPIO17** and tied to **3.3V (`VCC`)** through an external 4.7kΩ to 10kΩ pull-up resistor (or tied directly to 3.3V).
-   - Per the TI SN65HVD230 datasheet, holding `D` permanently HIGH forces the driver into the recessive (passive) state, physically preventing dominant bus driving even if the controller malfunctions.
-   - ESP32 GPIO17 is left completely unconnected. The firmware additionally configures GPIO17 as a High-Z input with internal pull-up as a secondary software safeguard.
-2. **Transceiver Silent / Listen-Only Mode (Pin 8 `Rs`):**
-   - Transceiver Pin 8 (`Rs`) must be wired directly to **3.3V (`VCC`)** ($V_{Rs} \ge 0.75 V_{CC}$).
-   - Per Section 8.4.2 of the TI SN65HVD230 datasheet, when $V_{Rs} \ge 0.75 V_{CC}$, the transceiver's differential transmitter driver is completely disabled, while the differential receiver remains 100% active.
-   - **Breakout Board Warning:** Common blue SN65HVD230 breakout boards tie `Rs` to GND via a 0Ω surface-mount resistor (placing it in High-Speed transmit mode). You **MUST desolder or cut the trace** to GND, and wire `Rs` to 3.3V.
-3. **Onboard 120Ω Termination Resistor Removal:**
+   - Leave ESP32 GPIO17 **physically disconnected** (no wire, no jumper, no breadboard trace).
+   - Tie Transceiver Pin 1 (`D`) directly to **3.3V (`VCC`)** or through an external 4.7kΩ to 10kΩ pull-up resistor.
+   - *Datasheet Verification:* Per Section 8.4.1 and Table 1 (Driver Function Table) of the TI SN65HVD230 datasheet, when input $D = \text{HIGH}$ ($V_{IH} \ge 2\text{ V}$), the differential driver is forced into the **RECESSIVE** state ($V_{OD(R)} \approx 0\text{ V}$, $V_{CANH} \approx V_{CANL} \approx 2.3\text{ V}$). The driver CANNOT physically drive a dominant bit on the bus, regardless of MCU state or firmware panics.
+   - The firmware additionally configures GPIO17 as a High-Z input with internal pull-up as a redundant software guard.
+
+2. **Transceiver High-Speed Mode for 500 kbps (Pin 8 `Rs` tied to GND):**
+   - Connect Transceiver Pin 8 (`Rs`) to **GND** ($V_{Rs} < 1.2\text{ V}$, $R_s = 0\Omega$).
+   - *Datasheet Reconciled Mode Analysis:*
+     - Applying $V_{Rs} > 0.75 V_{CC}$ (Pin 8 HIGH) places the SN65HVD230 into **Low-Power Standby Mode**. In standby, while the driver is shut off, the internal receiver circuitry is switched to a reduced-bias state with increased propagation delay and pulse skew. Operating in standby mode can compromise continuous, error-free decoding of 500 kbps CAN traffic under noisy vehicle operating conditions.
+     - Applying $V_{Rs} < 1.2\text{ V}$ (Pin 8 LOW / GND) selects **Normal High-Speed Mode**, providing full receiver bandwidth, minimal propagation delay ($t_{PLH}, t_{PHL} \le 50\text{ ns}$), and pulse skew $\le 10\text{ ns}$, perfectly meeting the 2000 ns bit-timing requirements of 500 kbps CAN.
+     - *Breakout Board Compatibility:* Common blue SN65HVD230 breakout boards already have Pin 8 (`Rs`) tied to GND via an onboard 0Ω SMD resistor or copper trace. **No trace cutting or desoldering of Pin 8 is required.**
+     - *Transmission Prevention Guarantee:* Because Pin 1 (`D`) is permanently held HIGH and GPIO17 is physically disconnected, the driver remains 100% passive and recessive at all times.
+
+3. **Onboard 120Ω Termination Resistor Removal (MANDATORY):**
    - An active motorcycle CAN network is **already terminated** with two 120Ω resistors (one in the ECU, one in the instrument cluster), yielding an equivalent resistance of 60Ω across CAN_H and CAN_L.
    - Most SN65HVD230 breakout boards include an onboard 120Ω SMD resistor (often labeled `R2` or `120`).
    - If connected without modification, the three parallel resistors reduce bus resistance to $40\Omega$ ($120 \parallel 120 \parallel 120 = 40\Omega$), overloading vehicle transceivers and corrupting ECU communication.
    - **You MUST remove/desolder the onboard 120Ω resistor on the breakout board** before connecting to the motorcycle harness. Measure with a multimeter across CAN_H and CAN_L when disconnected: it should read open circuit (>100kΩ).
-4. **Reliable 500 kbps Reception:**
-   - The SN65HVD230 receiver supports signaling rates up to 1 Mbps with receiver propagation delay $\le 50\text{ns}$, well within the 2000 ns bit budget of 500 kbps CAN.
+
+4. **Reliable 500 kbps Reception Wiring:**
    - Wire Transceiver Pin 4 (`R` / `RXD`) to ESP32 **GPIO16**.
    - Wire Transceiver `GND` to ESP32 `GND` and motorcycle harness signal ground.
    - Wire Transceiver `VCC` to ESP32 **3.3V** (do NOT power from 5V).
@@ -95,9 +101,10 @@ To guarantee that PulseShift can **NEVER** interfere with the motorcycle's ECU, 
 
 | ESP32 Pin | Transceiver Pin | Harness / Component | Hardware Safety Function |
 |---|---|---|---|
-| **GPIO16** | Pin 4 (`R` / `RXD`) | - | Passive TWAI receiver input |
-| **NO CONNECTION** | Pin 1 (`D` / `TXD`) | Wire to 3.3V via 4.7kΩ pull-up | **PHYSICAL TX ISOLATION**: Transceiver driver held permanently recessive |
-| **3.3V** | Pin 3 (`VCC`) & Pin 8 (`Rs`) | - | Supplies 3.3V; forces transceiver into Listen-Only / Silent mode |
+| **GPIO16** | Pin 4 (`R` / `RXD`) | - | Passive TWAI receiver input (500 kbps) |
+| **DISCONNECTED** | Pin 1 (`D` / `TXD`) | Wire to 3.3V via 4.7kΩ–10kΩ pull-up | **PHYSICAL TX ISOLATION**: Driver held permanently recessive |
+| **GND** | Pin 8 (`Rs`) | - | Standard High-Speed Mode ($\le 50\text{ns}$ propagation delay) |
+| **3.3V** | Pin 3 (`VCC`) | - | 3.3V transceiver supply |
 | **GND** | Pin 2 (`GND`) | Motorcycle diagnostic ground | Common ground reference |
 | - | Pin 7 (`CAN_H`) | Motorcycle OBD Pin 6 / OEM CAN_H | Differential bus high (120Ω breakout resistor removed) |
 | - | Pin 6 (`CAN_L`) | Motorcycle OBD Pin 14 / OEM CAN_L | Differential bus low (120Ω breakout resistor removed) |
@@ -222,11 +229,38 @@ Capturing CAN traffic on a motorcycle means the ESP32 can experience abrupt powe
 
 ---
 
-## 7. Storage Capacity & Constraints
+## 7. Storage Capacity, Duration & Field Constraints
 
-- **Storage Ceiling:** 1,000,000 bytes (~1 MB) allocated for raw CAN capture, and 128 KB for diagnostic logs, leaving 250+ KB free safety headroom.
-- **Frame Capacity:** Each packed binary CAN record occupies 20 bytes (including timestamp, ID, DLC, stage, 8 payload bytes, and CRC16). The file holds up to **50,000 frames** (approx. 8–10 minutes of continuous 100 fps traffic).
-- **Storage-Full Policy:** When storage reaches 1 MB or free space drops below 32 KB, the firmware sets `storageFull = true`, logs the event, flashes LED 5 Amber, and gracefully stops logging without crashing or corrupting earlier records.
+### Storage Budget
+- **LittleFS Partition Total:** 1,441,792 bytes (~1.4 MB).
+- **Safety Headroom Threshold:** 32,768 bytes (32 KB minimum free space).
+- **Diagnostic Event Log Limit:** 131,072 bytes (128 KB bounded circular `/diag.log`).
+- **Raw CAN Capture File Limit (`PULSESHIFT_MAX_CAPTURE_BYTES`):** 1,000,000 bytes (1 MB `/can.raw`).
+- **Binary Record Framing:**
+  - Header: 76 bytes (`CaptureHeader`).
+  - Records: 20 bytes per frame (`CanLogRecord`).
+  - **Maximum Record Capacity:** $\lfloor(1{,}000{,}000 - 76) / 20\rfloor = 49{,}996\text{ frames}$.
+
+### Realistic Recording Duration by Bus Load
+
+The duration that 1 MB of storage lasts depends directly on the motorcycle's aggregate CAN transmission rate:
+
+| Aggregate Bus Rate | Data Throughput | 49,996 Records Capacity | Practical Application on Motorcycle |
+|---|---|---|---|
+| **50 frames/sec** | 1.0 KB/s | **16.6 minutes** (1,000s) | Single-cylinder ECU with minimal CAN broadcasting |
+| **100 frames/sec** | 2.0 KB/s | **8.3 minutes** (500s) | Typical cruising / baseline broadcast rate |
+| **150 frames/sec** | 3.0 KB/s | **5.5 minutes** (333s) | **Recommended test session rate** (ECU + ABS active) |
+| **200 frames/sec** | 4.0 KB/s | **4.1 minutes** (250s) | High broadcast frequency (ECU, ABS, Cluster, IMU) |
+| **300 frames/sec** | 6.0 KB/s | **2.7 minutes** (166s) | Busy multi-node vehicle network |
+| **500 frames/sec** | 10.0 KB/s | **1.6 minutes** (100s) | Heavy bus load (~25% bus utilization @ 500 kbps) |
+
+### Capture Session Protocol & Time Budget
+To guarantee that all 3 capture stages fit comfortably within the 1 MB storage bound without truncation:
+1. **Stage 1 (Key ON / Engine OFF):** Record for **30 to 45 seconds** (captures stationary baselines).
+2. **Stage 2 (Engine Idling):** Record for **45 to 60 seconds** (captures stable idle RPM ~1400 RPM).
+3. **Stage 3 (Stationary Revving):** Record for **45 to 60 seconds** (gentle sweeps up to 4000–6000 RPM in neutral).
+- **Total Recommended Session:** **2.5 to 3 minutes** (~25,000 frames @ 150 fps, utilizing ~500 KB / 50% capacity).
+- **Storage-Full Safeguard:** If recording exceeds the 1 MB bound, the firmware asserts `storageFull = true`, turns **LED 5 steady Amber**, and cleanly halts logging without crashing or corrupting earlier records.
 
 ---
 
