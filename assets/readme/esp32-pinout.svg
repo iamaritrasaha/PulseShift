@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="940" viewBox="0 0 760 940" role="img" aria-labelledby="title desc">
+<title id="title">PulseShift: ESP32 DevKit V1 Pinout</title>
+<desc id="desc">Physical 30-pin board mapping showing active pins, power rails, and safety-isolated GPIO17.</desc>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+</style>
+<rect width="760" height="940" fill="#ffffff"/>
+<text x="28" y="44" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">PulseShift: ESP32 DevKit V1 Pinout</text>
+<text x="28" y="80" font-size="20" fill="#425c6d" font-weight="400" text-anchor="start">DOIT DevKit V1 (30 pins): PulseShift pin assignments and functions</text>
+<rect x="240" y="110" width="280" height="720" rx="14" fill="#1e293b" stroke="#334155" stroke-width="3"/>
+<rect x="280" y="120" width="200" height="26" rx="4" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+<text x="380" y="138" font-size="12" fill="#64748b" font-weight="700" text-anchor="middle">PCB ANTENNA</text>
+<rect x="275" y="156" width="210" height="190" rx="8" fill="#94a3b8" stroke="#64748b" stroke-width="2"/>
+<text x="380" y="230" font-size="20" fill="#1e293b" font-weight="700" text-anchor="middle">ESP-WROOM-32</text>
+<text x="380" y="260" font-size="14" fill="#334155" font-weight="400" text-anchor="middle">32-bit Dual Core / 240MHz</text>
+<text x="380" y="285" font-size="13" fill="#1e293b" font-weight="700" text-anchor="middle">TWAI / CAN Controller Inside</text>
+<circle cx="300" cy="765" r="6" fill="#ef4444" stroke="#991b1b" stroke-width="2"/>
+<text x="315" y="770" font-size="11" fill="#94a3b8" font-weight="400" text-anchor="start">PWR</text>
+<circle cx="460" cy="765" r="6" fill="#3b82f6" stroke="#1d4ed8" stroke-width="2"/>
+<text x="425" y="770" font-size="11" fill="#94a3b8" font-weight="400" text-anchor="start">D2</text>
+<rect x="265" y="785" width="45" height="26" rx="4" fill="#334155" stroke="#475569" stroke-width="2"/>
+<text x="287" y="803" font-size="12" fill="#f8fafc" font-weight="700" text-anchor="middle">EN</text>
+<rect x="450" y="785" width="45" height="26" rx="4" fill="#334155" stroke="#475569" stroke-width="2"/>
+<text x="472" y="803" font-size="12" fill="#f8fafc" font-weight="700" text-anchor="middle">BOOT</text>
+<rect x="335" y="805" width="90" height="32" rx="4" fill="#cbd5e1" stroke="#64748b" stroke-width="2"/>
+<text x="380" y="826" font-size="13" fill="#1e293b" font-weight="700" text-anchor="middle">Micro-USB</text>
+<rect x="246" y="351" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="365" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">EN</text>
+<rect x="246" y="378" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="392" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">VP</text>
+<rect x="246" y="405" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="419" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">VN</text>
+<rect x="246" y="432" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="446" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D34</text>
+<rect x="246" y="459" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="473" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D35</text>
+<rect x="246" y="486" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="500" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D32</text>
+<rect x="246" y="513" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="527" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D33</text>
+<rect x="246" y="540" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="554" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D25</text>
+<rect x="246" y="567" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="581" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D26</text>
+<rect x="246" y="594" width="20" height="18" rx="3" fill="#93c5fd" stroke="#0969aa" stroke-width="1.5"/>
+<text x="274" y="608" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="start">D27</text>
+<rect x="246" y="621" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="635" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D14</text>
+<rect x="246" y="648" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="662" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D12</text>
+<rect x="246" y="675" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="274" y="689" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="start">D13</text>
+<rect x="246" y="702" width="20" height="18" rx="3" fill="#94a3b8" stroke="#334155" stroke-width="1.5"/>
+<text x="274" y="716" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="start">GND</text>
+<rect x="246" y="729" width="20" height="18" rx="3" fill="#fca5a5" stroke="#ba2e34" stroke-width="1.5"/>
+<text x="274" y="743" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="start">VIN</text>
+<rect x="494" y="351" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="365" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">D23</text>
+<rect x="494" y="378" width="20" height="18" rx="3" fill="#fef08a" stroke="#ca8a04" stroke-width="1.5"/>
+<text x="486" y="392" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="end">D22</text>
+<rect x="494" y="405" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="419" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">TX0</text>
+<rect x="494" y="432" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="446" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">RX0</text>
+<rect x="494" y="459" width="20" height="18" rx="3" fill="#fef08a" stroke="#ca8a04" stroke-width="1.5"/>
+<text x="486" y="473" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="end">D21</text>
+<rect x="494" y="486" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="500" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">D19</text>
+<rect x="494" y="513" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="527" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">D18</text>
+<rect x="494" y="540" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="554" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">D5</text>
+<rect x="494" y="567" width="20" height="18" rx="3" fill="#fecaca" stroke="#ba2e34" stroke-width="1.5"/>
+<text x="486" y="581" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="end">TX2</text>
+<rect x="494" y="594" width="20" height="18" rx="3" fill="#d8b4fe" stroke="#7c3aed" stroke-width="1.5"/>
+<text x="486" y="608" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="end">RX2</text>
+<rect x="494" y="621" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="635" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">D4</text>
+<rect x="494" y="648" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="662" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">D2</text>
+<rect x="494" y="675" width="20" height="18" rx="3" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+<text x="486" y="689" font-size="13" fill="#f8fafc" font-weight="400" text-anchor="end">D15</text>
+<rect x="494" y="702" width="20" height="18" rx="3" fill="#94a3b8" stroke="#334155" stroke-width="1.5"/>
+<text x="486" y="716" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="end">GND</text>
+<rect x="494" y="729" width="20" height="18" rx="3" fill="#fed7aa" stroke="#ea580c" stroke-width="1.5"/>
+<text x="486" y="743" font-size="13" fill="#f8fafc" font-weight="700" text-anchor="end">3V3</text>
+<path d="M 246,603 L 190,603" fill="none" stroke="#0969aa" stroke-width="2"/>
+<rect x="16" y="568" width="174" height="70" rx="8" fill="#eff6ff" stroke="#0969aa" stroke-width="2"/>
+<text x="26" y="589" font-size="15" fill="#0969aa" font-weight="700" text-anchor="start">GPIO27 (D27)</text>
+<text x="26" y="609" font-size="13" fill="#142b3b" font-weight="700" text-anchor="start">WS2812B LED Data</text>
+<text x="26" y="628" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">via 330-470Ω to DIN</text>
+<path d="M 246,711 L 190,711" fill="none" stroke="#334155" stroke-width="2"/>
+<rect x="16" y="681" width="174" height="60" rx="8" fill="#f1f5f9" stroke="#334155" stroke-width="2"/>
+<text x="26" y="701" font-size="14" fill="#334155" font-weight="700" text-anchor="start">GND (Common Ground)</text>
+<text x="26" y="721" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">Tie to LED, CAN &amp;</text>
+<text x="26" y="736" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">Power Supply GND</text>
+<path d="M 246,738 L 190,738" fill="none" stroke="#ba2e34" stroke-width="2"/>
+<rect x="16" y="748" width="174" height="65" rx="8" fill="#fef2f2" stroke="#ba2e34" stroke-width="2"/>
+<text x="26" y="768" font-size="14" fill="#ba2e34" font-weight="700" text-anchor="start">VIN (5V Power Input)</text>
+<text x="26" y="788" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">Regulated 5V from</text>
+<text x="26" y="803" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">DC-DC step-down converter</text>
+<path d="M 514,387 L 550,387" fill="none" stroke="#ca8a04" stroke-width="2"/>
+<rect x="550" y="365" width="194" height="46" rx="8" fill="#fefce8" stroke="#ca8a04" stroke-width="2"/>
+<text x="560" y="385" font-size="13" fill="#854d0e" font-weight="700" text-anchor="start">GPIO22 (D22): OLED SCL</text>
+<text x="560" y="403" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">Optional I2C clock (UserConfig.h)</text>
+<path d="M 514,468 L 550,468" fill="none" stroke="#0284c7" stroke-width="2"/>
+<rect x="550" y="446" width="194" height="46" rx="8" fill="#f0f9ff" stroke="#0284c7" stroke-width="2"/>
+<text x="560" y="466" font-size="13" fill="#0284c7" font-weight="700" text-anchor="start">GPIO21 (D21): OLED SDA</text>
+<text x="560" y="484" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">Optional I2C data (UserConfig.h)</text>
+<path d="M 514,576 L 530,576" fill="none" stroke="#ba2e34" stroke-width="2.5" stroke-dasharray="4,3"/>
+<path d="M 530,576 L 546,576" fill="none" stroke="#ba2e34" stroke-width="2.5" stroke-dasharray="4,3"/>
+<path d="M 535,569 L 545,583" fill="none" stroke="#ba2e34" stroke-width="3"/>
+<path d="M 535,583 L 545,569" fill="none" stroke="#ba2e34" stroke-width="3"/>
+<rect x="550" y="538" width="194" height="76" rx="8" fill="#fef2f2" stroke="#ba2e34" stroke-width="2"/>
+<text x="560" y="558" font-size="14" fill="#ba2e34" font-weight="700" text-anchor="start">GPIO17: TWAI TX</text>
+<text x="560" y="575" font-size="12" fill="#ba2e34" font-weight="700" text-anchor="start">PHYSICALLY DISCONNECTED!</text>
+<text x="560" y="592" font-size="11" fill="#142b3b" font-weight="400" text-anchor="start">Air gap: never wire to transceiver.</text>
+<text x="560" y="607" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">Passive listen-only protection.</text>
+<path d="M 514,603 L 550,603" fill="none" stroke="#7c3aed" stroke-width="2"/>
+<rect x="550" y="578" width="194" height="55" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+<text x="560" y="598" font-size="14" fill="#7c3aed" font-weight="700" text-anchor="start">GPIO16 (RX2): CAN RX</text>
+<text x="560" y="615" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">Connect to SN65HVD230</text>
+<text x="560" y="628" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">Pin 4 (RXD) 3.3V logic</text>
+<path d="M 514,738 L 550,738" fill="none" stroke="#ea580c" stroke-width="2"/>
+<rect x="550" y="713" width="194" height="60" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+<text x="560" y="733" font-size="14" fill="#ea580c" font-weight="700" text-anchor="start">3V3 (3.3V Power Out)</text>
+<text x="560" y="750" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">Powers SN65HVD230 Pin 3</text>
+<text x="560" y="765" font-size="11" fill="#ba2e34" font-weight="700" text-anchor="start">Do not power from 5V or 12V!</text>
+<rect x="20" y="850" width="720" height="75" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+<text x="32" y="872" font-size="14" fill="#142b3b" font-weight="700" text-anchor="start">LEGEND &amp; ELECTRICAL SAFETY:</text>
+<text x="32" y="894" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">RED = 5V Regulated Rail   ORANGE = 3.3V Supply   BLACK = Common Ground   BLUE = WS2812B Data</text>
+<text x="32" y="912" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">PURPLE = CAN Receive   DASHED RED = Safety Disconnect (Air Gap)   YELLOW = Optional I2C</text>
+</svg>

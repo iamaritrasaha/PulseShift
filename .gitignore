@@ -24,7 +24,11 @@ REVIX-LINK-Arduino-v*.zip
 REVIX-LINK-Arduino-v*.sha256
 
 # Local notes and documentation
-/docs/
+/docs/research-*/
+/docs/*.txt
+/docs/*.json
+/docs/*.log
+/docs/*.html
 /.local-notes/
 /AUDIT_REPORT.md
 

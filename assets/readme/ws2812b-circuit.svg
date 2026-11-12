@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="920" viewBox="0 0 760 920" role="img" aria-labelledby="title desc">
+<title id="title">PulseShift: ESP32 to WS2812B LED Circuit</title>
+<desc id="desc">Wiring for six WS2812B LEDs, series resistor, bulk capacitor, common ground, and optional 74AHCT125 level shifter.</desc>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+</style>
+<rect width="760" height="920" fill="#ffffff"/>
+<text x="28" y="44" font-size="24" fill="#142b3b" font-weight="700" text-anchor="start">PulseShift: ESP32 to WS2812B LED Circuit</text>
+<text x="28" y="80" font-size="20" fill="#425c6d" font-weight="400" text-anchor="start">Direct-drive (330-470Ω) and optional 74AHCT125 level-shifter circuit</text>
+<rect x="20" y="105" width="720" height="360" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+<text x="35" y="135" font-size="18" fill="#142b3b" font-weight="700" text-anchor="start">Standard Direct-Drive Connection (Short Data Wire, Bench &amp; Demo)</text>
+<rect x="40" y="160" width="160" height="160" rx="8" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+<text x="120" y="195" font-size="16" fill="#f8fafc" font-weight="700" text-anchor="middle">ESP32 DevKit</text>
+<text x="120" y="218" font-size="13" fill="#94a3b8" font-weight="400" text-anchor="middle">DOIT V1</text>
+<rect x="170" y="240" width="30" height="22" rx="3" fill="#93c5fd" stroke="#0969aa" stroke-width="2"/>
+<text x="110" y="256" font-size="14" fill="#93c5fd" font-weight="700" text-anchor="start">GPIO27</text>
+<rect x="170" y="280" width="30" height="22" rx="3" fill="#94a3b8" stroke="#334155" stroke-width="2"/>
+<text x="125" y="296" font-size="14" fill="#cbd5e1" font-weight="700" text-anchor="start">GND</text>
+<path d="M 200,251 L 230,251" fill="none" stroke="#0969aa" stroke-width="3"/>
+<path d="M 230,251 L 245,251" fill="none" stroke="#334155" stroke-width="3"/>
+<rect x="245" y="239" width="54" height="24" rx="3" fill="#fef3c7" stroke="#334155" stroke-width="2"/>
+<path d="M 299,251 L 314,251" fill="none" stroke="#334155" stroke-width="3"/>
+<text x="272" y="233" font-size="16" fill="#142b3b" font-weight="700" text-anchor="middle">330-470Ω</text>
+<path d="M 314,251 L 345,251" fill="none" stroke="#0969aa" stroke-width="3"/>
+<path d="M 333,243 L 345,251 L 333,259" fill="none" stroke="#0969aa" stroke-width="3"/>
+<text x="272" y="280" font-size="11" fill="#425c6d" font-weight="400" text-anchor="middle">Place close to DIN</text>
+<rect x="345" y="175" width="375" height="145" rx="8" fill="#244238" stroke="#1b332b" stroke-width="2"/>
+<text x="365" y="205" font-size="14" fill="#a7f3d0" font-weight="700" text-anchor="start">WS2812B 6-LED Shift Light Strip (5V • GRB • 800kHz)</text>
+<rect x="367" y="220" width="46" height="46" rx="6" fill="#16a34a" stroke="#9eb7aa" stroke-width="2"/>
+<text x="390" y="248" font-size="13" fill="#142b3b" font-weight="700" text-anchor="middle">L1</text>
+<rect x="425" y="220" width="46" height="46" rx="6" fill="#16a34a" stroke="#9eb7aa" stroke-width="2"/>
+<text x="448" y="248" font-size="13" fill="#142b3b" font-weight="700" text-anchor="middle">L2</text>
+<rect x="483" y="220" width="46" height="46" rx="6" fill="#ca8a04" stroke="#9eb7aa" stroke-width="2"/>
+<text x="506" y="248" font-size="13" fill="#142b3b" font-weight="700" text-anchor="middle">L3</text>
+<rect x="541" y="220" width="46" height="46" rx="6" fill="#ca8a04" stroke="#9eb7aa" stroke-width="2"/>
+<text x="564" y="248" font-size="13" fill="#142b3b" font-weight="700" text-anchor="middle">L4</text>
+<rect x="599" y="220" width="46" height="46" rx="6" fill="#ea580c" stroke="#9eb7aa" stroke-width="2"/>
+<text x="622" y="248" font-size="13" fill="#142b3b" font-weight="700" text-anchor="middle">L5</text>
+<rect x="657" y="220" width="46" height="46" rx="6" fill="#ba2e34" stroke="#9eb7aa" stroke-width="2"/>
+<text x="680" y="248" font-size="13" fill="#142b3b" font-weight="700" text-anchor="middle">L6</text>
+<text x="360" y="290" font-size="13" fill="#93c5fd" font-weight="700" text-anchor="start">DIN</text>
+<text x="360" y="308" font-size="13" fill="#fca5a5" font-weight="700" text-anchor="start">+5V</text>
+<text x="430" y="308" font-size="13" fill="#cbd5e1" font-weight="700" text-anchor="start">GND</text>
+<path d="M 395,287 L 655,287" fill="none" stroke="#93c5fd" stroke-width="2"/>
+<path d="M 643,279 L 655,287 L 643,295" fill="none" stroke="#93c5fd" stroke-width="3"/>
+<text x="525" y="281" font-size="12" fill="#93c5fd" font-weight="400" text-anchor="middle">Data direction: DIN -&gt; DOUT</text>
+<rect x="615" y="295" width="95" height="22" rx="4" fill="#334155" stroke="#475569" stroke-width="2"/>
+<text x="662" y="311" font-size="11" fill="#fca5a5" font-weight="700" text-anchor="middle">DOUT: UNUSED</text>
+<rect x="345" y="365" width="200" height="75" rx="8" fill="#fef2f2" stroke="#ba2e34" stroke-width="2"/>
+<text x="355" y="388" font-size="14" fill="#ba2e34" font-weight="700" text-anchor="start">Regulated 5V Supply</text>
+<text x="355" y="406" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">At least 1A capacity</text>
+<text x="355" y="424" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">Size for LED strip load</text>
+<path d="M 545,395 L 630,395 L 630,310 L 430,310" fill="none" stroke="#ba2e34" stroke-width="3"/>
+<circle cx="430" cy="310" r="5" fill="#ba2e34"/>
+<path d="M 430,310 L 430,300 L 370,300" fill="none" stroke="#ba2e34" stroke-width="3"/>
+<path d="M 650,240 L 650,260" fill="none" stroke="#ba2e34" stroke-width="3"/>
+<path d="M 632,260 L 668,260" fill="none" stroke="#334155" stroke-width="3"/>
+<path d="M 632,270 L 668,270" fill="none" stroke="#334155" stroke-width="6"/>
+<path d="M 650,270 L 650,290" fill="none" stroke="#334155" stroke-width="3"/>
+<text x="620" y="258" font-size="20" fill="#ba2e34" font-weight="700" text-anchor="start">+</text>
+<text x="672" y="278" font-size="22" fill="#334155" font-weight="700" text-anchor="start">-</text>
+<text x="676" y="265" font-size="14" fill="#142b3b" font-weight="700" text-anchor="start">1000µF/10V</text>
+<path d="M 630,240 L 650,240" fill="none" stroke="#ba2e34" stroke-width="3"/>
+<path d="M 650,290 L 650,345 L 460,345" fill="none" stroke="#334155" stroke-width="3"/>
+<path d="M 200,291 L 280,291 L 280,345 L 345,345" fill="none" stroke="#334155" stroke-width="3"/>
+<path d="M 345,345 L 460,345" fill="none" stroke="#334155" stroke-width="3"/>
+<circle cx="280" cy="345" r="5" fill="#334155"/>
+<path d="M 460,345 L 460,300 L 415,300" fill="none" stroke="#334155" stroke-width="3"/>
+<path d="M 545,420 L 580,420 L 580,345" fill="none" stroke="#334155" stroke-width="3"/>
+<circle cx="580" cy="345" r="5" fill="#334155"/>
+<text x="285" y="335" font-size="13" fill="#334155" font-weight="700" text-anchor="start">Common GND</text>
+<text x="35" y="452" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">Note: Direct 3.3V GPIO data works with most strips over short leads. Place the 330-470Ω resistor close to DIN.</text>
+<rect x="20" y="485" width="720" height="415" rx="12" fill="#f8fafc" stroke="#c5d4dd" stroke-width="2"/>
+<text x="35" y="515" font-size="18" fill="#142b3b" font-weight="700" text-anchor="start">Optional Improvement: 74AHCT125 Level Shifter (Recommended for 5V Signalling)</text>
+<text x="35" y="538" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">WS2812B datasheet specifies Vih(min) = 0.7 x VDD = 3.5V. The 74AHCT125 converts 3.3V logic to true 5V TTL levels.</text>
+<rect x="250" y="560" width="260" height="210" rx="8" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+<circle cx="380" cy="560" r="10" fill="#f8fafc" stroke="#334155" stroke-width="2"/>
+<text x="380" y="600" font-size="18" fill="#f8fafc" font-weight="700" text-anchor="middle">SN74AHCT125N</text>
+<text x="380" y="622" font-size="13" fill="#94a3b8" font-weight="400" text-anchor="middle">Quad Buffer / Level Shifter</text>
+<text x="262" y="645" font-size="11" fill="#93c5fd" font-weight="700" text-anchor="start">1</text>
+<text x="280" y="645" font-size="10" fill="#f8fafc" font-weight="400" text-anchor="start">1 /OE -&gt; GND (Enable)</text>
+<text x="262" y="661" font-size="11" fill="#93c5fd" font-weight="700" text-anchor="start">2</text>
+<text x="280" y="661" font-size="10" fill="#f8fafc" font-weight="400" text-anchor="start">1A (3.3V Input from GPIO27)</text>
+<text x="262" y="677" font-size="11" fill="#93c5fd" font-weight="700" text-anchor="start">3</text>
+<text x="280" y="677" font-size="10" fill="#f8fafc" font-weight="400" text-anchor="start">1Y (5V Output to 330Ω -&gt; DIN)</text>
+<text x="262" y="693" font-size="11" fill="#64748b" font-weight="700" text-anchor="start">4</text>
+<text x="280" y="693" font-size="10" fill="#64748b" font-weight="400" text-anchor="start">2 /OE -&gt; tie to +5V</text>
+<text x="262" y="709" font-size="11" fill="#64748b" font-weight="700" text-anchor="start">5</text>
+<text x="280" y="709" font-size="10" fill="#64748b" font-weight="400" text-anchor="start">2A -&gt; tie to GND</text>
+<text x="262" y="725" font-size="11" fill="#64748b" font-weight="700" text-anchor="start">6</text>
+<text x="280" y="725" font-size="10" fill="#64748b" font-weight="400" text-anchor="start">2Y (unused)</text>
+<text x="262" y="741" font-size="11" fill="#93c5fd" font-weight="700" text-anchor="start">7</text>
+<text x="280" y="741" font-size="10" fill="#f8fafc" font-weight="400" text-anchor="start">GND -&gt; Common Ground</text>
+<text x="498" y="645" font-size="11" fill="#fca5a5" font-weight="700" text-anchor="end">14</text>
+<text x="498" y="661" font-size="11" fill="#64748b" font-weight="700" text-anchor="end">13</text>
+<text x="498" y="677" font-size="11" fill="#64748b" font-weight="700" text-anchor="end">12</text>
+<text x="498" y="693" font-size="11" fill="#64748b" font-weight="700" text-anchor="end">11</text>
+<text x="498" y="709" font-size="11" fill="#64748b" font-weight="700" text-anchor="end">10</text>
+<text x="498" y="725" font-size="11" fill="#64748b" font-weight="700" text-anchor="end">9</text>
+<text x="498" y="741" font-size="11" fill="#64748b" font-weight="700" text-anchor="end">8</text>
+<rect x="40" y="600" width="160" height="110" rx="8" fill="#eff6ff" stroke="#0969aa" stroke-width="2"/>
+<text x="50" y="625" font-size="15" fill="#0969aa" font-weight="700" text-anchor="start">Input: GPIO27</text>
+<text x="50" y="646" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">From ESP32 pin D27</text>
+<text x="50" y="668" font-size="12" fill="#142b3b" font-weight="700" text-anchor="start">Add 10kΩ pull-down</text>
+<text x="50" y="686" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">to GND to avoid boot flash</text>
+<path d="M 200,640 L 250,640" fill="none" stroke="#0969aa" stroke-width="2.5"/>
+<path d="M 238,632 L 250,640 L 238,648" fill="none" stroke="#0969aa" stroke-width="3"/>
+<rect x="550" y="600" width="170" height="110" rx="8" fill="#eff6ff" stroke="#0969aa" stroke-width="2"/>
+<text x="560" y="625" font-size="15" fill="#0969aa" font-weight="700" text-anchor="start">Output: 5V Logic</text>
+<text x="560" y="646" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">Through 330Ω resistor</text>
+<text x="560" y="668" font-size="12" fill="#142b3b" font-weight="700" text-anchor="start">Connects to WS2812B DIN</text>
+<text x="560" y="686" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">True 5.0V signal amplitude</text>
+<path d="M 510,640 L 550,640" fill="none" stroke="#0969aa" stroke-width="2.5"/>
+<path d="M 538,632 L 550,640 L 538,648" fill="none" stroke="#0969aa" stroke-width="3"/>
+<rect x="40" y="785" width="680" height="50" rx="6" fill="#fefce8" stroke="#ca8a04" stroke-width="2"/>
+<text x="50" y="807" font-size="12" fill="#854d0e" font-weight="700" text-anchor="start">Decoupling: Place a 100nF ceramic capacitor across 74AHCT125 Pin 14 (VCC) and Pin 7 (GND).</text>
+<text x="50" y="824" font-size="11" fill="#425c6d" font-weight="400" text-anchor="start">Tie unused inputs (pins 4, 10, 13 to 5V; pins 5, 9, 12 to GND) to prevent floating gate oscillations.</text>
+<rect x="20" y="850" width="720" height="50" rx="8" fill="#f1f5f9" stroke="#334155" stroke-width="2"/>
+<text x="32" y="880" font-size="13" fill="#142b3b" font-weight="700" text-anchor="start">Golden Rule: Common Ground binds everything. Never join external 5V to ESP32 3.3V.</text>
+</svg>
