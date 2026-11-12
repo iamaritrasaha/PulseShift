@@ -146,7 +146,6 @@ void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
   (void)now; (void)healthy; (void)configured;
 #endif
 }
-}
 
 void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout) {
   const auto status = viewStatus(s, now, timeout, healthy, configured);
