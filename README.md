@@ -8,7 +8,6 @@ Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware.
 - **Live RPM Candidate Monitor (CAN ID 0x301)**: Continuously monitors the provisional engine-speed signal identified on the 2025 Bajaj Pulsar NS125 ABS (arbitration ID 0x301, payload byte 0). Calculates estimated RPM using a configurable provisional multiplier (default 40.0), tracks signal freshness with a 250 ms timeout, detects signal anomalies, and provides instant telemetry via `RPM STATUS` and `RPM MONITOR ON`.
 - **Bench-Testable Shift Light Engine**: The 6-LED WS2812B shift-light engine can be bench tested with simulated RPM inputs (`RPM TEST <val>`), verifying color transitions and 6000 RPM shift alerts without vehicle operation. In vehicle operation, physical engine-triggered shift lights remain strictly disabled (`RPM_MAPPED=NO`) until calibration against an independent physical tachometer is complete.
 - **Optimized CAN Reliability & High-Throughput Buffering**: Flash operations in CanRecorder are batched into contiguous memory blocks with an expanded 256-frame ring buffer, preventing SPI flash write delays from causing TWAI hardware overruns or driver missed frames.
-- **Offline Analysis & Calibration Tool (`tools/pulseshift_analyzer.py`)**: Standalone Python utility to filter raw CAN captures, analyze timing and signal statistics, generate time-binned timelines, and perform linear calibration regressions.
 - **Intelligent diagnostics & error logging**: Real-time diagnostic events (CAN overflows, bus errors, storage full alerts, reset reasons) are streamed over USB and safely recorded to flash without circular wipes.
 - **Understandable LED hardware status**: In CAN capture mode, the six LEDs display controller health, frame arrival heartbeat, active recording stage (1, 2, or 3), and flash storage status.
 
@@ -456,34 +455,22 @@ To independently calibrate the candidate signal without risky road tests:
 4. Sample Point 2 (Moderate Stationary Hold):
    - Gently hold throttle stationary at approximately 3000 to 4000 RPM in neutral.
    - Record simultaneous values: `(raw_hold, ref_rpm_hold)`, e.g. `(75, 3050)`.
-5. Run Offline Calibration:
-   - Execute the offline calibration tool:
-     ```bash
-     python tools/pulseshift_analyzer.py --calibrate "37:1450,75:3050"
-     ```
-   - The tool computes slope, offset, and exact C++ rational fraction constants (`scaleNumerator`, `scaleDenominator`, `offsetNumerator`).
-6. Update Profile:
-   - Once verified with independent test data across multiple sessions, enter the calibrated constants into `vehicle_profile.cpp`.
-
----
-
-## Offline Analysis Tool (`tools/pulseshift_analyzer.py`)
-
-A standalone Python CLI tool to inspect and calibrate exported captures:
-
-```bash
-# General signal summary and timing analysis for 0x301 byte 0
-python tools/pulseshift_analyzer.py captures/session.csv --id 0x301
-
-# 1-second time-binned timeline summary
-python tools/pulseshift_analyzer.py captures/session.csv --id 0x301 --timeline
-
-# Export timeline table to a CSV file
-python tools/pulseshift_analyzer.py captures/session.csv --id 0x301 --timeline-csv timeline.csv
-
-# Multi-point linear calibration regression
-python tools/pulseshift_analyzer.py --calibrate "35:1400,75:3000,240:9600"
-```
+5. Compute Two-Point Linear Model:
+   - Calculate slope (m) and intercept (c) from the two verified sample pairs (x1, y1) and (x2, y2):
+     $$\Delta x = x_2 - x_1, \quad \Delta y = y_2 - y_1$$
+     $$m = \frac{\Delta y}{\Delta x}$$
+     $$c = y_1 - (m \times x_1)$$
+   - Convert to integer rational fraction constants for fixed-point integer calculation in ESP32 firmware:
+     $$\text{scaleNumerator} = y_2 - y_1$$
+     $$\text{scaleDenominator} = x_2 - x_1$$
+     $$\text{offsetNumerator} = c$$
+   - Example calculation using hypothetical pairs (37, 1450) and (75, 3050):
+     $$\Delta x = 75 - 37 = 38$$
+     $$\Delta y = 3050 - 1450 = 1600$$
+     $$m = \frac{1600}{38} \approx 42.105$$
+     $$c = 1450 - (42.105 \times 37) \approx -108$$
+6. Update Vehicle Profile:
+   - Once verified with independent physical test data across multiple sessions, enter the calibrated rational constants into `PulseShift/src/vehicle_profile.cpp` and set `RPM_MAPPED = YES` in the profile definition.
 
 ---
 
@@ -520,7 +507,7 @@ PulseShift-Firmware/
 │   ├── ws2812b-circuit.svg
 │   └── sn65hvd230-circuit.svg
 ├── test/                 ← Host-side C++ and Python verification tests
-├── tools/                ← pulseshift_analyzer.py and capture tools
+├── tools/                ← Optional capture scripts (pulseshift_capture.py, can_investigate.py)
 ├── docs/                 ← Hardware and CAN investigation notes
 └── README.md
 ```
