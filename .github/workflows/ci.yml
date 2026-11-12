@@ -57,34 +57,37 @@ jobs:
 
       - name: Compile - CAN Capture mode
         run: |
-          cp -r PulseShift "$RUNNER_TEMP/config-capture"
+          mkdir -p "$RUNNER_TEMP/variants/capture"
+          cp -r PulseShift "$RUNNER_TEMP/variants/capture/PulseShift"
           sed -i 's/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_DEMO/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_CAN_CAPTURE/' \
-            "$RUNNER_TEMP/config-capture/UserConfig.h"
+            "$RUNNER_TEMP/variants/capture/PulseShift/UserConfig.h"
           arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
             --build-path "$RUNNER_TEMP/build-capture" \
-            "$RUNNER_TEMP/config-capture"
+            "$RUNNER_TEMP/variants/capture/PulseShift"
 
       - name: Compile - OLED enabled
         run: |
-          cp -r PulseShift "$RUNNER_TEMP/config-oled"
+          mkdir -p "$RUNNER_TEMP/variants/oled"
+          cp -r PulseShift "$RUNNER_TEMP/variants/oled/PulseShift"
           sed -i 's/#define PULSESHIFT_OLED_ENABLED 0/#define PULSESHIFT_OLED_ENABLED 1/' \
-            "$RUNNER_TEMP/config-oled/UserConfig.h"
+            "$RUNNER_TEMP/variants/oled/PulseShift/UserConfig.h"
           arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
             --build-path "$RUNNER_TEMP/build-oled" \
-            "$RUNNER_TEMP/config-oled"
+            "$RUNNER_TEMP/variants/oled/PulseShift"
 
       - name: Reject invalid user configuration
         run: |
-          cp -r PulseShift "$RUNNER_TEMP/invalid-config"
+          mkdir -p "$RUNNER_TEMP/variants/invalid"
+          cp -r PulseShift "$RUNNER_TEMP/variants/invalid/PulseShift"
           sed -i 's/#define PULSESHIFT_LED_COUNT 6/#define PULSESHIFT_LED_COUNT 0/' \
-            "$RUNNER_TEMP/invalid-config/UserConfig.h"
+            "$RUNNER_TEMP/variants/invalid/PulseShift/UserConfig.h"
           log="$RUNNER_TEMP/invalid-config.log"
           if arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
             --build-path "$RUNNER_TEMP/build-invalid" \
-            "$RUNNER_TEMP/invalid-config" > "$log" 2>&1; then
+            "$RUNNER_TEMP/variants/invalid/PulseShift" > "$log" 2>&1; then
             echo "Invalid config unexpectedly compiled" >&2
             exit 1
           fi
