@@ -2,6 +2,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef SeekSet
+#define SeekSet 0
+#endif
+#ifndef SeekCur
+#define SeekCur 1
+#endif
+#ifndef SeekEnd
+#define SeekEnd 2
+#endif
+
 namespace fs {
 class File {
  public:
@@ -11,6 +21,7 @@ class File {
   size_t read(uint8_t*, size_t) { return 0; }
   int available() { return 0; }
   int readBytes(char*, size_t) { return 0; }
+  bool seek(uint32_t, int = 0) { return true; }
   void flush() {}
   void close() {}
   size_t size() const { return 0; }

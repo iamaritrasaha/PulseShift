@@ -25,6 +25,41 @@ const char* CanRecorder::stageName(Stage s) const {
   }
 }
 
+CanRecorder::State CanRecorder::state() const {
+  if (!StorageManager::instance().isMounted()) return State::Unmounted;
+  if (writeError_) return State::WriteFailure;
+  if (flashPreserved_) return State::PreservedPriorSession;
+  if (storageFull_) return State::StorageFull;
+  if (!recording_) return State::Paused;
+  return State::RecordingOk;
+}
+
+const char* CanRecorder::stateName(State s) const {
+  switch (s) {
+    case State::Unmounted:             return "UNMOUNTED";
+    case State::WriteFailure:          return "WRITE_FAILURE";
+    case State::StorageFull:           return "STORAGE_FULL";
+    case State::PreservedPriorSession: return "FLASH_CAPTURE_PRESERVED";
+    case State::Paused:                return "PAUSED";
+    case State::RecordingOk:           return "RECORDING_OK";
+    default:                           return "UNKNOWN";
+  }
+}
+
+uint32_t CanRecorder::totalRecords() const {
+  auto& sm = StorageManager::instance();
+  if (!sm.isMounted() || !sm.exists(CAPTURE_PATH)) return 0;
+  const size_t sz = sm.size(CAPTURE_PATH);
+  if (sz <= sizeof(CaptureHeader)) return 0;
+  return static_cast<uint32_t>((sz - sizeof(CaptureHeader)) / sizeof(CanLogRecord));
+}
+
+uint32_t CanRecorder::totalPages() const {
+  const uint32_t recs = totalRecords();
+  if (recs == 0) return 1;
+  return (recs + DUMP_PAGE_SIZE - 1) / DUMP_PAGE_SIZE;
+}
+
 void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate, const char* modeName, const char* vehicle) {
   sessionId_ = sessionId;
   bootCount_ = bootCount;
@@ -39,6 +74,8 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
   droppedFrames_ = 0;
   storageFull_ = false;
   flashPreserved_ = false;
+  writeError_ = false;
+  dumpCursor_ = 0;
   recording_ = true;
   lastFlushMs_ = millis();
 
@@ -63,28 +100,33 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
           f.close();
         }
 
-        if (validHeader && hdr.sessionId != sessionId_ && sz > sizeof(CaptureHeader)) {
-          // Prior session data exists: preserve it and lock flash recording
-          flashPreserved_ = true;
-          storageFull_ = true;
-          DiagLogger::instance().logEvent(DiagLevel::Warn, "FLASH_CAPTURE_PRESERVED",
-                                         "Prior session %lu capture preserved (%lu bytes). Use CLEAR YES to overwrite.",
-                                         (unsigned long)hdr.sessionId, (unsigned long)sz);
-#if PULSESHIFT_SERIAL_DIAGNOSTICS
-          Serial.printf("FLASH CAPTURE PRESERVED: session %lu has %lu bytes. Use CLEAR YES to overwrite.\r\n",
-                        (unsigned long)hdr.sessionId, (unsigned long)sz);
-#endif
-        } else {
-          // Recover from partial write at EOF if power cut mid-record
-          const size_t dataLen = sz - sizeof(CaptureHeader);
-          const size_t remainder = dataLen % sizeof(CanLogRecord);
-          if (remainder != 0) {
-            truncateToSize(CAPTURE_PATH, sz - remainder);
-            DiagLogger::instance().logEvent(DiagLevel::Warn, "CAPTURE_RECOVERED",
-                                           "Truncated %u partial bytes at EOF", (unsigned)remainder);
-          }
-          if (sm.size(CAPTURE_PATH) >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
+        if (validHeader && sz > sizeof(CaptureHeader)) {
+          const size_t recordsInFile = (sz - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
+          // If boot count or session ID differs, this capture was recorded in an earlier boot/session
+          if (hdr.bootCount != bootCount_ || hdr.sessionId != sessionId_) {
+            flashPreserved_ = true;
             storageFull_ = true;
+            recording_ = false;
+            sessionId_ = hdr.sessionId;
+            DiagLogger::instance().logEvent(DiagLevel::Warn, "FLASH_CAPTURE_PRESERVED",
+                                           "Prior session %lu capture preserved (%lu records, %lu bytes). Use DUMP to export, or CLEAR YES to overwrite.",
+                                           (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+            Serial.printf("FLASH CAPTURE PRESERVED: session %lu has %lu records (%lu bytes). Use DUMP to export, or CLEAR YES to overwrite.\r\n",
+                          (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
+#endif
+          } else {
+            // Same session/boot: recover any trailing partial record at EOF
+            const size_t dataLen = sz - sizeof(CaptureHeader);
+            const size_t remainder = dataLen % sizeof(CanLogRecord);
+            if (remainder != 0) {
+              truncateToSize(CAPTURE_PATH, sz - remainder);
+              DiagLogger::instance().logEvent(DiagLevel::Warn, "CAPTURE_RECOVERED",
+                                             "Truncated %u partial bytes at EOF", (unsigned)remainder);
+            }
+            if (sm.size(CAPTURE_PATH) >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
+              storageFull_ = true;
+            }
           }
         }
       }
@@ -103,25 +145,65 @@ bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
     orig.close();
     return true;
   }
+
+  // Safety check: verify sufficient free flash to write replacement copy
+  if (sm.freeBytes() < newSize + StorageManager::MIN_FREE_BYTES) {
+    orig.close();
+    DiagLogger::instance().logEvent(DiagLevel::Warn, "TRUNCATE_SKIPPED",
+                                   "Insufficient free flash (%lu bytes) to truncate; original capture preserved.",
+                                   (unsigned long)sm.freeBytes());
+    return false;
+  }
+
   const char* tempPath = "/temp_cap.bin";
   File temp = sm.open(tempPath, "w");
   if (!temp) {
     orig.close();
     return false;
   }
-  uint8_t buf[64];
+
+  uint8_t buf[128];
   size_t copied = 0;
+  bool writeError = false;
   while (orig.available() && copied < newSize) {
     size_t toRead = newSize - copied;
     if (toRead > sizeof(buf)) toRead = sizeof(buf);
     const size_t n = orig.read(buf, toRead);
     if (n == 0) break;
-    temp.write(buf, n);
-    copied += n;
+    const size_t written = temp.write(buf, n);
+    if (written != n) {
+      writeError = true;
+      break;
+    }
+    copied += written;
   }
   orig.close();
   temp.flush();
   temp.close();
+
+  // Validate replacement before touching the original file
+  bool validReplacement = (!writeError && copied == newSize && sm.size(tempPath) == newSize);
+  if (validReplacement && newSize >= 8) {
+    File verifyFile = sm.open(tempPath, "r");
+    if (verifyFile) {
+      char magic[8];
+      if (verifyFile.read(reinterpret_cast<uint8_t*>(magic), 8) != 8 || memcmp(magic, "PULSECAP", 8) != 0) {
+        validReplacement = false;
+      }
+      verifyFile.close();
+    } else {
+      validReplacement = false;
+    }
+  }
+
+  if (!validReplacement) {
+    sm.remove(tempPath);
+    DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_FAILED",
+                                   "Replacement verification failed; original capture preserved.");
+    return false;
+  }
+
+  // Safely replace original only after validated replacement is ready
   sm.remove(path);
   sm.rename(tempPath, path);
   return true;
@@ -180,7 +262,7 @@ bool CanRecorder::push(const CanFrame& frame) {
 void CanRecorder::pump(uint32_t now) {
   if (!initialized_) return;
 
-  // Improved sync: flush when batch reaches 8 records (160 bytes) OR time elapsed >= 200ms
+  // Flush when batch reaches 8 records (160 bytes) OR time elapsed >= 200ms
   if (count_ >= 8 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 200)) {
     flush();
   }
@@ -217,6 +299,7 @@ void CanRecorder::flush() {
     droppedFrames_ += count_;
     count_ = 0;
     head_ = tail_;
+    writeError_ = true;
     return;
   }
 
@@ -228,6 +311,10 @@ void CanRecorder::flush() {
       ++recordedFrames_;
     } else {
       ++droppedFrames_;
+      writeError_ = true;
+      storageFull_ = true;
+      DiagLogger::instance().logEvent(DiagLevel::Error, "STORAGE_ERROR",
+                                     "Write error while flushing record to flash.");
       break;
     }
     tail_ = (tail_ + 1) % RING_CAPACITY;
@@ -266,11 +353,15 @@ size_t CanRecorder::currentFileSize() const {
   return sm.size(CAPTURE_PATH);
 }
 
-void CanRecorder::dumpToSerial() {
+void CanRecorder::dumpPage(uint32_t pageIndex) {
   flush();
+  if (recording_) {
+    recording_ = false;
+    Serial.println("[CAPTURE] Recording paused for safe export. Run 'CAPTURE RESUME' when done.");
+  }
   auto& sm = StorageManager::instance();
   if (!sm.isMounted()) {
-    Serial.println("[CAPTURE] Storage not mounted.");
+    Serial.println("[CAPTURE ERROR] Storage not mounted.");
     return;
   }
 
@@ -281,13 +372,13 @@ void CanRecorder::dumpToSerial() {
 
   File f = sm.open(CAPTURE_PATH, "r");
   if (!f) {
-    Serial.println("[CAPTURE] Could not open capture file.");
+    Serial.println("[CAPTURE ERROR] Could not open capture file.");
     return;
   }
 
   const size_t totalBytes = f.size();
   if (totalBytes < sizeof(CaptureHeader)) {
-    Serial.println("[CAPTURE] File truncated or invalid.");
+    Serial.println("[CAPTURE ERROR] File truncated or invalid.");
     f.close();
     return;
   }
@@ -295,23 +386,54 @@ void CanRecorder::dumpToSerial() {
   CaptureHeader hdr{};
   if (f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr) ||
       memcmp(hdr.magic, "PULSECAP", 8) != 0) {
-    Serial.println("[CAPTURE] Invalid header magic.");
+    Serial.println("[CAPTURE ERROR] Invalid header magic.");
     f.close();
     return;
   }
 
-  Serial.println("=== BEGIN PULSESHIFT RAW CAN CAPTURE ===");
-  Serial.printf("[HEADER] magic=PULSECAP ver=%u recSize=%u sess=%lu boot=%lu bitrate=%lu startMs=%lu mode=%s vehicle=%s\r\n",
-                hdr.headerVersion, hdr.recordSize, (unsigned long)hdr.sessionId,
-                (unsigned long)hdr.bootCount, (unsigned long)hdr.bitrate,
-                (unsigned long)hdr.startMs, hdr.mode, hdr.vehicle);
-  Serial.println("timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok");
+  const uint32_t recs = (totalBytes - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
+  if (recs == 0) {
+    Serial.println("[CAPTURE] No CAN records stored in file.");
+    f.close();
+    return;
+  }
+
+  const uint32_t pages = (recs + DUMP_PAGE_SIZE - 1) / DUMP_PAGE_SIZE;
+  if (pageIndex < 1) pageIndex = 1;
+  if (pageIndex > pages) pageIndex = pages;
+
+  const uint32_t startRec = (pageIndex - 1) * DUMP_PAGE_SIZE;
+  const uint32_t recsInThisPage = (startRec + DUMP_PAGE_SIZE <= recs) ? DUMP_PAGE_SIZE : (recs - startRec);
+  const uint32_t endRec = startRec + recsInThisPage;
+
+  // Print BEGIN page marker
+  if (pageIndex == 1) {
+    Serial.printf("=== BEGIN PULSESHIFT RAW CAN CAPTURE [PAGE %lu/%lu: RECORDS %lu-%lu OF %lu] ===\r\n",
+                  (unsigned long)pageIndex, (unsigned long)pages,
+                  (unsigned long)(startRec + 1), (unsigned long)endRec, (unsigned long)recs);
+    Serial.printf("[HEADER] magic=PULSECAP ver=%u recSize=%u sess=%lu boot=%lu bitrate=%lu startMs=%lu mode=%s vehicle=%s\r\n",
+                  hdr.headerVersion, hdr.recordSize, (unsigned long)hdr.sessionId,
+                  (unsigned long)hdr.bootCount, (unsigned long)hdr.bitrate,
+                  (unsigned long)hdr.startMs, hdr.mode, hdr.vehicle);
+    Serial.println("timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok");
+  } else {
+    Serial.printf("=== BEGIN PULSESHIFT PAGE %lu/%lu: RECORDS %lu-%lu OF %lu ===\r\n",
+                  (unsigned long)pageIndex, (unsigned long)pages,
+                  (unsigned long)(startRec + 1), (unsigned long)endRec, (unsigned long)recs);
+  }
+
+  // Seek to start of page
+  const size_t offset = sizeof(CaptureHeader) + (startRec * sizeof(CanLogRecord));
+  f.seek(offset, SeekSet);
 
   uint32_t validCount = 0;
   uint32_t corruptCount = 0;
-
   CanLogRecord rec{};
-  while (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) == sizeof(rec)) {
+  for (uint32_t i = 0; i < recsInThisPage; ++i) {
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) != sizeof(rec)) {
+      Serial.printf("[DUMP ERROR] Incomplete record at record index %lu\r\n", (unsigned long)(startRec + i + 1));
+      break;
+    }
     const uint16_t expected = computeCrc16(reinterpret_cast<const uint8_t*>(&rec), 18);
     const bool crcOk = (rec.checksum == expected);
     if (crcOk) ++validCount; else ++corruptCount;
@@ -321,9 +443,9 @@ void CanRecorder::dumpToSerial() {
     const uint32_t arbId = rec.id & 0x1FFFFFFFUL;
 
     char hexData[17] = "";
-    for (uint8_t i = 0; i < rec.dlc && i < 8; ++i) {
+    for (uint8_t b = 0; b < rec.dlc && b < 8; ++b) {
       char byteStr[3];
-      snprintf(byteStr, sizeof(byteStr), "%02X", rec.data[i]);
+      snprintf(byteStr, sizeof(byteStr), "%02X", rec.data[b]);
       strcat(hexData, byteStr);
     }
 
@@ -340,8 +462,139 @@ void CanRecorder::dumpToSerial() {
   }
 
   f.close();
+
+  // Print END marker
+  if (pageIndex == pages) {
+    Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
+                  (unsigned long)(startRec + validCount), (unsigned long)corruptCount, (unsigned long)totalBytes);
+    dumpCursor_ = 0; // Reset cursor upon full completion
+  } else {
+    dumpCursor_ = endRec;
+    Serial.printf("=== END PULSESHIFT PAGE %lu/%lu (RECORDS %lu-%lu OF %lu) [Next: 'DUMP NEXT' or 'DUMP ALL'] ===\r\n",
+                  (unsigned long)pageIndex, (unsigned long)pages,
+                  (unsigned long)(startRec + 1), (unsigned long)endRec, (unsigned long)recs);
+  }
+}
+
+void CanRecorder::dumpNext() {
+  const uint32_t recs = totalRecords();
+  if (recs == 0) {
+    dumpPage(1);
+    return;
+  }
+  const uint32_t currentPage = (dumpCursor_ / DUMP_PAGE_SIZE) + 1;
+  dumpPage(currentPage);
+}
+
+void CanRecorder::dumpAll() {
+  flush();
+  if (recording_) {
+    recording_ = false;
+    Serial.println("[CAPTURE] Recording paused for safe export. Run 'CAPTURE RESUME' when done.");
+  }
+  auto& sm = StorageManager::instance();
+  if (!sm.isMounted() || !sm.exists(CAPTURE_PATH)) {
+    Serial.println("[CAPTURE] No capture file found.");
+    return;
+  }
+  File f = sm.open(CAPTURE_PATH, "r");
+  if (!f) {
+    Serial.println("[CAPTURE ERROR] Could not open capture file.");
+    return;
+  }
+  const size_t totalBytes = f.size();
+  if (totalBytes < sizeof(CaptureHeader)) {
+    Serial.println("[CAPTURE ERROR] File truncated or invalid.");
+    f.close();
+    return;
+  }
+  CaptureHeader hdr{};
+  if (f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr) ||
+      memcmp(hdr.magic, "PULSECAP", 8) != 0) {
+    Serial.println("[CAPTURE ERROR] Invalid header magic.");
+    f.close();
+    return;
+  }
+
+  const uint32_t recs = (totalBytes - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
+  Serial.printf("=== BEGIN PULSESHIFT RAW CAN CAPTURE [ALL: %lu RECORDS] ===\r\n", (unsigned long)recs);
+  Serial.printf("[HEADER] magic=PULSECAP ver=%u recSize=%u sess=%lu boot=%lu bitrate=%lu startMs=%lu mode=%s vehicle=%s\r\n",
+                hdr.headerVersion, hdr.recordSize, (unsigned long)hdr.sessionId,
+                (unsigned long)hdr.bootCount, (unsigned long)hdr.bitrate,
+                (unsigned long)hdr.startMs, hdr.mode, hdr.vehicle);
+  Serial.println("timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok");
+
+  uint32_t validCount = 0;
+  uint32_t corruptCount = 0;
+  CanLogRecord rec{};
+  while (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) == sizeof(rec)) {
+    const uint16_t expected = computeCrc16(reinterpret_cast<const uint8_t*>(&rec), 18);
+    const bool crcOk = (rec.checksum == expected);
+    if (crcOk) ++validCount; else ++corruptCount;
+
+    const bool ext = (rec.id & 0x80000000UL) != 0;
+    const bool rtr = (rec.id & 0x40000000UL) != 0;
+    const uint32_t arbId = rec.id & 0x1FFFFFFFUL;
+
+    char hexData[17] = "";
+    for (uint8_t b = 0; b < rec.dlc && b < 8; ++b) {
+      char byteStr[3];
+      snprintf(byteStr, sizeof(byteStr), "%02X", rec.data[b]);
+      strcat(hexData, byteStr);
+    }
+
+    Serial.printf("%lu,%0*lX,%d,%d,%u,%s,%u,%d\r\n",
+                  (unsigned long)rec.timestampMs,
+                  ext ? 8 : 3,
+                  (unsigned long)arbId,
+                  ext ? 1 : 0,
+                  rtr ? 1 : 0,
+                  rec.dlc,
+                  hexData,
+                  rec.stage,
+                  crcOk ? 1 : 0);
+  }
+
+  f.close();
+  dumpCursor_ = 0;
   Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
                 (unsigned long)validCount, (unsigned long)corruptCount, (unsigned long)totalBytes);
+}
+
+void CanRecorder::dumpStatus() {
+  const uint32_t recs = totalRecords();
+  const uint32_t pages = totalPages();
+  const uint32_t currentPg = (dumpCursor_ / DUMP_PAGE_SIZE) + 1;
+  const uint32_t remaining = (dumpCursor_ < recs) ? (recs - dumpCursor_) : 0;
+
+  Serial.println("=== PULSESHIFT DUMP STATUS ===");
+  Serial.printf("Total Stored Records: %lu (%lu bytes)\r\n", (unsigned long)recs, (unsigned long)currentFileSize());
+  Serial.printf("Total Pages: %lu (%lu records per page)\r\n", (unsigned long)pages, (unsigned long)DUMP_PAGE_SIZE);
+  Serial.printf("Export Cursor: Record %lu (Page %lu of %lu)\r\n",
+                (unsigned long)dumpCursor_, (unsigned long)currentPg, (unsigned long)pages);
+  Serial.printf("Remaining to Export: %lu records\r\n", (unsigned long)remaining);
+  Serial.println("Commands:");
+  Serial.println("  DUMP        : Export next page (records 500 at a time)");
+  Serial.println("  DUMP NEXT   : Export next page");
+  Serial.println("  DUMP ALL    : Stream all records continuously without stopping");
+  Serial.println("  DUMP PAGE n : Export specific page number n");
+  Serial.println("  DUMP CANCEL : Reset export cursor to page 1");
+  Serial.println("==============================");
+}
+
+void CanRecorder::dumpCancel() {
+  dumpCursor_ = 0;
+  Serial.println("[DUMP] Export cursor reset to beginning (Page 1).");
+}
+
+void CanRecorder::dumpPageNumber(uint32_t pageNumber) {
+  const uint32_t pages = totalPages();
+  if (pageNumber < 1 || pageNumber > pages) {
+    Serial.printf("[DUMP ERROR] Invalid page number %lu. Valid pages: 1..%lu\r\n",
+                  (unsigned long)pageNumber, (unsigned long)pages);
+    return;
+  }
+  dumpPage(pageNumber);
 }
 
 void CanRecorder::clear() {
@@ -350,10 +603,16 @@ void CanRecorder::clear() {
   if (sm.isMounted() && sm.exists(CAPTURE_PATH)) {
     sm.remove(CAPTURE_PATH);
   }
+  sm.nextSessionId();
+  sessionId_ = sm.currentSessionId();
+  bootCount_ = sm.bootCount();
   flashPreserved_ = false;
   recordedFrames_ = 0;
   droppedFrames_ = 0;
   storageFull_ = false;
+  writeError_ = false;
+  recording_ = true;
+  dumpCursor_ = 0;
   writeHeader();
-  DiagLogger::instance().logEvent(DiagLevel::Info, "CAPTURE_CLEAR", "Capture file cleared.");
+  DiagLogger::instance().logEvent(DiagLevel::Info, "CAPTURE_CLEAR", "Capture cleared; fresh session started.");
 }

@@ -15,7 +15,24 @@
 //   LED pin, LED count, brightness, or CAN bitrate.
 //
 // Serial Monitor (115200 baud):
-//   Commands: HELP, STATUS, LOGS, DUMP, CLEAR, CLEAR YES
+//   Commands:
+//     STATUS          : System health, storage state, and troubleshooting advice
+//     LOGS            : Dump persistent diagnostic events log
+//     DUMP            : Export CAN capture in 500-record pages
+//     DUMP NEXT       : Export next 500-record page
+//     DUMP ALL        : Export all records continuously without pagination
+//     DUMP STATUS     : Show export progress and page count
+//     DUMP CANCEL     : Reset export cursor to page 1
+//     DUMP PAGE <n>   : Export specific page number
+//     STAGE <1|2|3>   : Set capture stage (1=KeyOn, 2=Idle, 3=GentleRPM)
+//     1, 2, 3         : Quick shortcuts for capture stages
+//     CAPTURE STOP    : Pause flash recording and flush buffers
+//     CAPTURE RESUME  : Resume flash recording
+//     STREAM ON       : Enable live raw CAN frame streaming over serial
+//     STREAM OFF      : Disable live streaming (default: concise summaries only)
+//     CLEAR           : Request erasing stored diagnostic logs and CAN capture
+//     CLEAR YES       : Confirm erase and start a fresh capture session
+//     HELP            : Display this command reference
 // ============================================================================
 
 #include <Arduino.h>
@@ -148,14 +165,27 @@ public:
 
       dashboard_.notifyRxActivity(now);
       const auto result = rpm_.ingest(f);
-      logger_.push(f, result);
+
+      if (!firstFrameSeen_) {
+        firstFrameSeen_ = true;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.println("[CAN] First motorcycle CAN frame received! Traffic is active.");
+#endif
+      }
+
+      // Buffer into diagnostic logger only if live streaming is active
+      if (liveStreamEnabled_) {
+        logger_.push(f, result);
+      }
 
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
       CanRecorder::instance().push(f);
 #endif
 
-      // Real-time USB Serial streaming for connected PC capture
-      streamFrameSerial(f, static_cast<uint8_t>(CanRecorder::instance().currentStage()));
+      // Real-time USB Serial streaming (only when live streaming is enabled)
+      if (liveStreamEnabled_) {
+        streamFrameSerial(f, static_cast<uint8_t>(CanRecorder::instance().currentStage()));
+      }
     }
 
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
@@ -186,27 +216,11 @@ public:
     dashboard_.update(rpm_, now, healthy, configured, rpm_.timeoutMs(config::staleMs));
 
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-    // 7. Periodic telemetry output
-    if (!finalReportPrinted_ && uint32_t(now - lastReport_) >= 1000) {
-      lastReport_ = now;
-#if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
-      logger_.status("APP mode=%s accepted=%lu rejected=%lu recFrames=%lu recDropped=%lu stage=%u",
-                     config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
-                     (unsigned long)CanRecorder::instance().recordedFrames(),
-                     (unsigned long)CanRecorder::instance().droppedFrames(),
-                     (unsigned)CanRecorder::instance().currentStage());
-      logger_.status("APP fresh=%d busFresh=%d rpm=%u configured=%d healthy=%d",
-                     rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy,
-                     rpm_.busFresh(now, config::staleMs), rpm_.rpm(), configured, healthy);
-#else
-      Serial.printf("APP mode=%s accepted=%lu rejected=%lu fresh=%d busFresh=%d rpm=%u alert=%d startup=%d logDropped=%lu\r\n",
-                    config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
-                    rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy, rpm_.busFresh(now, config::staleMs), rpm_.rpm(),
-                    dashboard_.shiftLight().isAlertActive(), !dashboard_.shiftLight().isStartupComplete(),
-                    (unsigned long)logger_.dropped());
-#endif
+    // 7. Periodic concise live summary every 2 seconds
+    if (!finalReportPrinted_ && uint32_t(now - lastLiveSummary_) >= 2000) {
+      lastLiveSummary_ = now;
+      printLiveSummary(now);
 #if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
-      transport_.diagnostics();
       if (!healthy) finalReportPrinted_ = true;
 #endif
     }
@@ -239,6 +253,8 @@ public:
 private:
   void streamFrameSerial(const CanFrame& f, uint8_t stage) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
+    if (!liveStreamEnabled_) return;
+
     if (Serial.availableForWrite() < 50) {
       ++serialDroppedFrames_;
       if (serialDroppedFrames_ == 1 || (serialDroppedFrames_ % 100) == 0) {
@@ -268,6 +284,64 @@ private:
                   hexData);
 #else
     (void)f; (void)stage;
+#endif
+  }
+
+  void setStage(CanRecorder::Stage s) {
+    CanRecorder::instance().setStage(s);
+    dashboard_.triggerButtonFeedback(millis());
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.printf("STAGE,%lu,%u,%s\r\n", (unsigned long)millis(), (unsigned)s,
+                  CanRecorder::instance().stageName(s));
+    Serial.printf("[STAGE] Set to Stage %u (%s)\r\n", (unsigned)s,
+                  CanRecorder::instance().stageName(s));
+#endif
+  }
+
+  void printLiveSummary(uint32_t now) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    auto& rec = CanRecorder::instance();
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
+    const bool traffic = transport_.hasTraffic(now);
+    const bool healthy = transport_.healthy();
+    const uint32_t br = transport_.bitrate();
+    const uint32_t rxTotal = transport_.totalRx();
+#else
+    const bool traffic = true;
+    const bool healthy = true;
+    const uint32_t br = 500000;
+    const uint32_t rxTotal = rec.recordedFrames();
+#endif
+    const char* stageStr = rec.stageName(rec.currentStage());
+    const size_t bytes = rec.currentFileSize();
+
+    if (rec.state() == CanRecorder::State::PreservedPriorSession) {
+      Serial.printf("[LIVE] Bus: %s (%lu bps) | Flash: PRESERVED (%lu B) | Type 'DUMP' to export or 'CLEAR YES' to wipe\r\n",
+                    healthy ? "OK" : "FAULT", (unsigned long)br, (unsigned long)bytes);
+    } else if (rec.state() == CanRecorder::State::StorageFull) {
+      Serial.printf("[LIVE] Bus: %s (%lu bps) | Flash: FULL (%lu B) | Rec: %lu | Drops: %lu | Type 'DUMP' to export\r\n",
+                    healthy ? "OK" : "FAULT", (unsigned long)br,
+                    (unsigned long)bytes, (unsigned long)rec.recordedFrames(), (unsigned long)rec.droppedFrames());
+    } else if (rec.state() == CanRecorder::State::Paused) {
+      Serial.printf("[LIVE] Bus: %s (%lu bps) | Recording: PAUSED | Stage %u (%s) | Rec: %lu | Flash: %lu B\r\n",
+                    healthy ? "OK" : "FAULT", (unsigned long)br,
+                    (unsigned)rec.currentStage(), stageStr,
+                    (unsigned long)rec.recordedFrames(), (unsigned long)bytes);
+    } else if (!traffic && rxTotal == 0) {
+      Serial.printf("[LIVE] Bus: %s (%lu bps) | Traffic: WAITING | Stage %u (%s) | Rec: 0 | Flash: %lu B\r\n",
+                    healthy ? "OK" : "FAULT", (unsigned long)br,
+                    (unsigned)rec.currentStage(), stageStr, (unsigned long)bytes);
+    } else {
+      Serial.printf("[LIVE] Bus: %s | Traffic: %s | Stage %u (%s) | RX: %lu | Rec: %lu | Drops: %lu | Flash: %lu B\r\n",
+                    healthy ? "OK" : "FAULT", traffic ? "ACTIVE" : "IDLE",
+                    (unsigned)rec.currentStage(), stageStr,
+                    (unsigned long)rxTotal,
+                    (unsigned long)rec.recordedFrames(),
+                    (unsigned long)rec.droppedFrames(),
+                    (unsigned long)bytes);
+    }
+#else
+    (void)now;
 #endif
   }
 
@@ -348,26 +422,53 @@ private:
       printStatus();
     } else if (strcmp(upper, "LOGS") == 0) {
       DiagLogger::instance().dumpToSerial();
-    } else if (strcmp(upper, "DUMP") == 0) {
-      CanRecorder::instance().dumpToSerial();
-    } else if (strcmp(cmd, "CLEAR YES") == 0 || strcmp(cmd, "clear yes") == 0) {
+    } else if (strcasecmp(cmd, "DUMP") == 0 || strcasecmp(cmd, "DUMP NEXT") == 0) {
+      CanRecorder::instance().dumpNext();
+    } else if (strcasecmp(cmd, "DUMP ALL") == 0) {
+      CanRecorder::instance().dumpAll();
+    } else if (strcasecmp(cmd, "DUMP STATUS") == 0) {
+      CanRecorder::instance().dumpStatus();
+    } else if (strcasecmp(cmd, "DUMP CANCEL") == 0 || strcasecmp(cmd, "DUMP RESET") == 0) {
+      CanRecorder::instance().dumpCancel();
+    } else if (strncasecmp(cmd, "DUMP PAGE ", 10) == 0) {
+      const int pg = atoi(cmd + 10);
+      if (pg > 0) {
+        CanRecorder::instance().dumpPageNumber(static_cast<uint32_t>(pg));
+      } else {
+        Serial.println("[ERROR] Page must be 1 or higher.");
+      }
+    } else if (strcasecmp(cmd, "CAPTURE STOP") == 0 || strcasecmp(cmd, "CAPTURE PAUSE") == 0) {
+      CanRecorder::instance().flush();
+      CanRecorder::instance().setRecording(false);
+      Serial.println("[CAPTURE] Recording paused. Frames in memory flushed to flash.");
+    } else if (strcasecmp(cmd, "CAPTURE RESUME") == 0 || strcasecmp(cmd, "CAPTURE START") == 0) {
+      if (CanRecorder::instance().isFlashPreserved()) {
+        Serial.println("[CAPTURE] Cannot resume: flash contains preserved capture from prior session.");
+        Serial.println("[CAPTURE] Type 'DUMP' to export, or 'CLEAR YES' to start a fresh capture.");
+      } else if (CanRecorder::instance().isStorageFull()) {
+        Serial.println("[CAPTURE] Cannot resume: storage is full. Type 'DUMP' to export, or 'CLEAR YES' to wipe.");
+      } else {
+        CanRecorder::instance().setRecording(true);
+        Serial.println("[CAPTURE] Recording resumed.");
+      }
+    } else if (strcmp(cmd, "1") == 0 || strncasecmp(cmd, "STAGE 1", 7) == 0 || strcasecmp(cmd, "STAGE 1") == 0) {
+      setStage(CanRecorder::STAGE_KEY_ON_ENGINE_OFF);
+    } else if (strcmp(cmd, "2") == 0 || strncasecmp(cmd, "STAGE 2", 7) == 0 || strcasecmp(cmd, "STAGE 2") == 0) {
+      setStage(CanRecorder::STAGE_ENGINE_IDLING);
+    } else if (strcmp(cmd, "3") == 0 || strncasecmp(cmd, "STAGE 3", 7) == 0 || strcasecmp(cmd, "STAGE 3") == 0) {
+      setStage(CanRecorder::STAGE_GENTLE_RPM);
+    } else if (strcasecmp(cmd, "STREAM ON") == 0 || strcasecmp(cmd, "LIVE ON") == 0) {
+      liveStreamEnabled_ = true;
+      Serial.println("[STREAM] Live raw CAN frame streaming ENABLED.");
+    } else if (strcasecmp(cmd, "STREAM OFF") == 0 || strcasecmp(cmd, "LIVE OFF") == 0) {
+      liveStreamEnabled_ = false;
+      Serial.println("[STREAM] Live raw CAN frame streaming DISABLED (default).");
+    } else if (strcasecmp(cmd, "CLEAR YES") == 0) {
       DiagLogger::instance().clear();
       CanRecorder::instance().clear();
-      Serial.println("[OK] All offline diagnostics and CAN captures cleared.");
-    } else if (strcmp(upper, "CLEAR") == 0) {
-      Serial.println("[WARNING] To confirm clearing all stored offline logs, type: CLEAR YES");
-    } else if (strncmp(cmd, "stage ", 6) == 0 || strncmp(cmd, "STAGE ", 6) == 0) {
-      const int s = atoi(cmd + 6);
-      if (s >= 1 && s <= 3) {
-        CanRecorder::instance().setStage(static_cast<CanRecorder::Stage>(s));
-        dashboard_.triggerButtonFeedback(millis());
-        Serial.printf("STAGE,%lu,%d,%s\r\n", (unsigned long)millis(), s,
-                      CanRecorder::instance().stageName(CanRecorder::instance().currentStage()));
-        Serial.printf("[STAGE] Set to %d (%s)\r\n", s,
-                      CanRecorder::instance().stageName(CanRecorder::instance().currentStage()));
-      } else {
-        Serial.println("[ERROR] Stage must be 1 (KeyOn/EngineOff), 2 (Idle), or 3 (GentleRPM)");
-      }
+      Serial.println("[OK] Storage cleared. Fresh capture session initialized.");
+    } else if (strcasecmp(cmd, "CLEAR") == 0) {
+      Serial.println("[WARNING] To confirm clearing all stored offline logs and capture, type: CLEAR YES");
     }
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
     else if (strcmp(cmd, "demo start") == 0) {
@@ -417,12 +518,22 @@ private:
 
   void printHelp() {
     Serial.println("=== PulseShift Command Interface ===");
-    Serial.println("  STATUS          : Show comprehensive system & offline diagnostic status");
+    Serial.println("  STATUS          : Comprehensive system status & intelligent troubleshooting");
     Serial.println("  LOGS            : Dump persistent diagnostic event log");
-    Serial.println("  DUMP            : Export raw recorded CAN frames with CRC checksums");
+    Serial.println("  DUMP            : Export recorded CAN frames in 500-record pages");
+    Serial.println("  DUMP NEXT       : Export next 500-record page");
+    Serial.println("  DUMP ALL        : Export all records continuously without pagination");
+    Serial.println("  DUMP STATUS     : Show current export progress and page count");
+    Serial.println("  DUMP CANCEL     : Reset export cursor to page 1");
+    Serial.println("  DUMP PAGE <n>   : Export specific page number n");
     Serial.println("  STAGE <1|2|3>   : Set field capture stage (1=KeyOn, 2=Idle, 3=GentleRPM)");
+    Serial.println("  1, 2, 3         : Quick shortcuts to set Stage 1, 2, or 3");
+    Serial.println("  CAPTURE STOP    : Pause flash recording and flush buffers");
+    Serial.println("  CAPTURE RESUME  : Resume flash recording");
+    Serial.println("  STREAM ON       : Enable live raw CAN frame streaming over serial");
+    Serial.println("  STREAM OFF      : Disable live streaming (default: concise summaries only)");
     Serial.println("  CLEAR           : Request erasing stored diagnostic logs and CAN capture");
-    Serial.println("  CLEAR YES       : Confirm erase of stored logs");
+    Serial.println("  CLEAR YES       : Confirm erase and start a fresh capture session");
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
     Serial.println("  demo start      : Resume automated synthetic sweep");
     Serial.println("  demo stop       : Stop synthetic frame reception");
@@ -468,11 +579,17 @@ private:
 
     Serial.println("\n--- Field CAN Capture ---");
     Serial.printf("Session ID: %lu\r\n", (unsigned long)sm.currentSessionId());
-    Serial.printf("Recording Active: %s\r\n", rec.isRecording() ? "YES" : "PAUSED");
+    Serial.printf("Recording State: %s\r\n", rec.stateName(rec.state()));
     Serial.printf("Current Stage: %u (%s)\r\n", (unsigned)rec.currentStage(), rec.stageName(rec.currentStage()));
     Serial.printf("Frames Recorded: %lu | In-Memory Dropped: %lu | Serial Dropped: %lu\r\n",
                   (unsigned long)rec.recordedFrames(), (unsigned long)rec.droppedFrames(),
                   (unsigned long)serialDroppedFrames_);
+    Serial.printf("Export Cursor: Record %lu of %lu (Page %lu of %lu)\r\n",
+                  (unsigned long)rec.dumpCursor(), (unsigned long)rec.totalRecords(),
+                  (unsigned long)((rec.dumpCursor() / CanRecorder::DUMP_PAGE_SIZE) + 1),
+                  (unsigned long)rec.totalPages());
+    Serial.printf("Live Raw Frame Streaming: %s (use 'STREAM ON' or 'STREAM OFF')\r\n",
+                  liveStreamEnabled_ ? "ENABLED" : "DISABLED (Default)");
 
 #if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
     Serial.println("\n--- CAN Hardware Controller ---");
@@ -497,6 +614,67 @@ private:
     Serial.printf("Current RPM: %u | Signal Invalid: %s | Fresh: %s\r\n",
                   rpm_.rpm(), rpm_.signalInvalid() ? "YES" : "NO",
                   rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) ? "YES" : "NO");
+
+    Serial.println("\n--- Intelligent Diagnostics & Troubleshooting ---");
+    if (!sm.isMounted() || sm.mountFailed()) {
+      Serial.println("DIAGNOSTIC: STORAGE_ERROR");
+      Serial.println("  Observation: LittleFS filesystem mount failed.");
+      Serial.println("  Possible Causes: Unformatted flash partition on fresh board, or flash hardware fault.");
+      Serial.println("  Recommendation: Type 'CLEAR YES' to format the partition for first-time use.");
+    } else if (rec.isFlashPreserved()) {
+      Serial.println("DIAGNOSTIC: FLASH_CAPTURE_PRESERVED");
+      Serial.println("  Observation: Valid capture data from a prior session is preserved on flash.");
+      Serial.println("  Possible Causes: Board was rebooted or reconnected via USB after a test run.");
+      Serial.println("  Recommendation: Type 'DUMP' to export data, or 'CLEAR YES' to start a fresh capture.");
+    } else if (rec.isStorageFull()) {
+      Serial.println("DIAGNOSTIC: STORAGE_FULL");
+      Serial.println("  Observation: Capture storage reached its limit. Recording stopped safely.");
+      Serial.println("  Possible Causes: Long recording session reached 1,000,000 byte quota.");
+      Serial.println("  Recommendation: Type 'DUMP' to export recorded data.");
+    } else if (rec.state() == CanRecorder::State::RecordingOk) {
+      Serial.println("DIAGNOSTIC: RECORDING_OK");
+      Serial.println("  Observation: Flash recording is active and operational.");
+    }
+
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
+    if (!transport_.healthy()) {
+      Serial.println("DIAGNOSTIC: CAN_CONTROLLER_FAILURE");
+      Serial.println("  Observation: Hardware TWAI controller entered bus-off or failed initialization.");
+      Serial.println("  Possible Causes: Transceiver 3.3V disconnected, electrical short, or transceiver RS pin floating.");
+      Serial.println("  Recommendation: Check transceiver wiring and reboot ESP32.");
+    } else if (transport_.totalRx() == 0 || !transport_.hasTraffic(now)) {
+      Serial.println("DIAGNOSTIC: NO_CAN_TRAFFIC");
+      Serial.println("  Observation: No CAN frames received in the last active interval.");
+      Serial.println("  Possible Causes: Ignition is OFF; CAN-H/CAN-L disconnected or reversed; transceiver power missing; bitrate mismatch (configured: 500k); bus in sleep mode.");
+      Serial.println("  Recommendations:");
+      Serial.println("    1. Turn motorcycle ignition switch ON.");
+      Serial.println("    2. Verify SN65HVD230 VCC connects to ESP32 3V3 and GND connects to GND.");
+      Serial.println("    3. Verify CAN-H and CAN-L connection to vehicle diagnostic port.");
+      Serial.println("    4. Verify transceiver RXD connects to ESP32 GPIO16 and RS connects to GND.");
+    }
+
+    if (transport_.busErrors() > 0) {
+      Serial.println("DIAGNOSTIC: CAN_BUS_ERRORS");
+      Serial.printf("  Observation: %lu hardware bus error events recorded.\r\n", (unsigned long)transport_.busErrors());
+      Serial.println("  Possible Causes: Signal reflection (missing termination), electrical noise, loose ground, or bitrate tolerance mismatch.");
+      Serial.println("  Recommendation: Check 120-ohm bus termination resistor and ensure common vehicle ground.");
+    }
+
+    if (transport_.overrunFrames() > 0 || transport_.missedFrames() > 0) {
+      Serial.println("DIAGNOSTIC: CAN_RX_OVERFLOW");
+      Serial.printf("  Observation: %lu driver missed frames, %lu hardware overruns.\r\n",
+                    (unsigned long)transport_.missedFrames(), (unsigned long)transport_.overrunFrames());
+      Serial.println("  Explanation: Heavy bus traffic briefly exceeded buffer capacity.");
+      Serial.println("  Impact: Non-fatal. Dropped frames are logged, and reception continues uninterrupted.");
+    }
+#endif
+
+    if (!rpm_.mapped()) {
+      Serial.println("DIAGNOSTIC: RPM_UNCONFIGURED");
+      Serial.println("  Observation: Vehicle profile does not have a verified RPM arbitration ID.");
+      Serial.println("  Explanation: Expected for CAN_CAPTURE mode. Export capture with 'DUMP' to identify RPM frame.");
+    }
+
     Serial.println("================================");
   }
 #endif
@@ -520,8 +698,11 @@ private:
   };
 #endif
   uint32_t lastReport_ = 0;
+  uint32_t lastLiveSummary_ = 0;
   uint32_t lastStat_ = 0;
   uint32_t serialDroppedFrames_ = 0;
+  bool liveStreamEnabled_ = false;
+  bool firstFrameSeen_ = false;
   bool finalReportPrinted_ = false;
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   uint32_t lastSent_ = 0, sequence_ = 0;

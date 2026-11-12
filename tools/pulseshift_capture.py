@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """
-PulseShift Real Motorcycle CAN Acquisition Tool
+PulseShift Real Motorcycle CAN Acquisition Tool (Optional Advanced Tooling)
 Copyright (c) 2026 Aritra Saha. All rights reserved.
+
+Optional legacy/advanced PC acquisition utility. Not required for normal
+PulseShift operation; PulseShift firmware now records directly to onboard flash
+and exports via Arduino IDE Serial Monitor without requiring Python.
 
 Captures real-time motorcycle CAN frames and diagnostic telemetry streamed from
 the ESP32 via USB Serial (CP2102) to disk.
+
+Note: Live frame streaming is disabled by default in PulseShift firmware to avoid
+overwhelming Arduino IDE. This tool sends 'STREAM ON' upon connection to enable
+raw frame streaming.
 
 Usage:
   python tools/pulseshift_capture.py [--port COM5] [--baud 115200]
@@ -73,6 +81,8 @@ class PulseShiftCapture:
         try:
             self.ser = serial.Serial(self.port, self.baud, timeout=self.timeout)
             print(f"[OK] Connected to PulseShift ESP32 on {self.port} at {self.baud} baud.")
+            time.sleep(0.1)
+            self.send_command("STREAM ON")
             return True
         except serial.SerialException as ex:
             err_str = str(ex)

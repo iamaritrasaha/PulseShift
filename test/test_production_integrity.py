@@ -106,6 +106,53 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
         self.assertEqual(tool.baud, 115200)
         self.assertEqual(tool.current_stage, 1)
 
+    def test_arduino_ide_commands_present(self):
+        """Verify all required Arduino IDE Serial Monitor commands are implemented in PulseShift.ino."""
+        with open(self.main_ino_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        expected_commands = [
+            'STATUS', 'LOGS', 'DUMP', 'DUMP NEXT', 'DUMP ALL',
+            'DUMP STATUS', 'DUMP CANCEL', 'DUMP PAGE',
+            'CAPTURE STOP', 'CAPTURE RESUME',
+            'STAGE 1', 'STAGE 2', 'STAGE 3',
+            'STREAM ON', 'STREAM OFF',
+            'CLEAR YES'
+        ]
+        for cmd in expected_commands:
+            self.assertIn(cmd, content, f"Command '{cmd}' must be supported in PulseShift.ino.")
+
+    def test_dump_pagination_and_storage_states(self):
+        """Verify pagination constants and distinct recorder states in can_recorder.h."""
+        rec_h = os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.h")
+        with open(rec_h, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("DUMP_PAGE_SIZE = 500", content)
+        self.assertIn("PreservedPriorSession", content)
+        self.assertIn("StorageFull", content)
+        self.assertIn("WriteFailure", content)
+        self.assertIn("RecordingOk", content)
+
+    def test_safe_truncation_and_preservation(self):
+        """Verify truncateToSize validates replacement file before removing original."""
+        rec_cpp = os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.cpp")
+        with open(rec_cpp, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Must check free space before attempting truncate
+        self.assertIn("StorageManager::MIN_FREE_BYTES", content)
+        # Must verify replacement before removing original
+        self.assertIn("validReplacement", content)
+        self.assertIn("TRUNCATE_FAILED", content)
+
+    def test_live_streaming_default_disabled(self):
+        """Verify raw frame streaming is disabled by default to avoid flooding Serial Monitor."""
+        with open(self.main_ino_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("bool liveStreamEnabled_ = false;", content)
+
     def test_zero_em_and_en_dashes_in_active_project(self):
         """Strict verification: 0 em-dashes (\u2014) and 0 en-dashes (\u2013) across code and documentation."""
         bad_chars = {'\u2014': 'EM DASH', '\u2013': 'EN DASH'}

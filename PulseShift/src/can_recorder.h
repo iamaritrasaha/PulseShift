@@ -34,12 +34,22 @@ class CanRecorder {
   static constexpr const char* CAPTURE_PATH = "/capture.bin";
   static constexpr size_t MAX_CAPTURE_SIZE = 1000000; // 1,000,000 bytes (~50,000 frames)
   static constexpr size_t RING_CAPACITY = 128;        // In-memory queue (2560 bytes)
+  static constexpr size_t DUMP_PAGE_SIZE = 500;       // 500 records per export page
 
   enum Stage : uint8_t {
     STAGE_STANDBY = 0,
     STAGE_KEY_ON_ENGINE_OFF = 1,
     STAGE_ENGINE_IDLING = 2,
     STAGE_GENTLE_RPM = 3
+  };
+
+  enum class State : uint8_t {
+    Unmounted,
+    WriteFailure,
+    StorageFull,
+    PreservedPriorSession,
+    Paused,
+    RecordingOk
   };
 
   static CanRecorder& instance() {
@@ -61,12 +71,27 @@ class CanRecorder {
   bool isRecording() const { return recording_; }
   bool isStorageFull() const { return storageFull_; }
   bool isFlashPreserved() const { return flashPreserved_; }
+  bool isWriteError() const { return writeError_; }
+
+  State state() const;
+  const char* stateName(State s) const;
 
   uint32_t recordedFrames() const { return recordedFrames_; }
   uint32_t droppedFrames() const { return droppedFrames_; }
   size_t currentFileSize() const;
 
-  void dumpToSerial();
+  uint32_t totalRecords() const;
+  uint32_t totalPages() const;
+  uint32_t dumpCursor() const { return dumpCursor_; }
+
+  void dumpPage(uint32_t pageIndex);
+  void dumpNext();
+  void dumpAll();
+  void dumpStatus();
+  void dumpCancel();
+  void dumpPageNumber(uint32_t pageNumber);
+  void dumpToSerial() { dumpNext(); }
+
   void clear();
 
   static uint16_t computeCrc16(const uint8_t* data, size_t length);
@@ -87,6 +112,8 @@ class CanRecorder {
   bool recording_ = true;
   bool storageFull_ = false;
   bool flashPreserved_ = false;
+  bool writeError_ = false;
+  uint32_t dumpCursor_ = 0;
   Stage currentStage_ = STAGE_KEY_ON_ENGINE_OFF;
 
   uint32_t sessionId_ = 0;

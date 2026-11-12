@@ -228,43 +228,69 @@ PulseShift automatically logs errors to internal flash (LittleFS) with no action
 
 Logs survive power-off and ESP32 restarts. They are never erased on reconnection.
 
-## Real Motorcycle CAN Acquisition Workflow
+## Real Motorcycle CAN Acquisition Workflow (Arduino IDE-Only)
 
-During real motorcycle investigation on the Bajaj Pulsar NS125 ABS, keep a Windows PC connected to the ESP32 via USB.
+PulseShift provides a completely self-contained workflow requiring **only the Arduino IDE**. No Python, pyserial, uv, standalone applications, or command-line scripts are required.
 
-### 1. Standalone PC Capture Tool (`tools/pulseshift_capture.py`)
+### 1. The Eight-Step Field Workflow
 
-Run the dedicated PC capture utility to record incoming CAN frames directly to timestamped CSV files and log diagnostics:
+1. **Open Sketch**: Open `PulseShift/PulseShift.ino` in Arduino IDE 2.3.10.
+2. **Upload Firmware**: Verify board is **ESP32 Dev Module**, partition scheme is **Default 4MB with spiffs**, and click **Upload** (Ctrl+U).
+3. **Open Serial Monitor**: Open Serial Monitor in Arduino IDE (bottom panel or Tools -> Serial Monitor) and set the baud rate to **115200 baud**.
+4. **Connect Verified Hardware**: Connect the CAN transceiver to the motorcycle diagnostic connector (CAN-H and CAN-L) and verify 3.3V power, ground, and GPIO16 (RXD).
+5. **Automatic Flash Recording**:
+   - On boot, the ESP32 automatically mounts LittleFS flash storage and begins recording real CAN frames immediately.
+   - Concise live summaries are printed every 2 seconds without flooding Serial Monitor:
+     ```text
+     [LIVE] Bus: OK (500000 bps) | Traffic: ACTIVE | Stage 1 (KEY_ON_ENGINE_OFF) | RX: 1450 | Rec: 1450 | Drops: 0 | Flash: 29 KB
+     ```
+   - Raw frame streaming over serial is disabled by default to keep Arduino IDE smooth and responsive. If desired, type `STREAM ON` to view raw live frames.
+6. **Execute the Three Recording Stages**:
+   - **Stage 1 (Key ON, Engine OFF)**: Ignition on, engine stopped. Captures cluster wake-up and baseline sensor frames.
+     Type `STAGE 1` (or `1`) in Serial Monitor.
+   - **Stage 2 (Engine Idling)**: Start motorcycle and idle steady (~1300-1500 RPM).
+     Type `STAGE 2` (or `2`) in Serial Monitor.
+   - **Stage 3 (Gentle RPM Sweeps)**: Gently rev engine across 3000-6000 RPM.
+     Type `STAGE 3` (or `3`) in Serial Monitor.
+   - *Optional button control*: You can also short-press the ESP32 physical BOOT button (GPIO0) to cycle stages, or long-press (> 1.5s) to pause/resume recording.
+7. **Export Stored Frames using DUMP**:
+   - Type `DUMP` in Serial Monitor.
+   - The ESP32 safely flushes all pending records, pauses active recording, and exports frames in clean **500-record pages**:
+     ```text
+     === BEGIN PULSESHIFT RAW CAN CAPTURE [PAGE 1/3: RECORDS 1-500 OF 1450] ===
+     [HEADER] magic=PULSECAP ver=1 recSize=20 sess=1 boot=1 bitrate=500000 startMs=1200 mode=CAN_CAPTURE vehicle=NS125 ABS 2025
+     timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok
+     1205,00000120,0,0,8,0102030405060708,1,1
+     ...
+     === END PULSESHIFT PAGE 1/3 (RECORDS 1-500 OF 1450) [Next: 'DUMP NEXT' or 'DUMP ALL'] ===
+     ```
+   - Type `DUMP NEXT` (or simply `DUMP`) to export subsequent pages.
+   - To export all records continuously in a single uninterrupted stream, type `DUMP ALL`.
+   - To check export progress, type `DUMP STATUS`. To reset back to Page 1, type `DUMP CANCEL`.
+8. **Save Output to File for Analysis**:
+   - In Arduino IDE 2.3.10, click the **Copy Output** button located at the top-right corner of the Serial Monitor tab (or right-click in the monitor pane and choose **Copy**).
+   - > [!IMPORTANT]
+     > Do **not** use `Ctrl+A` in Arduino IDE 2.3.x, as it can fail to select lines outside the visible virtual scrollback window. Always use the dedicated **Copy Output** button.
+   - Open Windows **Notepad**, paste the copied text (Ctrl+V), and save the file as `capture.txt` or `capture.csv`.
+   - **Verify Completeness**: Check the bottom of the exported file. It must conclude with:
+     ```text
+     === END PULSESHIFT RAW CAN CAPTURE valid=1450 corrupt=0 totalBytes=29076 ===
+     ```
+     Ensure `corrupt=0` to confirm that all records passed hardware CRC16 verification.
 
-```bash
-uv run --with pyserial python tools/pulseshift_capture.py --port COM5
-```
+---
 
-Or using standard Python:
+### Storage Safety and Session Preservation
 
-```bash
-pip install pyserial
-python tools/pulseshift_capture.py --port COM5
-```
+- **Stop-on-Full Policy**: If internal flash storage reaches capacity (1,000,000 bytes / ~50,000 frames), recording stops safely (`STORAGE_FULL`). Older records are never overwritten, wiped, or truncated in a circular buffer.
+- **Reboot Preservation**: When you finish testing at the motorcycle, power down, and plug the ESP32 into your computer via USB, the firmware automatically detects the existing capture from the prior session (`FLASH_CAPTURE_PRESERVED`). Recording is locked to protect your motorcycle run from accidental overwriting. Type `DUMP` to export the preserved data, or `CLEAR YES` when you are ready to start a fresh capture session.
+- **Power Loss Recovery**: If power is cut mid-record, the firmware automatically detects and truncates any partial record at end-of-file during mount, ensuring all completed records remain 100% intact.
 
-> [!IMPORTANT]
-> **COM Port Exclusivity**: Close the Arduino IDE Serial Monitor and Serial Plotter before running `pulseshift_capture.py`. Windows allows only one application to open a COM port at a time.
+---
 
-### 2. Three-Stage Recording Protocol
+### LED Hardware Status in CAN Capture Mode
 
-PulseShift tags every captured CAN frame with a stage identifier:
-
-1. **STAGE 1 (Key ON, Engine OFF)**: Baseline network traffic. Captures ABS, dashboard, and ECU initialization broadcasts while engine RPM is strictly 0.
-2. **STAGE 2 (Engine Idling)**: Steady idle speed (~1300-1500 RPM). Identifies cyclic engine telemetry frames.
-3. **STAGE 3 (Gentle RPM Sweeps)**: Throttle sweeps from idle to 4000-6000 RPM. Identifies data bytes that correlate monotonically with engine speed.
-
-**Switching Stages:**
-- **Physical Button**: Short-press the ESP32 BOOT button (GPIO0) to advance to the next stage.
-- **PC Keyboard**: Press `1`, `2`, or `3` and Enter in the `pulseshift_capture.py` console.
-
-### 3. LED Hardware Status in CAN Capture Mode
-
-When operating in CAN Capture mode, the six LEDs provide immediate visual hardware feedback:
+When operating in CAN Capture mode, the six WS2812B LEDs provide real-time hardware status feedback:
 
 | LED | Status / Condition | Visual Indication |
 |---|---|---|
@@ -275,6 +301,7 @@ When operating in CAN Capture mode, the six LEDs provide immediate visual hardwa
 | **LED 2** | Stage 1 (Key ON, Engine OFF) | Amber (LED 2 lit, LEDs 3-4 dark) |
 | **LED 3** | Stage 2 (Engine Idling) | Amber (LEDs 2-3 lit, LED 4 dark) |
 | **LED 4** | Stage 3 (Gentle RPM Sweeps) | Amber (LEDs 2-4 lit) |
+| **LEDs 2-4** | Recording Paused | Slow blinking Blue (1 Hz) across all stage LEDs |
 | **LED 5** | LittleFS Storage Error | Flashing Magenta alert |
 | **LED 5** | Storage Full / Preserved | Flashing Amber warning |
 | **LED 5** | Storage Normal | Dark / Off |
@@ -297,9 +324,31 @@ When testing on an operating motorcycle with a PC connected via USB:
 
 ## Serial Communication & Commands (115200 baud)
 
-PulseShift streams real-time machine-readable frames over USB Serial alongside human-readable diagnostics.
+### Serial Monitor Commands
+
+| Command | Description |
+|---|---|
+| `HELP` | Display complete list of available Serial Monitor commands |
+| `STATUS` | Show comprehensive system health, storage state, and intelligent troubleshooting advice |
+| `LOGS` | Dump saved persistent diagnostic events log from internal flash |
+| `DUMP` | Export recorded CAN frames in 500-record pages (resumes next page if active) |
+| `DUMP NEXT` | Export next 500-record page of stored CAN frames |
+| `DUMP ALL` | Export all stored CAN records continuously without pagination |
+| `DUMP STATUS` | Show current export progress, cursor position, and total page count |
+| `DUMP CANCEL` | Reset export cursor back to Page 1 |
+| `DUMP PAGE <n>` | Export specific page number n (e.g. `DUMP PAGE 2`) |
+| `STAGE <1\|2\|3>` | Set field capture stage (1=KeyOn, 2=Idle, 3=GentleRPM) |
+| `1`, `2`, `3` | Quick single-digit shortcuts to set capture Stage 1, 2, or 3 |
+| `CAPTURE STOP` | Pause flash recording and flush in-memory buffers |
+| `CAPTURE RESUME` | Resume flash recording |
+| `STREAM ON` | Enable live raw CAN frame streaming over USB serial |
+| `STREAM OFF` | Disable live streaming (default: concise summaries only) |
+| `CLEAR` | Request instructions for erasing stored logs and capture file |
+| `CLEAR YES` | Confirm erase of stored diagnostic logs and start a fresh capture session |
 
 ### Machine-Readable Streaming Format
+
+When live streaming is enabled via `STREAM ON`, frames are formatted as:
 
 ```text
 FRAME,timestamp_ms,stage,can_id,extended,rtr,dlc,payload_hex
@@ -317,17 +366,11 @@ Example: `FRAME,10452,2,00000123,0,0,8,0102030405060708`
 
 Periodic telemetry lines (`STAT,timestamp,rx_total,accepted,missed,overrun,bus_errors,serial_dropped,rec,rec_dropped`), stage events (`STAGE,...`), and diagnostic alerts (`DIAG,timestamp,level,tag,message`) are streamed continuously.
 
-### Serial Commands
+---
 
-| Command | Description |
-|---|---|
-| `HELP` | Show available commands |
-| `STATUS` | Current system state, storage usage, and TWAI controller counters |
-| `LOGS` | Dump saved persistent diagnostic log from flash |
-| `DUMP` | Export raw recorded CAN frames with CRC16 checksums |
-| `STAGE <1\|2\|3>` | Set field capture stage (1=KeyOn, 2=Idle, 3=GentleRPM) |
-| `CLEAR` | Request instructions for erasing stored logs |
-| `CLEAR YES` | Confirm erase of stored diagnostic logs and CAN capture file |
+### Optional Advanced Tooling (`tools/pulseshift_capture.py`)
+
+For advanced desktop workflows or automated CI pipelines, `tools/pulseshift_capture.py` provides an optional Python script for capturing streamed frames directly to PC CSV files. **This tool is completely optional and is not required for normal PulseShift use.** The Arduino IDE workflow documented above is the primary, self-contained method.
 
 ---
 
