@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "dashboard.h"
+#if PULSESHIFT_MODE == PULSESHIFT_CAPTURE
 #include "can_recorder.h"
 #include "storage_manager.h"
+#endif
 #include <Arduino.h>
 
 #if PULSESHIFT_OLED_ENABLED
@@ -45,6 +47,7 @@ bool Dashboard::begin() {
 }
 
 void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
+#if PULSESHIFT_MODE == PULSESHIFT_CAPTURE
   const uint8_t count = config::ledCount;
   if (count < 6) return;
 
@@ -139,6 +142,10 @@ void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
   if (changed) {
     leds_.show();
   }
+#else
+  (void)now; (void)healthy; (void)configured;
+#endif
+}
 }
 
 void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout) {

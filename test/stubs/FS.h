@@ -1,0 +1,29 @@
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
+
+class File {
+ public:
+  operator bool() const { return false; }
+  size_t write(const uint8_t*, size_t) { return 0; }
+  int read() { return -1; }
+  size_t read(uint8_t*, size_t) { return 0; }
+  void flush() {}
+  void close() {}
+  size_t size() const { return 0; }
+};
+
+namespace fs {
+class FS {
+ public:
+  bool begin() { return true; }
+  void end() {}
+  File open(const char*, const char* = "r") { (void)open; return File(); }
+  bool exists(const char*) { return false; }
+  bool remove(const char*) { return false; }
+  size_t totalBytes() { return 1000000; }
+  size_t usedBytes() { return 0; }
+};
+}
+using fs::FS;
+using fs::File;
