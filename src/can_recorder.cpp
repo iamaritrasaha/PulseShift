@@ -110,8 +110,8 @@ bool CanRecorder::push(const CanFrame& frame) {
 void CanRecorder::pump(uint32_t now) {
   if (!initialized_) return;
 
-  // Flush conditions: batch size >= 16 records OR interval >= 500ms
-  if (count_ >= 16 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 500)) {
+  // Improved sync: flush when batch reaches 8 records (160 bytes) OR time elapsed >= 200ms
+  if (count_ >= 8 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 200)) {
     flush();
   }
 }
@@ -170,6 +170,8 @@ void CanRecorder::flush() {
 
 void CanRecorder::setStage(Stage s) {
   if (currentStage_ == s) return;
+  // Commit all pending in-memory records under the previous stage before switching
+  flush();
   currentStage_ = s;
   DiagLogger::instance().logStageChange(static_cast<uint8_t>(s), stageName(s));
 }

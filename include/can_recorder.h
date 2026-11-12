@@ -16,7 +16,7 @@ struct __attribute__((packed)) CanLogRecord {
   uint16_t checksum;    // CRC16 over preceding 18 bytes
 };
 
-// 72-byte header written at the start of a capture file
+// 76-byte header written at the start of a capture file
 struct __attribute__((packed)) CaptureHeader {
   char magic[8];          // "PULSECAP"
   uint16_t headerVersion; // 1

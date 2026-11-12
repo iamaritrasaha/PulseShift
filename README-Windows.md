@@ -65,23 +65,44 @@ $cfg = 'D:\Arduino\arduino-cli.yaml'
 
 ---
 
-## 3. Physical Motorcycle Wiring & Electrical Safety
+## 3. Physical Motorcycle Wiring & Hardware-Enforced Passive Safety
 
-Connect the ESP32 and SN65HVD230 CAN transceiver to the motorcycle harness:
+To guarantee that PulseShift can **NEVER** interfere with the motorcycle's ECU, ABS, or electronic fuel injection, the hardware setup uses a **dual-layer hardware-enforced passive listening architecture**:
 
-1. **Power Supply:**
-   - Connect +5V from a stable DC-DC buck converter (or motorcycle USB accessory port) to ESP32 **VIN / 5V** and **GND**.
-   - Power the SN65HVD230 transceiver from ESP32 **3.3V** and **GND** (SN65HVD230 is a true 3.3V transceiver).
-2. **CAN Bus Connections:**
-   - **CAN_H** -> Motorcycle diagnostic connector CAN High (OBD pin 6 or OEM diagnostic port).
-   - **CAN_L** -> Motorcycle diagnostic connector CAN Low (OBD pin 14 or OEM diagnostic port).
-   - **Transceiver Termination:** Motorcycle harness is already terminated (60Ω equivalent). Ensure the 120Ω termination resistor on the transceiver breakout is removed if tapping into an already-terminated live bus.
-3. **Controller I/O Pins:**
-   - **GPIO16 (RX):** Connected to Transceiver Pin 4 (`R` / `RXD`).
-   - **GPIO17 (TX):** Transceiver Pin 1 (`D` / `TXD`). The firmware automatically isolates this pin as a high-Z input with internal pull-up to maintain strictly passive listen-only behavior.
-   - **Transceiver `Rs` (Pin 8):** For complete hardware transmission lockout, wire `Rs` to 3.3V (forces listen-only silent mode).
-4. **WS2812B LEDs:**
-   - Data In (DIN) -> ESP32 **GPIO27** through a 330Ω series resistor.
+### Critical Safety Invariants (SN65HVD230 Transceiver)
+
+1. **GPIO17 (TXD) Physical Isolation:**
+   - **DO NOT connect ESP32 GPIO17 to Transceiver Pin 1 (D / TXD).**
+   - Transceiver Pin 1 (`D`) must be **physically isolated from GPIO17** and tied to **3.3V (`VCC`)** through an external 4.7kΩ to 10kΩ pull-up resistor (or tied directly to 3.3V).
+   - Per the TI SN65HVD230 datasheet, holding `D` permanently HIGH forces the driver into the recessive (passive) state, physically preventing dominant bus driving even if the controller malfunctions.
+   - ESP32 GPIO17 is left completely unconnected. The firmware additionally configures GPIO17 as a High-Z input with internal pull-up as a secondary software safeguard.
+2. **Transceiver Silent / Listen-Only Mode (Pin 8 `Rs`):**
+   - Transceiver Pin 8 (`Rs`) must be wired directly to **3.3V (`VCC`)** ($V_{Rs} \ge 0.75 V_{CC}$).
+   - Per Section 8.4.2 of the TI SN65HVD230 datasheet, when $V_{Rs} \ge 0.75 V_{CC}$, the transceiver's differential transmitter driver is completely disabled, while the differential receiver remains 100% active.
+   - **Breakout Board Warning:** Common blue SN65HVD230 breakout boards tie `Rs` to GND via a 0Ω surface-mount resistor (placing it in High-Speed transmit mode). You **MUST desolder or cut the trace** to GND, and wire `Rs` to 3.3V.
+3. **Onboard 120Ω Termination Resistor Removal:**
+   - An active motorcycle CAN network is **already terminated** with two 120Ω resistors (one in the ECU, one in the instrument cluster), yielding an equivalent resistance of 60Ω across CAN_H and CAN_L.
+   - Most SN65HVD230 breakout boards include an onboard 120Ω SMD resistor (often labeled `R2` or `120`).
+   - If connected without modification, the three parallel resistors reduce bus resistance to $40\Omega$ ($120 \parallel 120 \parallel 120 = 40\Omega$), overloading vehicle transceivers and corrupting ECU communication.
+   - **You MUST remove/desolder the onboard 120Ω resistor on the breakout board** before connecting to the motorcycle harness. Measure with a multimeter across CAN_H and CAN_L when disconnected: it should read open circuit (>100kΩ).
+4. **Reliable 500 kbps Reception:**
+   - The SN65HVD230 receiver supports signaling rates up to 1 Mbps with receiver propagation delay $\le 50\text{ns}$, well within the 2000 ns bit budget of 500 kbps CAN.
+   - Wire Transceiver Pin 4 (`R` / `RXD`) to ESP32 **GPIO16**.
+   - Wire Transceiver `GND` to ESP32 `GND` and motorcycle harness signal ground.
+   - Wire Transceiver `VCC` to ESP32 **3.3V** (do NOT power from 5V).
+
+### Wiring Pinout Summary
+
+| ESP32 Pin | Transceiver Pin | Harness / Component | Hardware Safety Function |
+|---|---|---|---|
+| **GPIO16** | Pin 4 (`R` / `RXD`) | - | Passive TWAI receiver input |
+| **NO CONNECTION** | Pin 1 (`D` / `TXD`) | Wire to 3.3V via 4.7kΩ pull-up | **PHYSICAL TX ISOLATION**: Transceiver driver held permanently recessive |
+| **3.3V** | Pin 3 (`VCC`) & Pin 8 (`Rs`) | - | Supplies 3.3V; forces transceiver into Listen-Only / Silent mode |
+| **GND** | Pin 2 (`GND`) | Motorcycle diagnostic ground | Common ground reference |
+| - | Pin 7 (`CAN_H`) | Motorcycle OBD Pin 6 / OEM CAN_H | Differential bus high (120Ω breakout resistor removed) |
+| - | Pin 6 (`CAN_L`) | Motorcycle OBD Pin 14 / OEM CAN_L | Differential bus low (120Ω breakout resistor removed) |
+| **GPIO27** | - | WS2812B DIN via 330Ω | Shift light data output |
+| **VIN (5V)** | - | Motorcycle 5V buck converter | Regulated 5V ESP32 power supply |
 
 ---
 
@@ -182,12 +203,22 @@ If using Arduino IDE Serial Monitor (115200 baud, CRLF):
 
 ---
 
-## 6. How Errors and Data Survive Power Disconnection
+## 6. Power Loss, Flushing & Realistic Data Recovery Guarantees
 
-1. **Non-Destructive LittleFS Storage:** Uses the standard 1.375 MB data partition (`spiffs`) on the 4 MB flash. Firmware never automatically formats or erases data.
-2. **Frequent Flush & Wear Mitigation:** Raw frames are queued in a 2560-byte in-memory ring buffer and written to flash in batch blocks (every 16 frames or 500ms). This decouples real-time CAN reception from flash SPI write delays.
-3. **Reset Reason Tracking:** On boot, `esp_reset_reason()` captures whether the reset was caused by normal power-on, brownout (voltage dip below 2.7V), watchdog timeout, or software exception, and writes it directly to `/diag.log`.
-4. **Power Loss Boundary:** In the event of abrupt battery/power disconnection, at most the last ~500ms of in-flight RAM buffer is lost; all previously flushed records remain intact and validated by 16-bit CRC.
+Capturing CAN traffic on a motorcycle means the ESP32 can experience abrupt power loss when the ignition key is switched off, or if battery voltage drops during engine cranking. The firmware provides explicit, non-destructive recovery guarantees:
+
+### Flushing Architecture & Sync Cadence
+1. **Multi-Condition Flushing:** The in-memory queue automatically flushes to LittleFS when:
+   - The buffer reaches **8 records (160 bytes)** (approx. 40–80 ms under normal 100–200 fps traffic).
+   - Or **200 ms** elapses since the last write (ensuring slow 1–10 fps baseline traffic is committed quickly).
+   - Or when a **stage transition** is commanded via the BOOT button (flushes all preceding stage frames before advancing).
+2. **Explicit Filesystem Synchronization:** Each flush executes `f.write()`, `f.flush()`, and `f.close()`, which forces `lfs_file_sync()` and commits directory index nodes to SPI flash.
+
+### Realistic Power-Loss Recovery Guarantees
+- **Durable Data:** All records committed in preceding flush cycles are 100% durable in LittleFS SPI flash and cannot be lost.
+- **In-Flight Data at Power Cut:** Only the frames currently sitting in the volatile RAM ring buffer that have not yet been flushed (at most 8 to 40 frames, or frames accumulated within the last 200 ms window) are lost when power is abruptly removed.
+- **Torn Record Protection:** If DC voltage collapses *during* an active SPI flash block write, LittleFS's atomic copy-on-write design prevents filesystem corruption by rolling back the incomplete transaction. If a trailing partial record (fewer than 20 bytes) remains on flash, the retrieval tool validates record boundaries and evaluates the CCITT CRC16 checksum on every frame. Any incomplete or bit-corrupted trailing record is cleanly flagged and rejected, preserving all previously written frames.
+- **Reset Cause Forensic Logging:** When power is restored, `esp_reset_reason()` inspects hardware RTC registers. If the reboot was caused by an automotive power-rail dip, `BROWNOUT` is logged; if caused by software exception, `EXCEPTION_PANIC` is logged; if caused by normal key-on, `POWERON` is logged. All reset reasons are permanently recorded in `/diag.log`.
 
 ---
 

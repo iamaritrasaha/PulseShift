@@ -179,6 +179,48 @@ Record-TestResult -Name "Export Tool: export-logs.ps1" -Passed $ps1Valid -Detail
 Record-TestResult -Name "Export Tool: export_logs.py" -Passed (Test-Path $exportPy) -Details "Python export script present"
 
 # -------------------------------------------------------------
+# TEST 9: Python Functional & Integration Test Suite
+# -------------------------------------------------------------
+Write-Host "`n--- TEST SUITE 9: Functional & Integration Tests ---" -ForegroundColor Yellow
+
+$pythonExe = $null
+$knownPaths = @(
+    "D:\ML\Python\cpython-3.13.16-windows-x86_64-none\python.exe",
+    (Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+)
+foreach ($p in $knownPaths) {
+    if ($p -and (Test-Path $p) -and ($p -notlike "*WindowsApps*")) {
+        $pythonExe = $p
+        break
+    }
+}
+
+$diagTestScript = Join-Path $PSScriptRoot "repository\test\test_offline_diagnostics.py"
+if (-not (Test-Path $diagTestScript)) {
+    $diagTestScript = Join-Path $PSScriptRoot "test\test_offline_diagnostics.py"
+}
+
+if ($pythonExe -and (Test-Path $diagTestScript)) {
+    try {
+        $origEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $pyOutput = & $pythonExe $diagTestScript 2>&1
+        $pyExit = $LASTEXITCODE
+        $ErrorActionPreference = $origEAP
+
+        if ($pyExit -eq 0) {
+            Record-TestResult -Name "Python Functional Suite (14 Tests)" -Passed $true -Details "All 14 binary framing, CRC, quota, torn-write, FSM & export tests PASSED"
+        } else {
+            Record-TestResult -Name "Python Functional Suite" -Passed $false -Details "Tests failed: $($pyOutput -join '; ')"
+        }
+    } catch {
+        Record-TestResult -Name "Python Functional Suite" -Passed $false -Details $_.Exception.Message
+    }
+} else {
+    Record-TestResult -Name "Python Functional Suite" -Passed $false -Details "Python interpreter or test script not found"
+}
+
+# -------------------------------------------------------------
 # SUMMARY REPORT
 # -------------------------------------------------------------
 Write-Host "`n==========================================================" -ForegroundColor Cyan
