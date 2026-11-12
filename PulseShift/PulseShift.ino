@@ -41,8 +41,9 @@
 
 namespace {
 class Application {
- public:
-  Application() : rpm_(initialState()) {}
+public:
+  Application()
+    : rpm_(initialState()) {}
 
   void begin() {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -52,7 +53,7 @@ class Application {
 
     // Initialize non-volatile persistent storage (LittleFS & Preferences NVS)
     auto& sm = StorageManager::instance();
-    const bool fsOk = sm.begin(false); // Non-destructive mount
+    const bool fsOk = sm.begin(false);  // Non-destructive mount
 
     // Initialize diagnostic logger
     auto& diag = DiagLogger::instance();
@@ -83,11 +84,11 @@ class Application {
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("TARGET: %s / %s / %u WS2812B LEDs\r\n",
-      config::vehicle, config::transceiver, config::ledCount);
+                  config::vehicle, config::transceiver, config::ledCount);
     Serial.println("RECEIVE ONLY: SN65HVD230 RS to GND (high-speed), TXD biased 3.3V, GPIO17 physically isolated");
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     Serial.printf("PROFILE id=%s status=%s ready=%d\r\n", selectedVehicleProfile().identifier,
-      profileStatusName(selectedVehicleProfile().status), rpm_.mapped());
+                  profileStatusName(selectedVehicleProfile().status), rpm_.mapped());
 #else
     Serial.println("CAN_CAPTURE: raw frames and offline diagnostics active");
 #endif
@@ -158,7 +159,7 @@ class Application {
     const bool healthy = transport_.healthy();
     const bool configured = transport_.configured()
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
-      && rpm_.mapped()
+                            && rpm_.mapped()
 #endif
       ;
 #endif
@@ -177,19 +178,19 @@ class Application {
       lastReport_ = now;
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
       logger_.status("APP mode=%s accepted=%lu rejected=%lu recFrames=%lu recDropped=%lu stage=%u",
-        config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
-        (unsigned long)CanRecorder::instance().recordedFrames(),
-        (unsigned long)CanRecorder::instance().droppedFrames(),
-        (unsigned)CanRecorder::instance().currentStage());
+                     config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
+                     (unsigned long)CanRecorder::instance().recordedFrames(),
+                     (unsigned long)CanRecorder::instance().droppedFrames(),
+                     (unsigned)CanRecorder::instance().currentStage());
       logger_.status("APP fresh=%d busFresh=%d rpm=%u configured=%d healthy=%d",
-        rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy,
-        rpm_.busFresh(now, config::staleMs), rpm_.rpm(), configured, healthy);
+                     rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy,
+                     rpm_.busFresh(now, config::staleMs), rpm_.rpm(), configured, healthy);
 #else
       Serial.printf("APP mode=%s accepted=%lu rejected=%lu fresh=%d busFresh=%d rpm=%u alert=%d startup=%d logDropped=%lu\r\n",
-        config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
-        rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy, rpm_.busFresh(now, config::staleMs), rpm_.rpm(),
-        dashboard_.shiftLight().isAlertActive(), !dashboard_.shiftLight().isStartupComplete(),
-        (unsigned long)logger_.dropped());
+                    config::modeName, (unsigned long)rpm_.accepted(), (unsigned long)rpm_.rejected(),
+                    rpm_.fresh(now, rpm_.timeoutMs(config::staleMs)) && healthy, rpm_.busFresh(now, config::staleMs), rpm_.rpm(),
+                    dashboard_.shiftLight().isAlertActive(), !dashboard_.shiftLight().isStartupComplete(),
+                    (unsigned long)logger_.dropped());
 #endif
 #if PULSESHIFT_MODE != PULSESHIFT_REPLAY
       transport_.diagnostics();
@@ -199,7 +200,7 @@ class Application {
 #endif
   }
 
- private:
+private:
   void handleButton(uint32_t now) {
     const auto evt = button_.poll(now);
     if (evt == ButtonHandler::Event::ShortPress) {
@@ -424,9 +425,11 @@ class Application {
 #if PULSESHIFT_MODE == PULSESHIFT_REPLAY
   ReplayTransport transport_;
 #else
-  CanTransport transport_{receiveBitrate()
+  CanTransport transport_ {
+    receiveBitrate()
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
-    , &logger_
+      ,
+      &logger_
 #endif
   };
 #endif
@@ -440,5 +443,9 @@ class Application {
 Application app;
 }  // namespace
 
-void setup() { app.begin(); }
-void loop() { app.tick(); }
+void setup() {
+  app.begin();
+}
+void loop() {
+  app.tick();
+}

@@ -27,7 +27,7 @@
 // bench and known bitrate. VEHICLE_RPM stays disabled until its entire profile
 // and electrical qualification are verified. Neither mode sends CAN frames.
 #ifndef PULSESHIFT_OPERATING_MODE
-#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_DEMO
+#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_CAN_CAPTURE
 #endif
 
 // DEFAULT: GPIO27 directly through 330 ohms to DIN; never connect it to +5V.
@@ -147,7 +147,7 @@
 // isolated bench may use 125000, 250000, 500000 or 1000000 bits/s. It does not enable a
 // motorcycle decoder or prove wiring, bitrate or passive RPM compatibility.
 #ifndef PULSESHIFT_CAN_BITRATE
-#define PULSESHIFT_CAN_BITRATE 0
+#define PULSESHIFT_CAN_BITRATE 500000
 #endif
 
 // DEFAULT: 1 (on). OPTIONAL: 0 silences serial diagnostics and demo commands.
