@@ -183,7 +183,7 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
 #if PULSESHIFT_OLED_ENABLED
   if (!ready_) return;
   const bool alertActive = shiftLight_.isAlertActive();
-  const bool startupActive = !shiftLight_.isStartupComplete();
+  const bool startupActive = live && !shiftLight_.isStartupComplete();
   if (drawn_ && (uint32_t(now - lastOledRefresh_) < 100 ||
       (lastRpm_ == shownRpm &&
       lastStatus_ == status &&
