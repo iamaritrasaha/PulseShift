@@ -15,6 +15,12 @@ class Dashboard {
   void triggerButtonFeedback(uint32_t now) { feedbackUntilMs_ = now + 200; }
   void notifyRxActivity(uint32_t now) { lastRxActivityMs_ = now; }
 
+  void setTestRpm(uint16_t rpm, bool active) {
+    testRpm_ = rpm;
+    testRpmActive_ = active;
+  }
+  bool isTestRpmActive() const { return testRpmActive_; }
+
   ShiftLightEngine& shiftLight() { return shiftLight_; }
   const ShiftLightEngine& shiftLight() const { return shiftLight_; }
 
@@ -36,5 +42,7 @@ class Dashboard {
 
   uint32_t feedbackUntilMs_ = 0;
   uint32_t lastRxActivityMs_ = 0;
+  uint16_t testRpm_ = 0;
+  bool testRpmActive_ = false;
   RgbColor lastFieldPixels_[6]{};
 };
