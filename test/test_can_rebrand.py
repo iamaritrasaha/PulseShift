@@ -25,7 +25,7 @@ class RebrandConfiguration(unittest.TestCase):
 static_assert(config::ledBrightness==40 && config::rxPin==16 && config::txPin==17);
 static_assert(!config::oledEnabled && PULSESHIFT_MODE==1 && PULSESHIFT_BITRATE==0);
 static_assert(PULSESHIFT_LED_COUNT==REVIX_LED_COUNT);
-static_assert(config::startRpm==1500 && config::shiftRpm==5800 && config::maxRpm==6500);
+static_assert(config::startRpm==0 && config::shiftRpm==6000 && config::maxRpm==6500);
 """
         for legacy in (False,True):
             result=self.compile(legacy=legacy,assertions=checks)

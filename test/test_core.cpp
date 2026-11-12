@@ -554,6 +554,90 @@ void shift_light_replay_manual_control() {
   pass("ReplayTransport manual synthetic RPM injection and pause/resume control");
 }
 
+void shift_light_operating_range_0_to_6000() {
+  ShiftLightConfig c;
+  c.ledCount = 6;
+  c.masterBrightness = 255;
+  c.style = ShiftLightStyle::Classic;
+  c.direction = LedDirection::Normal;
+  c.startupAnimationEnabled = false;
+  c.smoothTransitions = true;
+  c.alertMode = ShiftAlertMode::FlashRed;
+  c.rpmStart = 0;
+  c.rpmShift = 6000;
+  c.rpmMax = 6500;
+  c.hysteresisRpm = 150;
+  c.animationIntervalMs = 0;
+  c.idleEffectEnabled = false;
+
+  ShiftLightEngine engine(c);
+  engine.reset(0);
+
+  // 1. At 0 RPM: all six LEDs must be completely off
+  engine.update(100, 0, ViewStatus::Live);
+  CHECK(!engine.isAlertActive());
+  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
+
+  // 2. Progressive activation at 1000 RPM increments:
+  // At 1000 RPM: LED 0 is fully lit Green, LEDs 1..5 are off
+  engine.update(150, 1000, ViewStatus::Live);
+  CHECK(!engine.isAlertActive());
+  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
+  for (uint8_t i = 1; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
+
+  // At 2000 RPM: LEDs 0 and 1 are fully lit Green, LEDs 2..5 are off
+  engine.update(200, 2000, ViewStatus::Live);
+  CHECK(!engine.isAlertActive());
+  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
+  CHECK(engine.getPixel(1) == RgbColor(0, 255, 0));
+  for (uint8_t i = 2; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
+
+  // At 3000 RPM: LEDs 0, 1 (Green), LED 2 (Yellow) fully lit, LEDs 3..5 are off
+  engine.update(250, 3000, ViewStatus::Live);
+  CHECK(!engine.isAlertActive());
+  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
+  CHECK(engine.getPixel(1) == RgbColor(0, 255, 0));
+  CHECK(engine.getPixel(2) == RgbColor(255, 200, 0));
+  for (uint8_t i = 3; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
+
+  // At 4000 RPM: LEDs 0, 1 (Green), LEDs 2, 3 (Yellow) fully lit, LEDs 4..5 are off
+  engine.update(300, 4000, ViewStatus::Live);
+  CHECK(!engine.isAlertActive());
+  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
+  CHECK(engine.getPixel(1) == RgbColor(0, 255, 0));
+  CHECK(engine.getPixel(2) == RgbColor(255, 200, 0));
+  CHECK(engine.getPixel(3) == RgbColor(255, 200, 0));
+  for (uint8_t i = 4; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
+
+  // At 5000 RPM: LEDs 0..3 lit, LED 4 (Orange) fully lit, LED 5 is off
+  engine.update(350, 5000, ViewStatus::Live);
+  CHECK(!engine.isAlertActive());
+  CHECK(engine.getPixel(4) == RgbColor(255, 80, 0));
+  CHECK(engine.getPixel(5) == RgbColor(0, 0, 0));
+
+  // 3. At 6000 RPM: trigger shift alert across all six LEDs
+  engine.update(400, 6000, ViewStatus::Live);
+  CHECK(engine.isAlertActive());
+
+  // 4. Above 6000 RPM: retain full shift alert rather than wrapping around
+  engine.update(450, 6500, ViewStatus::Live);
+  CHECK(engine.isAlertActive());
+  engine.update(500, 8000, ViewStatus::Live);
+  CHECK(engine.isAlertActive());
+  engine.update(550, 12000, ViewStatus::Live);
+  CHECK(engine.isAlertActive());
+
+  // 5. Alert mode Off retains full illumination without wrap-around
+  c.alertMode = ShiftAlertMode::Off;
+  ShiftLightEngine engineNoAlert(c);
+  engineNoAlert.reset(0);
+  engineNoAlert.update(100, 8500, ViewStatus::Live);
+  CHECK(engineNoAlert.getPixel(0) == RgbColor(0, 255, 0));
+  CHECK(engineNoAlert.getPixel(5) == RgbColor(255, 0, 0));
+
+  pass("0-6000 RPM shift-light operating range, 1000 RPM progressive increments, and above-6000 alert retention");
+}
+
 
 void command_regressions() {
   uint32_t value = 123;
@@ -671,6 +755,7 @@ int main() {
   shift_light_faults_and_safety();
   shift_light_idle_effect();
   shift_light_replay_manual_control();
+  shift_light_operating_range_0_to_6000();
   std::printf("ALL PASS: %u cases, %u assertions\n", cases, assertions);
   return 0;
 }

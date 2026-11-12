@@ -66,8 +66,8 @@ struct ShiftLightConfig {
   bool startupAnimationEnabled = true;
   bool smoothTransitions = true;
   ShiftAlertMode alertMode = ShiftAlertMode::FlashRed;
-  uint16_t rpmStart = 1500;
-  uint16_t rpmShift = 5800;
+  uint16_t rpmStart = 0;
+  uint16_t rpmShift = 6000;
   uint16_t rpmMax = 6500;
   uint16_t hysteresisRpm = 150;
   uint16_t animationIntervalMs = 25;

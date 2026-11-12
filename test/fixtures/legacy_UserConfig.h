@@ -63,11 +63,11 @@
 // DEFAULT: FLASH_RED. OPTIONAL: OFF, SOLID_RED or FLASH_WHITE changes the effect.
 #define REVIX_SHIFT_ALERT_MODE  REVIX_ALERT_FLASH_RED
 
-// DEFAULT: 1500 RPM, first progression pixel. OPTIONAL: synthetic scale only;
+// DEFAULT: 0 RPM, first progression pixel. OPTIONAL: synthetic scale only;
 // use 0 <= start < shift. No threshold here is a verified motorcycle setting.
-#define REVIX_DEMO_START_RPM      1500
-// DEFAULT: 5800 RPM, shift alert starts. OPTIONAL: start < shift <= maximum.
-#define REVIX_DEMO_SHIFT_RPM      5800
+#define REVIX_DEMO_START_RPM      0
+// DEFAULT: 6000 RPM, shift alert starts. OPTIONAL: start < shift <= maximum.
+#define REVIX_DEMO_SHIFT_RPM      6000
 // DEFAULT: 6500 RPM, synthetic decoding/scale limit. OPTIONAL: 1..20000 RPM,
 // at least shift RPM. Above-range frames are rejected, not displayed as valid.
 #define REVIX_DEMO_MAX_RPM        6500
