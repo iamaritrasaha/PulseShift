@@ -691,10 +691,10 @@ The range (0 to 240) and the smooth, continuous response to throttle changes are
 RPM MULTIPLIER 42.0
 ```
 
-Updates the provisional multiplier used for estimation. The range is 0.01 to 1000.0. Calibration status remains `UNVERIFIED` regardless of the value entered; this command does not enable shift lights.
+Updates the provisional multiplier in the authoritative active configuration and live decoder. Range: 0.1 to 1000.0. Calibration status remains `UNVERIFIED`. This command changes the current session only; use `CONFIG SAVE` to persist the value across ESP32 reboots. It does not enable verified shift lights.
 
 ```text
-[RPM] Candidate multiplier updated to 42.0 (Calibration remains UNVERIFIED)
+[RPM] Multiplier 42.000 applied (UNVERIFIED; type CONFIG SAVE to persist)
 ```
 
 ---
@@ -743,6 +743,9 @@ Do not enable shift lights based on a single RPM reference point or a theoretica
 ---
 
 ## 12. BLE Monitoring and Configuration
+
+The firmware's [Android BLE Terminal implementation contract](docs/ANDROID-TERMINAL.md) documents the planned Material 3 command console in the separate native Android app. The app-side terminal still needs to be implemented in that local project.
+
 
 The firmware runs a BLE GATT server (NimBLE stack) alongside the USB serial interface. It provides two versioned phone-facing protocols; both are documented in detail in [docs/BLE-PROTOCOL.md](docs/BLE-PROTOCOL.md).
 
