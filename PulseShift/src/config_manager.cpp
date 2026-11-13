@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "config_manager.h"
+#include "rpm_candidate.h"
 #include <string.h>
 #include <math.h>
 
@@ -24,7 +25,9 @@ namespace {
 // Dedicated NVS preferences namespace
 constexpr const char* NVS_NAMESPACE = "ps_cfg";
 constexpr const char* NVS_KEY_BLOB = "blob";
-constexpr uint32_t NVS_MAGIC = 0x50534332; // "PSC2" in ASCII (PulseShift Config v2)
+constexpr uint32_t NVS_MAGIC = 0x50534332; // "PSC2" in ASCII (PulseShift Config)
+constexpr uint16_t NVS_SCHEMA_V2 = 2;
+constexpr uint16_t NVS_SCHEMA_V3 = 3;
 
 constexpr const char* NVS_SEC_NAMESPACE = "ps_sec";
 constexpr const char* NVS_KEY_CREDS = "creds";
@@ -36,6 +39,39 @@ struct NvsConfigBlob {
   uint16_t version;
   uint16_t length;
   PulseShiftConfig cfg;
+  uint32_t crc32;
+};
+
+// Legacy schema-2 configuration layout (pre decoder-extension fields).
+// Kept byte-exact so existing installations migrate without data loss.
+struct LegacyConfigV2 {
+  uint8_t  schemaVersion;
+  uint32_t activeRevision;
+  bool     isPowerOn;
+  uint8_t  brightness;
+  RgbColor globalColor;
+  RgbColor ledColors[6];
+  uint8_t  effect;
+  uint8_t  effectSpeed;
+  uint8_t  ledDirection;
+  uint8_t  startupAnimation;
+  uint16_t startupDurationMs;
+  uint16_t rpmThresholds[6];
+  uint16_t warningRpm;
+  uint8_t  warningPatternId;
+  RgbColor warningColor;
+  float    rpmMultiplier;
+  uint32_t canCandidateId;
+  uint8_t  candidateByteIndex;
+  bool     isExtendedFrame;
+  bool     calibrationVerified;
+};
+
+struct NvsConfigBlobV2 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t length;
+  LegacyConfigV2 cfg;
   uint32_t crc32;
 };
 
@@ -59,7 +95,7 @@ ConfigManager& ConfigManager::instance() {
 }
 
 void ConfigManager::applySafeDefaults(PulseShiftConfig& cfg) {
-  cfg.schemaVersion = 2;
+  cfg.schemaVersion = 3;
   cfg.activeRevision = 1;
   cfg.isPowerOn = true;
   cfg.brightness = 200;
@@ -81,11 +117,20 @@ void ConfigManager::applySafeDefaults(PulseShiftConfig& cfg) {
   cfg.warningRpm = 8500;
   cfg.warningPatternId = 0; // Flash
   cfg.warningColor = RgbColor{255, 0, 0};
+  cfg.rpmHysteresis = 150;
   cfg.rpmMultiplier = 40.0f;
+  cfg.rpmOffset = 0.0f;
+  cfg.candidateByteWidth = 1;
+  cfg.candidateLittleEndian = true;
+  cfg.rpmMaxValid = 12000;
   cfg.canCandidateId = 0x301;
   cfg.candidateByteIndex = 0;
   cfg.isExtendedFrame = false;
   cfg.calibrationVerified = false; // Must remain strictly unverified until validated
+  cfg.calFingerprint = 0;
+  cfg.calPointsUsed = 0;
+  cfg.calMaxResidualRpm = 0;
+  cfg.calTimestampMs = 0;
 }
 
 uint32_t ConfigManager::computeCrc32(const uint8_t* data, size_t length) {
@@ -104,10 +149,14 @@ uint32_t ConfigManager::computeCrc32(const uint8_t* data, size_t length) {
 }
 
 bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
-  if (cfg.schemaVersion != 2) return false;
+  if (cfg.schemaVersion != 3) return false;
   if (cfg.effect > 4) return false;
-  // Safety rule: RPM Bar (effect 4) requires verified production calibration
-  if (cfg.effect == 4 && !cfg.calibrationVerified) return false;
+  // Safety rule: RPM Bar (effect 4) requires a bound verification record with
+  // enough operating points to be meaningful.
+  if (cfg.effect == 4 &&
+      !(cfg.calibrationVerified && cfg.calFingerprint != 0 && cfg.calPointsUsed >= CAL_MIN_POINTS)) {
+    return false;
+  }
   if (cfg.effectSpeed > 100) return false;
   if (cfg.ledDirection > 1) return false;
   if (cfg.startupAnimation > 3) return false;
@@ -120,15 +169,23 @@ bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
   }
   if (cfg.warningRpm < cfg.rpmThresholds[5] || cfg.warningRpm > 20000) return false;
   if (cfg.warningPatternId > 3) return false;
+  if (cfg.rpmHysteresis > 2000) return false;
 
   // Multiplier validation: 0.1 .. 1000.0, reject NaN / inf
   if (isnan(cfg.rpmMultiplier) || isinf(cfg.rpmMultiplier) ||
       cfg.rpmMultiplier < 0.1f || cfg.rpmMultiplier > 1000.0f) {
     return false;
   }
+  // Offset validation: -10000 .. +10000 RPM, reject NaN / inf
+  if (isnan(cfg.rpmOffset) || isinf(cfg.rpmOffset) ||
+      cfg.rpmOffset < -10000.0f || cfg.rpmOffset > 10000.0f) {
+    return false;
+  }
+  if (cfg.candidateByteWidth != 1 && cfg.candidateByteWidth != 2) return false;
+  if (cfg.candidateByteIndex + cfg.candidateByteWidth > 8) return false;
+  if (cfg.rpmMaxValid == 0 || cfg.rpmMaxValid > 20000) return false;
 
   // CAN Candidate validation
-  if (cfg.candidateByteIndex >= 8) return false;
   if (cfg.isExtendedFrame) {
     if (cfg.canCandidateId > 0x1FFFFFFF) return false;
   } else {
@@ -144,9 +201,8 @@ bool ConfigManager::begin() {
   if (prefs.begin(NVS_NAMESPACE, true)) { // Read-only mount
     NvsConfigBlob blob{};
     const size_t len = prefs.getBytes(NVS_KEY_BLOB, &blob, sizeof(blob));
-    prefs.end();
 
-    if (len == sizeof(blob) && blob.magic == NVS_MAGIC && blob.version == 2) {
+    if (len == sizeof(blob) && blob.magic == NVS_MAGIC && blob.version == NVS_SCHEMA_V3) {
       const uint32_t calcCrc = computeCrc32(reinterpret_cast<const uint8_t*>(&blob),
                                             sizeof(blob) - sizeof(uint32_t));
       if (calcCrc == blob.crc32 && validateConfig(blob.cfg)) {
@@ -155,20 +211,67 @@ bool ConfigManager::begin() {
         Serial.printf("[CONFIG] Loaded persistent settings from NVS (revision=%lu)\r\n",
                       (unsigned long)active_.activeRevision);
 #endif
+        loadOwnerSecurity();
         return true;
       }
     }
+
+    // Legacy schema-2 blob: migrate fields, default the new ones.
+    NvsConfigBlobV2 legacy{};
+    const size_t legacyLen = prefs.getBytes(NVS_KEY_BLOB, &legacy, sizeof(legacy));
+    if (legacyLen == sizeof(legacy) && legacy.magic == NVS_MAGIC && legacy.version == NVS_SCHEMA_V2) {
+      const uint32_t calcCrc = computeCrc32(reinterpret_cast<const uint8_t*>(&legacy),
+                                            sizeof(legacy) - sizeof(uint32_t));
+      if (calcCrc == legacy.crc32) {
+        applySafeDefaults(active_);
+        active_.schemaVersion = 3;
+        active_.activeRevision = legacy.cfg.activeRevision;
+        active_.isPowerOn = legacy.cfg.isPowerOn;
+        active_.brightness = legacy.cfg.brightness;
+        active_.globalColor = legacy.cfg.globalColor;
+        for (uint8_t i = 0; i < 6; ++i) active_.ledColors[i] = legacy.cfg.ledColors[i];
+        active_.effect = legacy.cfg.effect;
+        active_.effectSpeed = legacy.cfg.effectSpeed;
+        active_.ledDirection = legacy.cfg.ledDirection;
+        active_.startupAnimation = legacy.cfg.startupAnimation;
+        active_.startupDurationMs = legacy.cfg.startupDurationMs;
+        for (uint8_t i = 0; i < 6; ++i) active_.rpmThresholds[i] = legacy.cfg.rpmThresholds[i];
+        active_.warningRpm = legacy.cfg.warningRpm;
+        active_.warningPatternId = legacy.cfg.warningPatternId;
+        active_.warningColor = legacy.cfg.warningColor;
+        active_.rpmMultiplier = legacy.cfg.rpmMultiplier;
+        active_.canCandidateId = legacy.cfg.canCandidateId;
+        active_.candidateByteIndex = legacy.cfg.candidateByteIndex;
+        active_.isExtendedFrame = legacy.cfg.isExtendedFrame;
+        // A legacy configuration carries no fingerprint binding, so any
+        // claimed verification becomes UNVERIFIED until recalibrated.
+        active_.calibrationVerified = false;
+        if (!validateConfig(active_)) applySafeDefaults(active_);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.println("[CONFIG] Migrated legacy schema-2 settings; calibration reset to UNVERIFIED.");
+#endif
+      }
+    }
+    prefs.end();
   }
 
+  if (!validateConfig(active_)) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-  Serial.println("[CONFIG] NVS settings missing or corrupt; applied documented safe defaults.");
+    Serial.println("[CONFIG] NVS settings missing or corrupt; applied documented safe defaults.");
 #endif
-#endif
+    applySafeDefaults(active_);
+  }
 
+  loadOwnerSecurity();
+  return true;
+#else
   applySafeDefaults(active_);
+  return true;
+#endif
+}
 
+void ConfigManager::loadOwnerSecurity() {
 #if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
-  // Load owner security credentials from dedicated NVS namespace
   Preferences secPrefs;
   if (secPrefs.begin(NVS_SEC_NAMESPACE, true)) { // Read-only mount
     OwnerSecurityBlob secBlob{};
@@ -188,8 +291,6 @@ bool ConfigManager::begin() {
     }
   }
 #endif
-
-  return true;
 }
 
 void ConfigManager::poll(uint32_t nowMs) {
@@ -214,6 +315,15 @@ void ConfigManager::poll(uint32_t nowMs) {
     Serial.println("[SECURITY] Authenticated session expired due to inactivity.");
 #endif
   }
+
+  // Calibration session timeout
+  if (calSessionActive_ && uint32_t(nowMs - calSessionStartMs_) >= CAL_SESSION_TIMEOUT_MS) {
+    calSessionActive_ = false;
+    calCaptureActive_ = false;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[CALIB] Calibration session timed out; discarded.");
+#endif
+  }
 }
 
 bool ConfigManager::beginTransaction() {
@@ -235,6 +345,20 @@ bool ConfigManager::commitTransaction() {
 
 void ConfigManager::abortTransaction() {
   stagedTxActive_ = false;
+}
+
+void ConfigManager::invalidateCalibration(PulseShiftConfig& cfg) {
+  cfg.calibrationVerified = false;
+  cfg.calFingerprint = 0;
+  cfg.calPointsUsed = 0;
+  cfg.calMaxResidualRpm = 0;
+  cfg.calTimestampMs = 0;
+  // Any decoder change invalidates verification; an active RPM-driven effect
+  // would then leave the persisted configuration permanently invalid, so it
+  // is reverted to a decorative effect. Old RPM values can never trigger LEDs.
+  if (cfg.effect == 4) {
+    cfg.effect = 0;
+  }
 }
 
 BleConfigStatusCode ConfigManager::setPower(bool power, bool isStaged) {
@@ -286,8 +410,15 @@ BleConfigStatusCode ConfigManager::setLedRgb(uint8_t index, RgbColor color, bool
 
 BleConfigStatusCode ConfigManager::setEffect(uint8_t effectId, uint8_t speed, bool isStaged) {
   if (effectId > 4 || speed > 100) return BLE_CFG_STATUS_INVALID_PARAM;
-  if (effectId == 4 && !active_.calibrationVerified) {
-    return BLE_CFG_STATUS_INVALID_STATE; // RPM Bar forbidden while calibration unverified
+  if (effectId == 4) {
+    // RPM Bar is forbidden while calibration is unverified, regardless of the
+    // target buffer (staged or live).
+    const PulseShiftConfig& target = isStaged ? staged_ : active_;
+    if (isStaged && !stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
+    if (!(target.calibrationVerified && target.calFingerprint != 0 &&
+          target.calPointsUsed >= CAL_MIN_POINTS)) {
+      return BLE_CFG_STATUS_INVALID_STATE; // RPM Bar forbidden while calibration unverified
+    }
   }
   if (isStaged) {
     if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
@@ -359,11 +490,11 @@ BleConfigStatusCode ConfigManager::setRpmMultiplier(float multiplier, bool isSta
   if (isStaged) {
     if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
     staged_.rpmMultiplier = multiplier;
-    staged_.calibrationVerified = false; // Invalidate verification
+    invalidateCalibration(staged_); // Invalidate verification (+ revert effect 4)
     return BLE_CFG_STATUS_OK;
   }
   active_.rpmMultiplier = multiplier;
-  active_.calibrationVerified = false; // Invalidate verification
+  invalidateCalibration(active_);
   active_.activeRevision++;
   return BLE_CFG_STATUS_OK;
 }
@@ -380,13 +511,45 @@ BleConfigStatusCode ConfigManager::setCandidateSource(uint32_t canId, uint8_t by
     staged_.canCandidateId = canId;
     staged_.candidateByteIndex = byteIndex;
     staged_.isExtendedFrame = isExtended;
-    staged_.calibrationVerified = false; // Invalidate verification
+    invalidateCalibration(staged_);
     return BLE_CFG_STATUS_OK;
   }
   active_.canCandidateId = canId;
   active_.candidateByteIndex = byteIndex;
   active_.isExtendedFrame = isExtended;
-  active_.calibrationVerified = false; // Invalidate verification
+  invalidateCalibration(active_);
+  active_.activeRevision++;
+  return BLE_CFG_STATUS_OK;
+}
+
+BleConfigStatusCode ConfigManager::setRpmDecoderExt(uint8_t byteWidth, bool littleEndian,
+                                                   float offsetRpm, uint16_t maxValidRpm, bool isStaged) {
+  if (byteWidth != 1 && byteWidth != 2) return BLE_CFG_STATUS_INVALID_PARAM;
+  if (isnan(offsetRpm) || isinf(offsetRpm) ||
+      offsetRpm < -10000.0f || offsetRpm > 10000.0f) return BLE_CFG_STATUS_INVALID_PARAM;
+  if (maxValidRpm == 0 || maxValidRpm > 20000) return BLE_CFG_STATUS_INVALID_PARAM;
+
+  PulseShiftConfig& target = isStaged ? staged_ : active_;
+  if (isStaged && !stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
+  if (target.candidateByteIndex + byteWidth > 8) return BLE_CFG_STATUS_INVALID_PARAM;
+
+  target.candidateByteWidth = byteWidth;
+  target.candidateLittleEndian = littleEndian;
+  target.rpmOffset = offsetRpm;
+  target.rpmMaxValid = maxValidRpm;
+  invalidateCalibration(target);
+  if (!isStaged) active_.activeRevision++;
+  return BLE_CFG_STATUS_OK;
+}
+
+BleConfigStatusCode ConfigManager::setRpmHysteresis(uint16_t hysteresisRpm, bool isStaged) {
+  if (hysteresisRpm > 2000) return BLE_CFG_STATUS_INVALID_PARAM;
+  if (isStaged) {
+    if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
+    staged_.rpmHysteresis = hysteresisRpm;
+    return BLE_CFG_STATUS_OK;
+  }
+  active_.rpmHysteresis = hysteresisRpm;
   active_.activeRevision++;
   return BLE_CFG_STATUS_OK;
 }
@@ -415,13 +578,17 @@ BleConfigStatusCode ConfigManager::setWarningRgb(RgbColor color, bool isStaged) 
 }
 
 bool ConfigManager::saveToNvs() {
+  lastNvsSaveMs_ = millis();
 #if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
   Preferences prefs;
-  if (!prefs.begin(NVS_NAMESPACE, false)) return false;
+  if (!prefs.begin(NVS_NAMESPACE, false)) {
+    lastNvsSaveOk_ = false;
+    return false;
+  }
 
   NvsConfigBlob blob{};
   blob.magic = NVS_MAGIC;
-  blob.version = 2;
+  blob.version = NVS_SCHEMA_V3;
   blob.length = sizeof(blob);
   blob.cfg = active_;
   blob.crc32 = computeCrc32(reinterpret_cast<const uint8_t*>(&blob),
@@ -429,26 +596,32 @@ bool ConfigManager::saveToNvs() {
 
   const size_t written = prefs.putBytes(NVS_KEY_BLOB, &blob, sizeof(blob));
   prefs.end();
-  return (written == sizeof(blob));
+  lastNvsSaveOk_ = (written == sizeof(blob));
+  return lastNvsSaveOk_;
 #else
+  lastNvsSaveOk_ = true;
   return true;
 #endif
 }
 
-bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2) {
-  if (conf1 != 0xA5 || conf2 != 0x5A) return false;
+bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved) {
+  if (conf1 != 0xA5 || conf2 != 0x5A) {
+    if (nvsSaved) *nvsSaved = false;
+    return false;
+  }
   applySafeDefaults(active_);
   active_.activeRevision++;
-  saveToNvs();
+  const bool saved = saveToNvs();
+  if (nvsSaved) *nvsSaved = saved;
   clearOwnerEnrollment();
   return true;
 }
 
 size_t ConfigManager::serializeSnapshot(uint8_t* outBuf, size_t maxLen) const {
-  if (!outBuf || maxLen < 120) return 0;
+  if (!outBuf || maxLen < 160) return 0;
 
   size_t offset = 0;
-  outBuf[offset++] = active_.schemaVersion; // Byte 0: 2
+  outBuf[offset++] = active_.schemaVersion; // Byte 0: 3
 
   // Bytes 1..4: activeRevision (u32 LE)
   outBuf[offset++] = static_cast<uint8_t>(active_.activeRevision & 0xFF);
@@ -540,6 +713,50 @@ size_t ConfigManager::serializeSnapshot(uint8_t* outBuf, size_t maxLen) const {
   uint8_t wc[3] = {active_.warningColor.r, active_.warningColor.g, active_.warningColor.b};
   appendTlv(0x1B, wc, 3);
 
+  // TLV 0x1C: decoder extension (schema 3): byteWidth, littleEndian,
+  //           offsetRpm*1000 (s32 LE), maxValidRpm (u16 LE) -> 8 bytes
+  {
+    const int32_t offX1000 = static_cast<int32_t>(active_.rpmOffset * 1000.0f);
+    uint8_t ext[8] = {
+      active_.candidateByteWidth,
+      static_cast<uint8_t>(active_.candidateLittleEndian ? 1 : 0),
+      static_cast<uint8_t>(offX1000 & 0xFF),
+      static_cast<uint8_t>((offX1000 >> 8) & 0xFF),
+      static_cast<uint8_t>((offX1000 >> 16) & 0xFF),
+      static_cast<uint8_t>((offX1000 >> 24) & 0xFF),
+      static_cast<uint8_t>(active_.rpmMaxValid & 0xFF),
+      static_cast<uint8_t>((active_.rpmMaxValid >> 8) & 0xFF)
+    };
+    appendTlv(0x1C, ext, 8);
+  }
+
+  // TLV 0x1D: calibration verification record (11 bytes)
+  {
+    uint8_t rec[11] = {
+      static_cast<uint8_t>(active_.calibrationVerified ? 1 : 0),
+      static_cast<uint8_t>(active_.calFingerprint & 0xFF),
+      static_cast<uint8_t>((active_.calFingerprint >> 8) & 0xFF),
+      static_cast<uint8_t>((active_.calFingerprint >> 16) & 0xFF),
+      static_cast<uint8_t>((active_.calFingerprint >> 24) & 0xFF),
+      active_.calPointsUsed,
+      active_.calMaxResidualRpm,
+      static_cast<uint8_t>(active_.calTimestampMs & 0xFF),
+      static_cast<uint8_t>((active_.calTimestampMs >> 8) & 0xFF),
+      static_cast<uint8_t>((active_.calTimestampMs >> 16) & 0xFF),
+      static_cast<uint8_t>((active_.calTimestampMs >> 24) & 0xFF)
+    };
+    appendTlv(0x1D, rec, 11);
+  }
+
+  // TLV 0x1E: threshold hysteresis (u16 LE)
+  {
+    uint8_t hyst[2] = {
+      static_cast<uint8_t>(active_.rpmHysteresis & 0xFF),
+      static_cast<uint8_t>((active_.rpmHysteresis >> 8) & 0xFF)
+    };
+    appendTlv(0x1E, hyst, 2);
+  }
+
   // Compute CRC32 over all serialized bytes so far
   const uint32_t crc = computeCrc32(outBuf, offset);
   outBuf[offset++] = static_cast<uint8_t>(crc & 0xFF);
@@ -549,6 +766,195 @@ size_t ConfigManager::serializeSnapshot(uint8_t* outBuf, size_t maxLen) const {
 
   return offset;
 }
+
+// ============================================================================
+// Mobile-assisted calibration session (Phase 4)
+// ============================================================================
+
+bool ConfigManager::beginCalibrationSession(uint32_t nowMs) {
+  calSessionActive_ = true;
+  calSessionStartMs_ = nowMs;
+  calPointCount_ = 0;
+  calCaptureActive_ = false;
+  calCaptureSamples_ = 0;
+  calCaptureSum_ = 0.0;
+  calCaptureSumSq_ = 0.0;
+  memset(calPoints_, 0, sizeof(calPoints_));
+  return true;
+}
+
+void ConfigManager::abortCalibrationSession() {
+  calSessionActive_ = false;
+  calCaptureActive_ = false;
+  calCaptureSamples_ = 0;
+  calCaptureSum_ = 0.0;
+  calCaptureSumSq_ = 0.0;
+}
+
+bool ConfigManager::startCalibrationCapture(uint32_t nowMs) {
+  if (!calSessionActive_ || calPointCount_ >= CAL_MAX_POINTS) return false;
+  calCaptureActive_ = true;
+  calCaptureStartMs_ = nowMs;
+  calCaptureSamples_ = 0;
+  calCaptureSum_ = 0.0;
+  calCaptureSumSq_ = 0.0;
+  return true;
+}
+
+void ConfigManager::feedCalibrationSample(uint16_t raw, uint32_t nowMs) {
+  if (!calCaptureActive_) return;
+  // Bounded 2-second rolling window; later samples replace the window only if
+  // the caller keeps feeding. Window closes implicitly at commit.
+  if (uint32_t(nowMs - calCaptureStartMs_) >= CAL_CAPTURE_WINDOW_MS * 3) {
+    return; // stale window; caller must restart capture
+  }
+  calCaptureSamples_++;
+  const double v = static_cast<double>(raw);
+  calCaptureSum_ += v;
+  calCaptureSumSq_ += v * v;
+}
+
+BleConfigStatusCode ConfigManager::commitCalibrationPoint(uint16_t refRpm, uint32_t nowMs) {
+  if (!calSessionActive_) return BLE_CFG_STATUS_INVALID_STATE;
+  if (!calCaptureActive_) return BLE_CFG_STATUS_INVALID_STATE;
+  if (refRpm > 20000) return BLE_CFG_STATUS_INVALID_PARAM;
+  if (calCaptureSamples_ < 10) return BLE_CFG_STATUS_INVALID_STATE; // not enough evidence
+
+  CalibrationPoint& p = calPoints_[calPointCount_];
+  const double n = static_cast<double>(calCaptureSamples_);
+  const double mean = calCaptureSum_ / n;
+  const double variance = (calCaptureSumSq_ - n * mean * mean) / (n > 1.0 ? n - 1.0 : 1.0);
+  p.captured = true;
+  p.refRpm = refRpm;
+  p.rawMean = static_cast<float>(mean);
+  p.rawStdDev = static_cast<float>(variance > 0.0 ? sqrt(variance) : 0.0);
+  p.samples = calCaptureSamples_;
+  p.timestampMs = nowMs;
+  calPointCount_++;
+
+  calCaptureActive_ = false;
+  calCaptureSamples_ = 0;
+  calCaptureSum_ = 0.0;
+  calCaptureSumSq_ = 0.0;
+  return BLE_CFG_STATUS_OK;
+}
+
+CalibrationResult ConfigManager::computeCalibration(bool applyWhenValid, uint32_t nowMs) {
+  CalibrationResult r;
+  if (!calSessionActive_ || calPointCount_ < CAL_MIN_POINTS) {
+    r.status = BLE_CFG_STATUS_INVALID_STATE;
+    snprintf(r.reason, sizeof(r.reason), "need %u points", (unsigned)CAL_MIN_POINTS);
+    return r;
+  }
+
+  const uint8_t n = calPointCount_;
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  uint16_t minRef = 0xFFFF, maxRef = 0;
+  // Monotonicity: raw means must not decrease as reference RPM increases.
+  uint8_t inversions = 0;
+  for (uint8_t i = 0; i < n; ++i) {
+    const CalibrationPoint& p = calPoints_[i];
+    if (p.rawStdDev > CAL_MAX_STDDEV_RAW) {
+      r.status = BLE_CFG_STATUS_VALIDATION_FAILED;
+      snprintf(r.reason, sizeof(r.reason), "pt%u unstable sd=%.1f", (unsigned)(i + 1), (double)p.rawStdDev);
+      return r;
+    }
+    if (p.refRpm < minRef) minRef = p.refRpm;
+    if (p.refRpm > maxRef) maxRef = p.refRpm;
+    sx += p.rawMean; sy += p.refRpm; sxx += p.rawMean * p.rawMean; sxy += p.rawMean * p.refRpm;
+  }
+  for (uint8_t i = 0; i < n; ++i) {
+    for (uint8_t j = static_cast<uint8_t>(i + 1); j < n; ++j) {
+      if ((calPoints_[i].refRpm < calPoints_[j].refRpm && calPoints_[i].rawMean > calPoints_[j].rawMean) ||
+          (calPoints_[i].refRpm > calPoints_[j].refRpm && calPoints_[i].rawMean < calPoints_[j].rawMean)) {
+        ++inversions;
+      }
+    }
+  }
+  if (inversions > 0) {
+    r.status = BLE_CFG_STATUS_VALIDATION_FAILED;
+    snprintf(r.reason, sizeof(r.reason), "non-monotonic (%u inv)", (unsigned)inversions);
+    return r;
+  }
+  // Operating points must span a meaningful engine range, not only idle.
+  if (maxRef < minRef + 1500) {
+    r.status = BLE_CFG_STATUS_VALIDATION_FAILED;
+    snprintf(r.reason, sizeof(r.reason), "span %u RPM too small", (unsigned)(maxRef - minRef));
+    return r;
+  }
+
+  const double denom = n * sxx - sx * sx;
+  if (fabs(denom) < 1e-6) {
+    r.status = BLE_CFG_STATUS_VALIDATION_FAILED;
+    snprintf(r.reason, sizeof(r.reason), "degenerate fit (no raw span)");
+    return r;
+  }
+  const double a = (n * sxy - sx * sy) / denom;
+  const double b = (sy - a * sx) / n;
+
+  if (a < 0.05 || a > 1000.0) {
+    r.status = BLE_CFG_STATUS_VALIDATION_FAILED;
+    snprintf(r.reason, sizeof(r.reason), "scale %.3f out of range", a);
+    return r;
+  }
+  if (b < -500.0 || b > 500.0) {
+    r.status = BLE_CFG_STATUS_VALIDATION_FAILED;
+    snprintf(r.reason, sizeof(r.reason), "offset %.0f out of range", b);
+    return r;
+  }
+
+  float maxResidual = 0.0f;
+  for (uint8_t i = 0; i < n; ++i) {
+    const float predicted = static_cast<float>(a * calPoints_[i].rawMean + b);
+    const float residual = fabsf(predicted - static_cast<float>(calPoints_[i].refRpm));
+    if (residual > maxResidual) maxResidual = residual;
+  }
+  if (maxResidual > CAL_MAX_RESIDUAL_RPM) {
+    r.status = BLE_CFG_STATUS_VALIDATION_FAILED;
+    snprintf(r.reason, sizeof(r.reason), "residual %.0f > %.0f", (double)maxResidual, (double)CAL_MAX_RESIDUAL_RPM);
+    return r;
+  }
+
+  r.multiplier = static_cast<float>(a);
+  r.offset = static_cast<float>(b);
+  r.maxResidualRpm = maxResidual;
+  r.pointsUsed = n;
+
+  if (!applyWhenValid) {
+    // Fit-only preview for the phone UI.
+    r.status = BLE_CFG_STATUS_OK;
+    snprintf(r.reason, sizeof(r.reason), "fit ok (not applied)");
+    return r;
+  }
+
+  // Apply the fitted decoder parameters and bind the verification record to
+  // the resulting decoder fingerprint (exact decoder + source configuration).
+  RpmDecoderSettings s;
+  s.canId = active_.canCandidateId;
+  s.extended = active_.isExtendedFrame;
+  s.byteIndex = active_.candidateByteIndex;
+  s.byteWidth = active_.candidateByteWidth;
+  s.littleEndian = active_.candidateLittleEndian;
+  s.multiplier = r.multiplier;
+  s.offset = r.offset;
+  s.maxRpm = active_.rpmMaxValid;
+
+  active_.rpmMultiplier = r.multiplier;
+  active_.rpmOffset = r.offset;
+  active_.calibrationVerified = true;
+  active_.calFingerprint = computeDecoderFingerprint(s);
+  active_.calPointsUsed = n;
+  active_.calMaxResidualRpm = static_cast<uint8_t>(maxResidual > 255.0f ? 255 : maxResidual);
+  active_.calTimestampMs = nowMs;
+  active_.activeRevision++;
+  r.status = BLE_CFG_STATUS_OK;
+  snprintf(r.reason, sizeof(r.reason), "verified & bound");
+  return r;
+}
+
+// ============================================================================
+// Security / provisioning
+// ============================================================================
 
 void ConfigManager::triggerAuthWindow(uint32_t nowMs) {
   authWindowStartMs_ = nowMs;
@@ -572,13 +978,21 @@ bool ConfigManager::isAuthorized(uint32_t nowMs) const {
   return false;
 }
 
+bool ConfigManager::isAuthorizedFor(uint16_t connId, uint32_t nowMs) const {
+  if (isAuthWindowOpen(nowMs)) {
+    return true; // physical presence authorizes whichever link is live
+  }
+  return sessionAuthorized_ && sessionConnId_ == connId &&
+         uint32_t(nowMs - sessionLastActivityMs_) < SESSION_TIMEOUT_MS;
+}
+
 void ConfigManager::refreshSessionActivity(uint32_t nowMs) {
   if (sessionAuthorized_) {
     sessionLastActivityMs_ = nowMs;
   }
 }
 
-BleConfigStatusCode ConfigManager::enrollOwner(const uint8_t* secret, size_t len, uint32_t nowMs) {
+BleConfigStatusCode ConfigManager::enrollOwner(const uint8_t* secret, size_t len, uint32_t nowMs, uint16_t connId) {
   // Owner enrollment strictly requires physical presence proof via BOOT authorization window
   if (!isAuthWindowOpen(nowMs)) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -607,6 +1021,7 @@ BleConfigStatusCode ConfigManager::enrollOwner(const uint8_t* secret, size_t len
   memcpy(ownerSecret_, secret, OWNER_SECRET_LEN);
   ownerEnrolled_ = true;
   sessionAuthorized_ = true;
+  sessionConnId_ = connId; // session is bound to this connection only
   sessionLastActivityMs_ = nowMs;
   authFailureCount_ = 0;
 
@@ -677,7 +1092,7 @@ void ConfigManager::computeAuthProof(const uint8_t secret[OWNER_SECRET_LEN], uin
   mbedtls_sha256(msg, sizeof(msg), fullHash, 0); // 0 = SHA-256
   memcpy(outProof, fullHash, 8);
 #else
-  // Host test stub SHA-256 / digest simulation
+  // Host test stub digest simulation (NEVER used on hardware)
   const uint32_t c1 = computeCrc32(msg, 9);
   const uint32_t c2 = computeCrc32(msg + 9, 9);
   outProof[0] = static_cast<uint8_t>(c1 & 0xFF);
@@ -691,29 +1106,21 @@ void ConfigManager::computeAuthProof(const uint8_t secret[OWNER_SECRET_LEN], uin
 #endif
 }
 
-BleConfigStatusCode ConfigManager::authenticateChallenge(const uint8_t* proof, size_t len, uint16_t sequence, uint32_t nowMs) {
-  // 1. Check physical button window presence first
-  if (isAuthWindowOpen(nowMs)) {
-    sessionAuthorized_ = true;
-    sessionLastActivityMs_ = nowMs;
-    authFailureCount_ = 0;
-    challengeValid_ = false;
-    activeChallenge_ = 0;
-#if PULSESHIFT_SERIAL_DIAGNOSTICS
-    Serial.println("[SECURITY] Session authorized via physical BOOT window presence.");
-#endif
-    return BLE_CFG_STATUS_OK;
-  }
-
-  // 2. Reject if owner has never been enrolled
+BleConfigStatusCode ConfigManager::authenticateChallenge(const uint8_t* proof, size_t len, uint16_t sequence,
+                                                         uint32_t nowMs, uint16_t connId) {
+  // 1. Reject if owner has never been enrolled. Physical presence (BOOT
+  //    window) alone no longer grants a session: that would let any BLE
+  //    client in range during the window bypass the proof entirely. Physical
+  //    presence authorizes ENROLLMENT (commissioning / recovery), not
+  //    proof-less session authentication.
   if (!ownerEnrolled_) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-    Serial.println("[SECURITY] Authentication rejected: Owner un-enrolled. Press BOOT button.");
+    Serial.println("[SECURITY] Authentication rejected: Owner un-enrolled. Press BOOT to enroll.");
 #endif
     return BLE_CFG_STATUS_UNAUTHORIZED;
   }
 
-  // 3. Enforce rate-limiting lockout after repeated failures (5 attempts -> 3s cooldown)
+  // 2. Enforce rate-limiting lockout after repeated failures (5 attempts -> 3s cooldown)
   if (authFailureCount_ >= 5 && uint32_t(nowMs - lastAuthFailureMs_) < 3000) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.println("[SECURITY] Authentication rate-limited; retry shortly.");
@@ -721,7 +1128,7 @@ BleConfigStatusCode ConfigManager::authenticateChallenge(const uint8_t* proof, s
     return BLE_CFG_STATUS_BUSY;
   }
 
-  // 4. Verify single-use challenge validity and expiration (30 seconds TTL)
+  // 3. Verify single-use challenge validity and expiration (30 seconds TTL)
   if (!challengeValid_ || uint32_t(nowMs - challengeCreatedAtMs_) >= CHALLENGE_TIMEOUT_MS) {
     challengeValid_ = false;
     activeChallenge_ = 0;
@@ -742,7 +1149,7 @@ BleConfigStatusCode ConfigManager::authenticateChallenge(const uint8_t* proof, s
     return BLE_CFG_STATUS_INVALID_PARAM;
   }
 
-  // 5. Compute expected proof and compare in constant time
+  // 4. Compute expected proof and compare in constant time
   uint8_t expectedProof[8];
   computeAuthProof(ownerSecret_, challengeToVerify, sequence, expectedProof);
 
@@ -760,8 +1167,9 @@ BleConfigStatusCode ConfigManager::authenticateChallenge(const uint8_t* proof, s
     return BLE_CFG_STATUS_UNAUTHORIZED;
   }
 
-  // Authentication succeeded!
+  // Authentication succeeded; session is bound to this connection only.
   sessionAuthorized_ = true;
+  sessionConnId_ = connId;
   sessionLastActivityMs_ = nowMs;
   authFailureCount_ = 0;
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -790,6 +1198,8 @@ void ConfigManager::clearOwnerEnrollment() {
 }
 
 void ConfigManager::onClientDisconnected() {
+  // Session authorization is bound to the active connection: any disconnect
+  // ends it, regardless of which handle dropped.
   sessionAuthorized_ = false;
   challengeValid_ = false;
   activeChallenge_ = 0;

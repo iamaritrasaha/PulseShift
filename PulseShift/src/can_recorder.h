@@ -97,6 +97,18 @@ class CanRecorder {
   void dumpPageNumber(uint32_t pageNumber);
   void dumpToSerial() { dumpNext(); }
 
+  // ---- BLE capture export (bounded, resumable, non-destructive) ----
+  // Pages of records streamed to the phone over the diagnostic-log
+  // characteristic. Reading never mutates the capture file; the cursor is
+  // independent of the serial DUMP cursor so both can interleave safely.
+  static constexpr uint32_t BLE_EXPORT_PAGE_RECORDS = 12;
+  bool bleExportBegin(uint32_t startRecord);             // false: no readable capture
+  bool bleExportNext(CanLogRecord& out, uint32_t& recordIndex);  // false: end of capture
+  uint32_t bleExportCursor() const { return bleCursor_; }
+  void bleExportCancel() { bleActive_ = false; }
+  bool isBleExportActive() const { return bleActive_; }
+  bool bleExportChecksumOk() const { return bleChecksumOk_; }
+
   void clear();
 
   static uint16_t computeCrc16(const uint8_t* data, size_t length);
@@ -135,4 +147,9 @@ class CanRecorder {
   uint32_t recordedFrames_ = 0;
   uint32_t droppedFrames_ = 0;
   uint32_t lastFlushMs_ = 0;
+
+  // BLE export cursor state
+  bool bleActive_ = false;
+  bool bleChecksumOk_ = true;
+  uint32_t bleCursor_ = 0;
 };

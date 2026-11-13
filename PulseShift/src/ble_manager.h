@@ -59,9 +59,18 @@ class BleManager {
 
   void processLogQueue();
   void processHistoricalPageRead();
-  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate);
+  void processCapturePage();
+  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate, uint16_t connId);
   void processSnapshotStream();
   void updateCapabilitiesChar();
+  void sendResult(BleConfigResultPacket& res);
+  // Rebuild the authoritative live decoder from the active configuration and
+  // refresh the calibration mirror (single source of truth: ConfigManager).
+  static void syncDecoderToMonitor(RpmCandidateMonitor& candidate);
+  size_t buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen,
+                              const RpmCandidateMonitor& candidate,
+                              const CanTransport& transport,
+                              const CanRecorder& recorder) const;
 
   // Internal state
   bool initialized_ = false;
@@ -97,6 +106,16 @@ class BleManager {
   size_t activeMsgOffset_ = 0;
   uint8_t activeChunkIndex_ = 0;
 
+  // CAN capture page streaming state (v1 control extension)
+  bool capturePageActive_ = false;
+  bool capturePageEopPending_ = false;
+  uint8_t capturePageFinished_ = 0;
+  uint32_t captureNextRecord_ = 0;
+  uint8_t captureRecordsSent_ = 0;
+  bool captureLineStaged_ = false;
+  bool captureCancelRequested_ = false;
+  uint32_t captureCorruptSeen_ = 0;
+
   // Control request command queue (thread-safe decoupling from NimBLE callback)
   struct PendingCtrlCmd {
     uint8_t opcode = 0;
@@ -115,6 +134,7 @@ class BleManager {
   // Configuration V2 Command Queue
   struct PendingConfigCmd {
     BleConfigCommandPacket packet{};
+    uint16_t connId = 0;
     std::atomic<bool> pending{false};
   };
   PendingConfigCmd pendingConfigCmd_{};

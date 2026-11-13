@@ -28,6 +28,7 @@ static NimBLECharacteristic* s_pConfigSnapshotChar = nullptr;
 static NimBLECharacteristic* s_pCapabilitiesChar = nullptr;
 
 static std::atomic<bool> s_clientConnected{false};
+static std::atomic<uint16_t> s_connHandle{0};
 static std::atomic<bool> s_rpmSubscribed{false};
 static std::atomic<bool> s_healthSubscribed{false};
 static std::atomic<bool> s_logsSubscribed{false};
@@ -37,6 +38,7 @@ static std::atomic<bool> s_configSnapshotSubscribed{false};
 class BleServerCallbacksImpl : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
     s_clientConnected.store(true, std::memory_order_release);
+    s_connHandle.store(connInfo.getConnHandle(), std::memory_order_release);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("[BLE] Client connected: %s\r\n", connInfo.getAddress().toString().c_str());
 #endif
@@ -47,6 +49,7 @@ class BleServerCallbacksImpl : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
     (void)pServer; (void)connInfo; (void)reason;
     s_clientConnected.store(false, std::memory_order_release);
+    s_connHandle.store(0, std::memory_order_release);
     s_rpmSubscribed.store(false, std::memory_order_release);
     s_healthSubscribed.store(false, std::memory_order_release);
     s_logsSubscribed.store(false, std::memory_order_release);
@@ -102,6 +105,8 @@ class BleControlCallbacksImpl : public NimBLECharacteristicCallbacks {
     // Protocol v1 Control commands:
     // [0x01, 0x10, offset_u32_LE] -> Request page of historical diagnostic logs (6 bytes)
     // [0x01, 0x11]                -> Cancel historical log retrieval (2 bytes)
+    // [0x01, 0x12, startRec_u32]  -> Request page of CAN capture records (6 bytes)
+    // [0x01, 0x13]                -> Cancel CAN capture export (2 bytes)
     if (len >= 2 && data[0] == PULSESHIFT_BLE_PROTOCOL_VERSION) {
       if (data[1] == BLE_CTRL_CMD_GET_LOG_PAGE && len == 6) {
         uint32_t offset = 0;
@@ -119,6 +124,24 @@ class BleControlCallbacksImpl : public NimBLECharacteristicCallbacks {
         mgr.pendingCtrlCmd_.pending.store(true, std::memory_order_release);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
         Serial.println("[BLE] Queued log page retrieval cancellation");
+#endif
+        return;
+      } else if (data[1] == BLE_CTRL_CMD_GET_CAPTURE_PAGE && len == 6) {
+        uint32_t startRec = 0;
+        memcpy(&startRec, &data[2], 4);
+        mgr.pendingCtrlCmd_.opcode = BLE_CTRL_CMD_GET_CAPTURE_PAGE;
+        mgr.pendingCtrlCmd_.offset = startRec;
+        mgr.pendingCtrlCmd_.pending.store(true, std::memory_order_release);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.printf("[BLE] Queued capture page request from record %lu\r\n", (unsigned long)startRec);
+#endif
+        return;
+      } else if (data[1] == BLE_CTRL_CMD_CANCEL_CAPTURE && len == 2) {
+        mgr.pendingCtrlCmd_.opcode = BLE_CTRL_CMD_CANCEL_CAPTURE;
+        mgr.pendingCtrlCmd_.offset = 0;
+        mgr.pendingCtrlCmd_.pending.store(true, std::memory_order_release);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.println("[BLE] Queued capture export cancellation");
 #endif
         return;
       }
@@ -164,6 +187,7 @@ class BleConfigCmdCallbacksImpl : public NimBLECharacteristicCallbacks {
       BleConfigCommandPacket pkt{};
       memcpy(&pkt, data, len);
       mgr.pendingConfigCmd_.packet = pkt;
+      mgr.pendingConfigCmd_.connId = connInfo.getConnHandle();
       mgr.pendingConfigCmd_.pending.store(true, std::memory_order_release);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
       Serial.printf("[BLE] Queued config command (opcode=0x%02X, seq=%u, len=%u, flags=0x%02X)\r\n",

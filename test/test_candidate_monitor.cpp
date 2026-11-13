@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cassert>
+#include <limits>
 
 namespace {
 unsigned assertions = 0, cases = 0;
@@ -201,8 +202,8 @@ void test_bounds_and_nan_safety() {
   CHECK(badIdx.byteIndex() == 4);
 
   // Test NaN / Inf multiplier rejection
-  float nanVal = 0.0f / 0.0f;
-  float infVal = 1.0f / 0.0f;
+  float nanVal = std::numeric_limits<float>::quiet_NaN();
+  float infVal = std::numeric_limits<float>::infinity();
   badIdx.setMultiplier(nanVal);
   CHECK(badIdx.multiplier() == 40.0f); // unchanged
 

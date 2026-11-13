@@ -75,10 +75,11 @@ struct BleHealthPacket {
 // --- Diagnostic Log Chunk Packet (UUID: ...d213) ---
 // Fixed maximum 20-byte chunk. Properties: NOTIFY.
 enum BleLogFlags : uint8_t {
-  BLE_LOG_FLAG_FIRST_CHUNK = 0x01, // Bit 0: First chunk of message
-  BLE_LOG_FLAG_FINAL_CHUNK = 0x02, // Bit 1: Final chunk of message
-  BLE_LOG_FLAG_END_OF_PAGE = 0x04, // Bit 2: End-of-page marker
-  BLE_LOG_FLAG_ERROR       = 0x08  // Bit 3: Error marker
+  BLE_LOG_FLAG_FIRST_CHUNK  = 0x01, // Bit 0: First chunk of message
+  BLE_LOG_FLAG_FINAL_CHUNK  = 0x02, // Bit 1: Final chunk of message
+  BLE_LOG_FLAG_END_OF_PAGE  = 0x04, // Bit 2: End-of-page marker
+  BLE_LOG_FLAG_ERROR        = 0x08, // Bit 3: Error marker
+  BLE_LOG_FLAG_CAPTURE_LINE = 0x10  // Bit 4: CAN capture record line (CSV like serial DUMP)
 };
 
 struct BleLogChunkPacket {
@@ -97,16 +98,19 @@ struct BleLogChunkPacket {
 
 // --- Control Requests (UUID: ...d214) ---
 // Properties: WRITE WITH RESPONSE.
-enum BleControlCommand : uint8_t {
-  BLE_CTRL_CMD_GET_LOG_PAGE = 0x10, // [0x01, 0x10, offset_u32_LE] (6 bytes)
-  BLE_CTRL_CMD_CANCEL_LOGS  = 0x11  // [0x01, 0x11] (2 bytes)
-};
+// (BleControlCommand is defined together with the v2 configuration opcodes
+//  below so capture-browsing commands stay in one versioned block.)
 
 // ============================================================================
 // PulseShift BLE Protocol v2 Definitions (Configuration & Control)
 // ============================================================================
 
 #define PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION 2
+
+// Firmware version reported in the Capabilities packet (schema 3)
+#define PULSESHIFT_FW_VERSION_MAJOR 2
+#define PULSESHIFT_FW_VERSION_MINOR 1
+#define PULSESHIFT_FW_VERSION_PATCH 0
 
 // Configuration Opcodes
 enum BleConfigOpcode : uint8_t {
@@ -124,6 +128,8 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_SET_CANDIDATE_SOURCE= 0x19,
   BLE_CFG_OP_SET_LED_DIRECTION   = 0x1A,
   BLE_CFG_OP_SET_WARNING_RGB     = 0x1B,
+  BLE_CFG_OP_SET_RPM_HYSTERESIS  = 0x1C, // [hyst_u16_LE] (schema 3)
+  BLE_CFG_OP_SET_RPM_DECODER_EXT = 0x1D, // [width, endian, offset_s32LE(×1000), maxValid_u16LE] (9 bytes)
   BLE_CFG_OP_SAVE_CONFIG         = 0x20,
   BLE_CFG_OP_RESTORE_DEFAULTS    = 0x21,
   BLE_CFG_OP_ENROLL_OWNER        = 0x24,
@@ -131,7 +137,24 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_REQUEST_CHALLENGE   = 0x26,
   BLE_CFG_OP_BEGIN_TRANSACTION   = 0x30,
   BLE_CFG_OP_COMMIT_TRANSACTION  = 0x31,
-  BLE_CFG_OP_ABORT_TRANSACTION   = 0x32
+  BLE_CFG_OP_ABORT_TRANSACTION   = 0x32,
+  // --- Mobile-assisted RPM calibration workflow (schema 3) ---
+  BLE_CFG_OP_CAL_BEGIN           = 0x40, // start calibration session
+  BLE_CFG_OP_CAL_ABORT           = 0x41, // abort session
+  BLE_CFG_OP_CAL_CAPTURE_START   = 0x42, // open 2 s raw sampling window
+  BLE_CFG_OP_CAL_CAPTURE_STATUS  = 0x43, // query window: [samples u16LE, elapsedMs u16LE]
+  BLE_CFG_OP_CAL_POINT_COMMIT    = 0x44, // [refRpm u16LE] close window + store point
+  BLE_CFG_OP_CAL_COMPUTE         = 0x45, // [apply u8] fit + validate; payload returns fit
+  BLE_CFG_OP_CAL_STATUS          = 0x46, // query session: [active, points, captureActive, samples u16LE]
+  BLE_CFG_OP_GET_DIAGNOSTICS     = 0x50  // stream diagnostic TLV blob via snapshot char
+};
+
+// v1 Control extensions (CAN capture browsing, bounded + cancellable)
+enum BleControlCommand : uint8_t {
+  BLE_CTRL_CMD_GET_LOG_PAGE = 0x10, // [0x01, 0x10, offset_u32_LE] (6 bytes)
+  BLE_CTRL_CMD_CANCEL_LOGS  = 0x11, // [0x01, 0x11] (2 bytes)
+  BLE_CTRL_CMD_GET_CAPTURE_PAGE = 0x12, // [0x01, 0x12, startRecord_u32_LE] (6 bytes)
+  BLE_CTRL_CMD_CANCEL_CAPTURE   = 0x13  // [0x01, 0x13] (2 bytes)
 };
 
 // Configuration Command Flags
@@ -171,8 +194,18 @@ enum BleFeatureMaskBits : uint32_t {
   BLE_FEAT_CANDIDATE_SOURCE = (1u << 6),
   BLE_FEAT_PHONE_PRESETS    = (1u << 7),
   BLE_FEAT_NVS_PERSISTENCE  = (1u << 8),
-  BLE_FEAT_AUTH_WRITES      = (1u << 9)
+  BLE_FEAT_AUTH_WRITES      = (1u << 9),
+  // Schema-3 extensions (unified RPM pipeline + calibration workflow)
+  BLE_FEAT_DECODER_EXT      = (1u << 10), // width/endianness/offset/clamp
+  BLE_FEAT_HYSTERESIS       = (1u << 11), // threshold hysteresis
+  BLE_FEAT_CAL_WORKFLOW     = (1u << 12), // mobile-assisted calibration session
+  BLE_FEAT_DIAGNOSTICS_TLV  = (1u << 13), // GET_DIAGNOSTICS TLV blob
+  BLE_FEAT_CAPTURE_EXPORT   = (1u << 14)  // bounded CAN capture pages over BLE
 };
+
+// BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires
+// the verification record to be BOUND to the current decoder fingerprint;
+// Bit 3 is only set when RPM-driven lighting is actually rendering.
 
 // Provisioning / Security Modes
 enum BleSecurityMode : uint8_t {
@@ -230,7 +263,10 @@ struct BleCapabilitiesPacket {
   uint32_t currentRevision;        // Bytes 6-9: Current active configuration revision (little-endian)
   uint8_t  hardwarePresetCapacity; // Byte 10: Hardware preset storage capacity (0 = phone-managed)
   uint8_t  securityMode;           // Byte 11: Security / Provisioning mode
-  uint8_t  reserved[8];            // Bytes 12-19: Reserved (0)
+  uint8_t  firmwareMajor;          // Byte 12: Firmware version major
+  uint8_t  firmwareMinor;          // Byte 13: Firmware version minor
+  uint8_t  firmwarePatch;          // Byte 14: Firmware version patch
+  uint8_t  reserved[5];            // Bytes 15-19: Reserved (0)
 };
 
 #pragma pack(pop)

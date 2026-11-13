@@ -141,11 +141,7 @@ public:
 
     // Initialize Persistent Configuration Manager
     ConfigManager::instance().begin();
-    {
-      const auto& cfg = ConfigManager::instance().active();
-      candidateMonitor_.setCandidateSource(cfg.canCandidateId, cfg.candidateByteIndex, cfg.isExtendedFrame);
-      candidateMonitor_.setMultiplier(cfg.rpmMultiplier);
-    }
+    BleManager::syncDecoderToMonitor(candidateMonitor_);
 
     // Initialize BLE GATT Server
     BleManager::instance().begin();
@@ -182,7 +178,11 @@ public:
 
       dashboard_.notifyRxActivity(now);
       const auto result = rpm_.ingest(f);
-      candidateMonitor_.ingest(f, now);
+      const bool candMatched = candidateMonitor_.ingest(f, now);
+      if (candMatched && candidateMonitor_.hasRawUpdate()) {
+        const auto snap = candidateMonitor_.snapshot(now);
+        ConfigManager::instance().feedCalibrationSample(snap.rawCandidate16, snap.estimatedRpm, now);
+      }
 
       if (!firstFrameSeen_) {
         firstFrameSeen_ = true;
@@ -235,7 +235,8 @@ public:
     // 6. Evaluate stale timeouts and refresh UI
     rpm_.expire(now, rpm_.timeoutMs(config::staleMs), config::staleMs);
     logger_.pump();
-    dashboard_.update(rpm_, now, healthy, configured, rpm_.timeoutMs(config::staleMs));
+    const auto rpmSnap = candidateMonitor_.snapshot(now);
+    dashboard_.update(rpmSnap, rpm_, now, healthy, configured, candidateMonitor_.freshnessTimeoutMs());
 
     // Handle shift-light bench test timeout (rollover-safe)
     if (dashboard_.isTestRpmActive() && uint32_t(now - rpmTestStartMs_) >= 10000) {
@@ -528,11 +529,7 @@ private:
                     ConfigManager::instance().isStagedTransactionActive() ? "STAGED IN PROGRESS" : "IDLE");
     } else if (strcasecmp(cmd, "CONFIG RESET") == 0) {
       ConfigManager::instance().restoreDefaults(0xA5, 0x5A);
-      {
-        const auto& c = ConfigManager::instance().active();
-        candidateMonitor_.setCandidateSource(c.canCandidateId, c.candidateByteIndex, c.isExtendedFrame);
-        candidateMonitor_.setMultiplier(c.rpmMultiplier);
-      }
+      BleManager::syncDecoderToMonitor(candidateMonitor_);
       Serial.println("[CONFIG] Restored all configuration parameters to factory defaults and saved to NVS.");
     } else if (strcasecmp(cmd, "AUTH") == 0 || strcasecmp(cmd, "AUTH ON") == 0) {
       ConfigManager::instance().triggerAuthWindow(millis());

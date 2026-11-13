@@ -12,6 +12,8 @@
 class Dashboard {
  public:
   bool begin();
+  void update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
+  void update(const LiveRpmSnapshot& rpm, const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
   void update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
   void triggerButtonFeedback(uint32_t now) {
     feedbackStartMs_ = now;

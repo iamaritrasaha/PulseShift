@@ -918,6 +918,57 @@ void CanRecorder::clear() {
   dumpCumValid_ = 0;
   dumpCumCorrupt_ = 0;
   dumpExportedCount_ = 0;
+  bleActive_ = false;
+  bleCursor_ = 0;
   writeHeader();
   DiagLogger::instance().logEvent(DiagLevel::Info, "CAPTURE_CLEAR", "Capture cleared; fresh session started.");
+}
+
+// ============================================================================
+// BLE capture export (bounded, resumable, non-destructive)
+// ============================================================================
+
+bool CanRecorder::bleExportBegin(uint32_t startRecord) {
+  auto& sm = StorageManager::instance();
+  if (!sm.isMounted() || !sm.exists(CAPTURE_PATH) || damagedRecording_) {
+    return false;
+  }
+  const uint32_t recs = totalRecords();
+  if (recs == 0 || startRecord >= recs) {
+    return false;
+  }
+  bleCursor_ = startRecord;
+  bleActive_ = true;
+  bleChecksumOk_ = true;
+  return true;
+}
+
+bool CanRecorder::bleExportNext(CanLogRecord& out, uint32_t& recordIndex) {
+  if (!bleActive_) return false;
+  auto& sm = StorageManager::instance();
+  const uint32_t recs = totalRecords();
+  if (bleCursor_ >= recs) {
+    bleActive_ = false;
+    return false;
+  }
+
+  File f = sm.open(CAPTURE_PATH, "r");
+  if (!f) {
+    bleActive_ = false;
+    return false;
+  }
+  const size_t offset = sizeof(CaptureHeader) + (size_t(bleCursor_) * sizeof(CanLogRecord));
+  if (!f.seek(offset, SeekSet) ||
+      f.read(reinterpret_cast<uint8_t*>(&out), sizeof(out)) != sizeof(out)) {
+    f.close();
+    bleActive_ = false;
+    return false;
+  }
+  f.close();
+
+  recordIndex = bleCursor_;
+  ++bleCursor_;
+  const uint16_t expected = computeCrc16(reinterpret_cast<const uint8_t*>(&out), 18);
+  if (out.checksum != expected) bleChecksumOk_ = false;
+  return true;
 }
