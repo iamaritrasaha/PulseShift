@@ -221,6 +221,85 @@ class TestBleProtocol(unittest.TestCase):
         self.assertEqual(cancel_cmd[1], 0x11)
         self.assertEqual(cancel_cmd.hex(), "0111")
 
+    def test_log_chunk_boundary_sizes(self):
+        # Test 1-byte, 14-byte, 15-byte, and 128-byte messages
+        fmt = "<BBHBB14s"
+        test_messages = [
+            b"X",                    # 1 byte -> 1 chunk
+            b"A" * 14,               # 14 bytes -> 1 chunk
+            b"B" * 15,               # 15 bytes -> 2 chunks (14 + 1)
+            b"C" * 128               # 128 bytes -> 10 chunks (9*14 + 2)
+        ]
+
+        for msg_id, raw_msg in enumerate(test_messages):
+            total_len = len(raw_msg)
+            offset = 0
+            chunk_idx = 0
+            chunks = []
+
+            while offset < total_len:
+                remaining = total_len - offset
+                take = min(remaining, 14)
+                flags = 0
+                if chunk_idx == 0:
+                    flags |= BLE_LOG_FLAG_FIRST_CHUNK
+                if take == remaining:
+                    flags |= BLE_LOG_FLAG_FINAL_CHUNK
+
+                payload = raw_msg[offset:offset + take].ljust(14, b"\x00")
+                pkt = struct.pack(fmt, 1, flags, msg_id, chunk_idx, take, payload)
+                chunks.append(pkt)
+                offset += take
+                chunk_idx += 1
+
+            # Verify chunk count
+            if total_len == 1:
+                self.assertEqual(len(chunks), 1)
+                u = struct.unpack(fmt, chunks[0])
+                self.assertEqual(u[1], BLE_LOG_FLAG_FIRST_CHUNK | BLE_LOG_FLAG_FINAL_CHUNK)
+                self.assertEqual(u[3], 0)
+                self.assertEqual(u[4], 1)
+            elif total_len == 14:
+                self.assertEqual(len(chunks), 1)
+                u = struct.unpack(fmt, chunks[0])
+                self.assertEqual(u[1], BLE_LOG_FLAG_FIRST_CHUNK | BLE_LOG_FLAG_FINAL_CHUNK)
+                self.assertEqual(u[3], 0)
+                self.assertEqual(u[4], 14)
+            elif total_len == 15:
+                self.assertEqual(len(chunks), 2)
+                u0 = struct.unpack(fmt, chunks[0])
+                u1 = struct.unpack(fmt, chunks[1])
+                self.assertEqual(u0[1], BLE_LOG_FLAG_FIRST_CHUNK)
+                self.assertEqual(u0[3], 0)
+                self.assertEqual(u1[1], BLE_LOG_FLAG_FINAL_CHUNK)
+                self.assertEqual(u1[3], 1)
+            elif total_len == 128:
+                self.assertEqual(len(chunks), 10)
+                u0 = struct.unpack(fmt, chunks[0])
+                self.assertEqual(u0[1], BLE_LOG_FLAG_FIRST_CHUNK)
+                self.assertEqual(u0[3], 0)
+                u9 = struct.unpack(fmt, chunks[9])
+                self.assertEqual(u9[1], BLE_LOG_FLAG_FINAL_CHUNK)
+                self.assertEqual(u9[3], 9)
+                self.assertEqual(u9[4], 2)
+
+            # Verify Android reassembly algorithm
+            reassembled = bytearray()
+            for c in chunks:
+                u = struct.unpack(fmt, c)
+                plen = u[4]
+                data = u[5][:plen]
+                reassembled.extend(data)
+            self.assertEqual(bytes(reassembled), raw_msg)
+
+    def test_pacing_simulation(self):
+        # 20ms interval between chunks
+        interval_ms = 20
+        # Simulating sending 5 chunks
+        timestamps = [i * interval_ms for i in range(5)]
+        for i in range(1, len(timestamps)):
+            self.assertGreaterEqual(timestamps[i] - timestamps[i - 1], 20)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@
 #include "rpm_decoder.h"
 #include <stdint.h>
 #include <stddef.h>
+#include <atomic>
 
 class BleManager {
  public:
@@ -26,6 +27,9 @@ class BleManager {
   bool isLogsSubscribed() const;
   bool isEnabled() const { return initialized_; }
   bool isAdvertising() const;
+
+  // Called when client disconnects to cleanly reset log retrieval state
+  void onClientDisconnected();
 
   // Enqueue a live diagnostic log event to be broadcast over BLE (if subscribed)
   void queueLiveLog(const char* text);
@@ -62,6 +66,8 @@ class BleManager {
 
   uint32_t lastRpmNotifyMs_ = 0;
   uint32_t lastHealthNotifyMs_ = 0;
+  uint32_t lastLogNotifyMs_ = 0;
+  static constexpr uint32_t LOG_NOTIFICATION_INTERVAL_MS = 20; // 20 ms pacing between log chunks
   uint32_t notifyCount_ = 0;
   uint32_t dropCount_ = 0;
   uint32_t rpmNotifyCount_ = 0;
@@ -88,7 +94,7 @@ class BleManager {
   struct PendingCtrlCmd {
     uint8_t opcode = 0;
     uint32_t offset = 0;
-    volatile bool pending = false;
+    std::atomic<bool> pending{false};
   };
   PendingCtrlCmd pendingCtrlCmd_{};
   bool histPageActive_ = false;
