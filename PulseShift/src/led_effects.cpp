@@ -224,7 +224,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   // Effect 4 is the protected, calibrated shift light. Effect 5 is a
   // separate, explicitly UNVERIFIED diagnostic preview for stationary tests.
   // Neither mode is allowed to display stale, unavailable or invalid RPM.
-  if (cfg.effect == 4 || cfg.effect == 5) {
+  if (cfg.effect == 4 || (cfg.effect == 5 && !input.testRpmActive)) {
     const bool verifiedBar = cfg.effect == 4;
     const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
         (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
@@ -265,6 +265,14 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
       activeLayer_ = LedActiveLayer::Startup;
       return finishFrame(nowMs, cfg);
     }
+  }
+
+  // Explicit synthetic RPM bench test works even when no CAN data is present.
+  // The separate verified mode (effect 4) preserves its original priority.
+  if (input.testRpmActive && cfg.effect == 5) {
+    activeLayer_ = LedActiveLayer::BenchTest;
+    renderRpmBar(nowMs, cfg, input.testRpm);
+    return finishFrame(nowMs, cfg);
   }
 
   // ---- Priority 6: verified RPM bar / provisional diagnostic preview ---
