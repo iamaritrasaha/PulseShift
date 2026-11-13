@@ -86,7 +86,7 @@ static void writes_require_authorization() {
   CHECK(lastResult(ble).resultFlags & BLE_CFG_RESULT_FLAG_AUTH_REQUIRED);
   CHECK(ConfigManager::instance().active().brightness == 200); // unchanged
 
-  // Version mismatch and unknown opcodes fail fast, without leaking state.
+  // Version mismatch fails fast before any authorization logic.
   {
     BleConfigCommandPacket bad = makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {99}, 11);
     bad.version = 1;
@@ -94,13 +94,17 @@ static void writes_require_authorization() {
     drain(ble, cand, 1101);
     CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_VERSION_MISMATCH);
   }
+
+  // Open the physical authorization window for the authorized-path checks.
+  ConfigManager::instance().triggerAuthWindow(1102);
+
+  // Unknown opcodes are rejected as UNSUPPORTED for an authorized session;
+  // the authorization gate precedes the opcode switch.
   ble.testEnqueueCommand(makeCmd(0x7F, {}, 12), 5);
-  drain(ble, cand, 1102);
+  drain(ble, cand, 1103);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_UNSUPPORTED);
 
-  // Staged field writes outside an open transaction are rejected - but only
-  // once authorized (the staged-state check sits behind authorization).
-  ConfigManager::instance().triggerAuthWindow(1103);
+  // Staged field writes outside an open transaction are rejected.
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {1, 2, 3}, 13, true), 5);
   drain(ble, cand, 1104);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_STATE);
