@@ -1,5 +1,11 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "rpm_candidate.h"
+// UserConfig.h defines PULSESHIFT_SERIAL_DIAGNOSTICS for this translation unit.
+// Without it, the preprocessor silently compiles out all RPM serial output.
+#include "../UserConfig.h"
+#ifndef PULSESHIFT_SERIAL_DIAGNOSTICS
+#error "RPM diagnostics setting is missing from UserConfig.h"
+#endif
 #include <stdio.h>
 #include <math.h>
 
