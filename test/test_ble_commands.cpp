@@ -84,8 +84,11 @@ static void writes_require_authorization() {
   drain(ble, cand, 1102);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_UNSUPPORTED);
 
-  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {1, 2, 3}, 13, true), 5); // staged without transaction
-  drain(ble, cand, 1103);
+  // Staged field writes outside an open transaction are rejected - but only
+  // once authorized (the staged-state check sits behind authorization).
+  ConfigManager::instance().triggerAuthWindow(1103);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {1, 2, 3}, 13, true), 5);
+  drain(ble, cand, 1104);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_STATE);
 }
 
@@ -308,7 +311,7 @@ static void reload_and_decoder_ext() {
   cm.triggerAuthWindow(97000);
 
   // Decoder extension: 2-byte little-endian field at byte 0 with clamp 14000.
-  std::vector<uint8_t> ext = {2, 1, 0x00,0x00,0x00,0x00, 0x80,0x36}; // maxValid 14000 LE
+  std::vector<uint8_t> ext = {2, 1, 0x00,0x00,0x00,0x00, 0xB0,0x36}; // maxValid 14000 LE (0x36B0)
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_RPM_DECODER_EXT, ext, 70), 7);
   drain(ble, cand, 97001);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);

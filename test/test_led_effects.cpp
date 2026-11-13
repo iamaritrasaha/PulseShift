@@ -115,6 +115,7 @@ static void feedback_overrides_decorative_not_fault() {
   LedEffectEngine e;
   e.reset(0);
   PulseShiftConfig cfg{}; // decorative static violet
+  cfg.brightness = 255;   // unscaled: the engine dims output by cfg.brightness
   for (uint8_t i = 0; i < 6; ++i) cfg.ledColors[i] = RgbColor{140, 43, 238};
   LedFrameInput input;
   input.feedbackActive = true;
@@ -127,6 +128,7 @@ static void startup_then_decorative() {
   LedEffectEngine e;
   e.reset(0);
   PulseShiftConfig cfg{};
+  cfg.brightness = 255;
   cfg.startupAnimation = 1;
   cfg.startupDurationMs = 2000;
   for (uint8_t i = 0; i < 6; ++i) cfg.ledColors[i] = RgbColor{10, 20, 30};
@@ -180,16 +182,16 @@ static void warning_patterns() {
   e.update(20000, cfg, freshVerifiedSnapshot(7500), input);
   for (uint8_t i = 0; i < 6; ++i) CHECK(e.getPixel(i) == cfg.warningColor);
 
-  // Flash pattern toggles with the 100 ms period.
+  // Flash pattern toggles with the 100 ms period (latched at t=20000).
   cfg.warningPatternId = 0;
   e.update(20100, cfg, freshVerifiedSnapshot(7500), input);
-  CHECK((e.getPixel(0) == RgbColor{0, 0, 0})); // 20100-20000 = 100 -> off phase
-  e.update(20150, cfg, freshVerifiedSnapshot(7500), input);
-  CHECK(e.getPixel(0) == cfg.warningColor); // 150 -> on phase
+  CHECK((e.getPixel(0) == RgbColor{0, 0, 0})); // (20100-20000)/100 = 1 -> off phase
+  e.update(20250, cfg, freshVerifiedSnapshot(7500), input);
+  CHECK(e.getPixel(0) == cfg.warningColor); // (250)/100 = 2 -> on phase
 
   // Warning OFF (pattern 3) keeps the bar.
   cfg.warningPatternId = 3;
-  e.update(20200, cfg, freshVerifiedSnapshot(7500), input);
+  e.update(20300, cfg, freshVerifiedSnapshot(7500), input);
   CHECK(countLit(e) == 6);
 }
 
@@ -232,7 +234,10 @@ static void bench_test_preview_is_explicit() {
   LedEffectEngine e;
   e.reset(0);
   completeStartup(e);
-  PulseShiftConfig cfg{}; // decorative, NOT rpm bar
+  // Decorative effect selected, but the bench-test preview renders the six
+  // stage bar against the saved thresholds (1000..6000 from the bar config).
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 0; // decorative, NOT the RPM bar
   LedFrameInput input;
   input.testRpmActive = true;
   input.testRpm = 4500;
