@@ -151,7 +151,9 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_GET_DIAGNOSTICS     = 0x50, // stream diagnostic TLV blob via snapshot char (read-only)
   BLE_CFG_OP_RESTART_DEVICE      = 0x51, // [0xA5, 0x5A] explicit confirmation; ESP32 soft restart
   BLE_CFG_OP_CLEAR_DIAGNOSTICS   = 0x52, // [0xA5, 0x5A] explicit confirmation; clears diag log ONLY (captures untouched)
-  BLE_CFG_OP_SET_CAPTURE_RECORDING = 0x53 // [enable u8] start/stop flash recording (auth required)
+  BLE_CFG_OP_SET_CAPTURE_RECORDING = 0x53, // [enable u8] start/stop flash recording (auth required)
+  BLE_CFG_OP_SET_CAPTURE_STAGE     = 0x54, // [stage u8 1..3] label subsequent capture records
+  BLE_CFG_OP_SET_LED_TEST_RPM      = 0x55  // [rpm u16LE, enable u8] 10s LED bench test
 };
 
 // v1 Control extensions (CAN capture browsing, bounded + cancellable)
@@ -205,7 +207,9 @@ enum BleFeatureMaskBits : uint32_t {
   BLE_FEAT_HYSTERESIS       = (1u << 11), // threshold hysteresis
   BLE_FEAT_CAL_WORKFLOW     = (1u << 12), // mobile-assisted calibration session
   BLE_FEAT_DIAGNOSTICS_TLV  = (1u << 13), // GET_DIAGNOSTICS TLV blob
-  BLE_FEAT_CAPTURE_EXPORT   = (1u << 14)  // bounded CAN capture pages over BLE
+  BLE_FEAT_CAPTURE_EXPORT   = (1u << 14), // bounded CAN capture pages over BLE
+  BLE_FEAT_CAPTURE_STAGE    = (1u << 15), // owner may set capture label via BLE
+  BLE_FEAT_LED_BENCH_TEST   = (1u << 16)  // synthetic LED test (not CAN data) via BLE
 };
 
 // BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires
