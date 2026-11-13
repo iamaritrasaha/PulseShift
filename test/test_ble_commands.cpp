@@ -216,13 +216,16 @@ static void calibration_workflow_over_ble() {
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_CAL_COMPUTE, {1}, seq), 7);
   drain(ble, cand, 90200);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
-  CHECK(lastResult(ble).payloadLength == 11);
+  CHECK(lastResult(ble).payloadLength == 9);
   // multiplier x1000 == 40000
   const uint32_t multX1000 = uint32_t(lastResult(ble).payload[0]) |
                              uint32_t(uint32_t(lastResult(ble).payload[1]) << 8) |
                              uint32_t(uint32_t(lastResult(ble).payload[2]) << 16) |
                              uint32_t(uint32_t(lastResult(ble).payload[3]) << 24);
   CHECK(multX1000 == 40000);
+  // Info byte: pointsUsed in the low nibble (3), residual 0 -> high nibble 0.
+  CHECK((lastResult(ble).payload[8] & 0x0F) == 3);
+  CHECK(((lastResult(ble).payload[8] >> 4) & 0x0F) == 0);
   CHECK(cm.active().calibrationVerified);
 
   // The dispatcher must have rebuilt the live decoder mirror: the candidate

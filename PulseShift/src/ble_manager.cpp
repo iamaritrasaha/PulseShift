@@ -1355,8 +1355,9 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       status = fit.status;
       if (status == BLE_CFG_STATUS_OK) {
         resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
-        // Payload: multiplier x1000 (s32 LE), offset x1000 (s32 LE),
-        // maxResidual (u16 LE), pointsUsed (u8).
+        // Payload (exactly 9 bytes): multiplier x1000 (s32 LE), offset x1000
+        // (s32 LE), info byte = pointsUsed (low nibble) | worst residual in
+        // 10-RPM steps clamped to 15 (high nibble, covers 0..150 RPM).
         const int32_t multX1000 = static_cast<int32_t>(fit.multiplier * 1000.0f);
         const int32_t offX1000 = static_cast<int32_t>(fit.offset * 1000.0f);
         res.payload[0] = static_cast<uint8_t>(multX1000 & 0xFF);
@@ -1367,11 +1368,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
         res.payload[5] = static_cast<uint8_t>((offX1000 >> 8) & 0xFF);
         res.payload[6] = static_cast<uint8_t>((offX1000 >> 16) & 0xFF);
         res.payload[7] = static_cast<uint8_t>((offX1000 >> 24) & 0xFF);
-        const uint16_t residual = static_cast<uint16_t>(fit.maxResidualRpm);
-        res.payload[8] = static_cast<uint8_t>(residual & 0xFF);
-        res.payload[9] = static_cast<uint8_t>((residual >> 8) & 0xFF);
-        res.payload[10] = fit.pointsUsed;
-        res.payloadLength = 11;
+        const uint8_t residualStep = static_cast<uint8_t>((static_cast<uint32_t>(fit.maxResidualRpm) + 5) / 10);
+        res.payload[8] = static_cast<uint8_t>((fit.pointsUsed & 0x0F) |
+                                              ((residualStep > 15 ? 15 : residualStep) << 4));
+        res.payloadLength = 9;
         if (apply) {
           // The live decoder must adopt the newly bound verification record.
           syncDecoderToMonitor(candidate);

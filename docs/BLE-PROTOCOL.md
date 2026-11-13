@@ -220,7 +220,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x42` | `CAL_CAPTURE_START` | None | Open the 2 s raw sampling window at the current operating point |
 | `0x43` | `CAL_CAPTURE_STATUS` | None | Query window. Result payload: `[samples: u16 LE, elapsedMs: u16 LE]` |
 | `0x44` | `CAL_POINT_COMMIT` | `[refRpm: u16 LE]` | Close the window, require >=10 stable samples (stddev <= 1.5 raw), store the point |
-| `0x45` | `CAL_COMPUTE` | `[apply: u8]` | Fit scale/offset over 3..6 points, validate evidence. Result payload on OK: `[multiplierX1000: s32 LE, offsetX1000: s32 LE, maxResidualRpm: u16 LE, pointsUsed: u8]`; on failure: reason string. Applying binds the verification record to the decoder fingerprint |
+| `0x45` | `CAL_COMPUTE` | `[apply: u8]` | Fit scale/offset over 3..6 points, validate evidence. Result payload on OK (9 bytes): `[multiplierX1000: s32 LE, offsetX1000: s32 LE, info: u8]` where info = pointsUsed (low nibble) \| worst residual in 10-RPM steps clamped to 15 (high nibble); on failure: reason string (<= 9 bytes). Applying binds the verification record to the decoder fingerprint |
 | `0x46` | `CAL_STATUS` | None | Query session. Result payload: `[active: u8, points: u8, captureActive: u8, samples: u16 LE]` |
 | `0x50` | `GET_DIAGNOSTICS` | None | Stream the diagnostics TLV blob on `0xd217` (Section 4.8) |
 | `0x51` | `RESTART_DEVICE` | `[0xA5, 0x5A]` | Acknowledge, then soft-restart the ESP32 |
