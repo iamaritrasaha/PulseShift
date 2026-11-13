@@ -19,10 +19,10 @@ static NimBLECharacteristic* s_pHealthChar = nullptr;
 static NimBLECharacteristic* s_pLogsChar = nullptr;
 static NimBLECharacteristic* s_pControlChar = nullptr;
 
-static bool s_clientConnected = false;
-static bool s_rpmSubscribed = false;
-static bool s_healthSubscribed = false;
-static bool s_logsSubscribed = false;
+static volatile bool s_clientConnected = false;
+static volatile bool s_rpmSubscribed = false;
+static volatile bool s_healthSubscribed = false;
+static volatile bool s_logsSubscribed = false;
 
 class BleServerCallbacksImpl : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -93,20 +93,19 @@ class BleControlCallbacksImpl : public NimBLECharacteristicCallbacks {
       if (data[1] == BLE_CTRL_CMD_GET_LOG_PAGE && len == 6) {
         uint32_t offset = 0;
         memcpy(&offset, &data[2], 4);
-        mgr.histFileOffset_ = offset;
-        mgr.histLinesSent_ = 0;
-        mgr.histFinished_ = false;
-        mgr.histCancelRequested_ = false;
-        mgr.histPageActive_ = true;
+        mgr.pendingCtrlCmd_.opcode = BLE_CTRL_CMD_GET_LOG_PAGE;
+        mgr.pendingCtrlCmd_.offset = offset;
+        mgr.pendingCtrlCmd_.pending = true;
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-        Serial.printf("[BLE] Requested log page from offset %lu\r\n", (unsigned long)offset);
+        Serial.printf("[BLE] Queued log page request from offset %lu\r\n", (unsigned long)offset);
 #endif
         return;
       } else if (data[1] == BLE_CTRL_CMD_CANCEL_LOGS && len == 2) {
-        mgr.histCancelRequested_ = true;
-        mgr.histPageActive_ = false;
+        mgr.pendingCtrlCmd_.opcode = BLE_CTRL_CMD_CANCEL_LOGS;
+        mgr.pendingCtrlCmd_.offset = 0;
+        mgr.pendingCtrlCmd_.pending = true;
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-        Serial.println("[BLE] Log page retrieval cancelled");
+        Serial.println("[BLE] Queued log page retrieval cancellation");
 #endif
         return;
       }
@@ -299,6 +298,27 @@ void BleManager::poll(uint32_t nowMs,
                       const RpmState& rpm) {
   if (!initialized_) return;
 
+  // 0. Handle any decoupled control commands received via BLE write callbacks
+  if (pendingCtrlCmd_.pending) {
+    const uint8_t op = pendingCtrlCmd_.opcode;
+    const uint32_t off = pendingCtrlCmd_.offset;
+    pendingCtrlCmd_.pending = false;
+
+    if (op == BLE_CTRL_CMD_GET_LOG_PAGE) {
+      histFileOffset_ = off;
+      histLinesSent_ = 0;
+      histFinished_ = false;
+      histCancelRequested_ = false;
+      histPageEopPending_ = false;
+      histPageFinished_ = 0;
+      histPageActive_ = true;
+    } else if (op == BLE_CTRL_CMD_CANCEL_LOGS) {
+      histCancelRequested_ = true;
+      histPageActive_ = false;
+      histPageEopPending_ = false;
+    }
+  }
+
   // 1. Live RPM telemetry: send at ~10 Hz (every 100 ms) when subscribed
   if (isRpmSubscribed() && uint32_t(nowMs - lastRpmNotifyMs_) >= 100) {
     lastRpmNotifyMs_ = nowMs;
@@ -313,7 +333,9 @@ void BleManager::poll(uint32_t nowMs,
 
   // 3. Service diagnostic log chunks (rate-limited, max 1 chunk per poll to protect CAN reception)
   if (isLogsSubscribed()) {
-    if (activeMsgInProgress_) {
+    if (histPageEopPending_) {
+      processHistoricalPageRead();
+    } else if (activeMsgInProgress_) {
       processLogQueue();
     } else if (histPageActive_) {
       processHistoricalPageRead();
@@ -445,7 +467,7 @@ void BleManager::processLogQueue() {
   chunk.payloadLength = chunkPayloadLen;
 
   uint8_t flags = 0;
-  if (chunk.chunkIndex == 1) flags |= BLE_LOG_FLAG_FIRST_CHUNK;
+  if (chunk.chunkIndex == 0) flags |= BLE_LOG_FLAG_FIRST_CHUNK;
   if (chunkPayloadLen == remaining) flags |= BLE_LOG_FLAG_FINAL_CHUNK;
   chunk.flags = flags;
 
@@ -468,6 +490,33 @@ void BleManager::processHistoricalPageRead() {
   if (!s_pLogsChar) return;
 
   if (histCancelRequested_) {
+    histPageActive_ = false;
+    histPageEopPending_ = false;
+    return;
+  }
+
+  // If a pending End-of-Page notification was deferred until message chunks finished
+  if (histPageEopPending_) {
+    if (activeMsgInProgress_) {
+      // Must finish transmitting all chunks of the message first!
+      processLogQueue();
+      return;
+    }
+    // Now transmit the End-of-Page marker
+    BleLogChunkPacket eop{};
+    eop.version = PULSESHIFT_BLE_PROTOCOL_VERSION;
+    eop.flags = BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK;
+    eop.messageId = logMsgId_++;
+    eop.chunkIndex = 0;
+    eop.payloadLength = 5;
+    memcpy(&eop.payload[0], &histFileOffset_, 4);
+    eop.payload[4] = histPageFinished_;
+    s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&eop), sizeof(eop));
+    s_pLogsChar->notify();
+    ++notifyCount_;
+    ++logNotifyCount_;
+
+    histPageEopPending_ = false;
     histPageActive_ = false;
     return;
   }
@@ -546,21 +595,27 @@ void BleManager::processHistoricalPageRead() {
 
     ++histLinesSent_;
     if (histLinesSent_ >= 20 || histFileOffset_ >= fileSize) {
-      // 20 lines sent OR reached EOF
-      const uint8_t finished = (histFileOffset_ >= fileSize) ? 1 : 0;
-      BleLogChunkPacket eop{};
-      eop.version = PULSESHIFT_BLE_PROTOCOL_VERSION;
-      eop.flags = BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK;
-      eop.messageId = logMsgId_++;
-      eop.chunkIndex = 0;
-      eop.payloadLength = 5;
-      memcpy(&eop.payload[0], &histFileOffset_, 4);
-      eop.payload[4] = finished;
-      s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&eop), sizeof(eop));
-      s_pLogsChar->notify();
-      ++notifyCount_;
-      ++logNotifyCount_;
-      histPageActive_ = false;
+      // Reached 20 lines or EOF
+      histPageFinished_ = (histFileOffset_ >= fileSize) ? 1 : 0;
+      if (activeMsgInProgress_) {
+        // More chunks remaining for this line! Defer EOP marker until all chunks transmitted.
+        histPageEopPending_ = true;
+      } else {
+        // Line fit entirely in the first chunk, send EOP marker immediately
+        BleLogChunkPacket eop{};
+        eop.version = PULSESHIFT_BLE_PROTOCOL_VERSION;
+        eop.flags = BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK;
+        eop.messageId = logMsgId_++;
+        eop.chunkIndex = 0;
+        eop.payloadLength = 5;
+        memcpy(&eop.payload[0], &histFileOffset_, 4);
+        eop.payload[4] = histPageFinished_;
+        s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&eop), sizeof(eop));
+        s_pLogsChar->notify();
+        ++notifyCount_;
+        ++logNotifyCount_;
+        histPageActive_ = false;
+      }
     }
   } else {
     histPageActive_ = false;

@@ -84,8 +84,16 @@ class BleManager {
   size_t activeMsgOffset_ = 0;
   uint8_t activeChunkIndex_ = 0;
 
-  // Historical log page reading state
+  // Control request command queue (thread-safe decoupling from NimBLE callback)
+  struct PendingCtrlCmd {
+    uint8_t opcode = 0;
+    uint32_t offset = 0;
+    volatile bool pending = false;
+  };
+  PendingCtrlCmd pendingCtrlCmd_{};
   bool histPageActive_ = false;
+  bool histPageEopPending_ = false;
+  uint8_t histPageFinished_ = 0;
   uint32_t histFileOffset_ = 0;
   uint8_t histLinesSent_ = 0;
   bool histFinished_ = false;

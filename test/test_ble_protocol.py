@@ -32,12 +32,13 @@ BLE_LOG_FLAG_FIRST_CHUNK  = 0x01
 BLE_LOG_FLAG_FINAL_CHUNK  = 0x02
 BLE_LOG_FLAG_END_OF_PAGE  = 0x04
 
+# Control Commands
+BLE_CTRL_CMD_GET_LOG_PAGE = 0x10
+BLE_CTRL_CMD_CANCEL_LOGS  = 0x11
+
 
 class TestBleProtocol(unittest.TestCase):
     def test_rpm_packet_packing_and_size(self):
-        # Format: < B B H I H B B I H H
-        # Version (1B), Status (1B), Seq (2B), Uptime (4B), RPM (2B),
-        # Raw (1B), Stage (1B), Rx (4B), Age (2B), Reserved (2B)
         fmt = "<BBHIHBB IHH".replace(" ", "")
         self.assertEqual(struct.calcsize(fmt), 20)
 
@@ -59,7 +60,6 @@ class TestBleProtocol(unittest.TestCase):
         self.assertEqual(data.hex(), expected_hex)
         self.assertEqual(len(data), 20)
 
-        # Unpack verification
         unpacked = struct.unpack(fmt, data)
         self.assertEqual(unpacked[0], 1)
         self.assertEqual(unpacked[1], 0x71)
@@ -93,8 +93,6 @@ class TestBleProtocol(unittest.TestCase):
         self.assertEqual(len(data), 20)
 
     def test_health_packet_packing_and_size(self):
-        # Format: < B B H I I I I
-        # Version (1B), Flags (1B), Seq (2B), Missed (4B), Overrun (4B), Errors (4B), Recorded (4B)
         fmt = "<BBHIIII"
         self.assertEqual(struct.calcsize(fmt), 20)
 
@@ -122,12 +120,11 @@ class TestBleProtocol(unittest.TestCase):
         self.assertEqual(unpacked[5], 0)
         self.assertEqual(unpacked[6], 23370)
 
-    def test_log_chunk_packet_packing(self):
-        # Format: < B B H B B 14s
+    def test_log_chunk_packet_single_chunk(self):
         fmt = "<BBHBB14s"
         self.assertEqual(struct.calcsize(fmt), 20)
 
-        payload_bytes = b"Hello, BLE Log"
+        payload_bytes = b"Hello, BLE Log" # exactly 14 bytes
         padded_payload = payload_bytes.ljust(14, b"\x00")
 
         data = struct.pack(
@@ -135,7 +132,7 @@ class TestBleProtocol(unittest.TestCase):
             1,                             # version
             BLE_LOG_FLAG_FIRST_CHUNK | BLE_LOG_FLAG_FINAL_CHUNK, # flags
             101,                           # messageId
-            0,                             # chunkIndex
+            0,                             # chunkIndex must be 0 for FIRST_CHUNK
             len(payload_bytes),            # payloadLength
             padded_payload                 # payload[14]
         )
@@ -149,12 +146,80 @@ class TestBleProtocol(unittest.TestCase):
         self.assertEqual(unpacked[4], 14)
         self.assertEqual(unpacked[5][:len(payload_bytes)], payload_bytes)
 
+    def test_log_chunk_multi_chunk_fragmentation(self):
+        # Test 15-byte message: chunk 0 (14 bytes) and chunk 1 (1 byte)
+        msg = b"A" * 15
+        fmt = "<BBHBB14s"
+
+        # Chunk 0
+        chunk0 = struct.pack(
+            fmt,
+            1,
+            BLE_LOG_FLAG_FIRST_CHUNK, # only first chunk
+            200,
+            0, # index 0
+            14,
+            msg[:14]
+        )
+        u0 = struct.unpack(fmt, chunk0)
+        self.assertEqual(u0[1], BLE_LOG_FLAG_FIRST_CHUNK)
+        self.assertEqual(u0[3], 0)
+        self.assertEqual(u0[4], 14)
+
+        # Chunk 1
+        chunk1 = struct.pack(
+            fmt,
+            1,
+            BLE_LOG_FLAG_FINAL_CHUNK, # only final chunk
+            200,
+            1, # index 1
+            1,
+            msg[14:].ljust(14, b"\x00")
+        )
+        u1 = struct.unpack(fmt, chunk1)
+        self.assertEqual(u1[1], BLE_LOG_FLAG_FINAL_CHUNK)
+        self.assertEqual(u1[3], 1)
+        self.assertEqual(u1[4], 1)
+
+    def test_log_end_of_page_packet(self):
+        fmt = "<BBHBB14s"
+        # EOP payload: offset (4 bytes) + finished (1 byte) + padding (9 bytes)
+        next_offset = 8192
+        finished = 0
+        eop_payload = struct.pack("<IB", next_offset, finished).ljust(14, b"\x00")
+
+        packet = struct.pack(
+            fmt,
+            1,
+            BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK,
+            300,
+            0,
+            5,
+            eop_payload
+        )
+        self.assertEqual(len(packet), 20)
+        u = struct.unpack(fmt, packet)
+        self.assertEqual(u[1], BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK)
+        offset_out, fin_out = struct.unpack("<IB", u[5][:5])
+        self.assertEqual(offset_out, 8192)
+        self.assertEqual(fin_out, 0)
+
     def test_control_request_parsing(self):
-        # Command GET_LOG_PAGE (opcode 0x01) with offset 4096 (0x1000)
-        cmd = struct.pack("<BI", 0x01, 4096)
+        # Command GET_LOG_PAGE: exactly 6 bytes [version=0x01, opcode=0x10, offset_u32_LE]
+        offset = 4096
+        cmd = struct.pack("<BBI", 0x01, BLE_CTRL_CMD_GET_LOG_PAGE, offset)
+        self.assertEqual(len(cmd), 6)
         self.assertEqual(cmd[0], 0x01)
-        offset = struct.unpack("<I", cmd[1:5])[0]
-        self.assertEqual(offset, 4096)
+        self.assertEqual(cmd[1], 0x10)
+        self.assertEqual(struct.unpack("<I", cmd[2:6])[0], 4096)
+        self.assertEqual(cmd.hex(), "011000100000")
+
+        # Command CANCEL_LOGS: exactly 2 bytes [version=0x01, opcode=0x11]
+        cancel_cmd = struct.pack("<BB", 0x01, BLE_CTRL_CMD_CANCEL_LOGS)
+        self.assertEqual(len(cancel_cmd), 2)
+        self.assertEqual(cancel_cmd[0], 0x01)
+        self.assertEqual(cancel_cmd[1], 0x11)
+        self.assertEqual(cancel_cmd.hex(), "0111")
 
 
 if __name__ == "__main__":
