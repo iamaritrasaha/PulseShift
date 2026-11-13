@@ -175,6 +175,12 @@
 #define PULSESHIFT_MAX_DIAG_LOG_BYTES 131072
 #endif
 
+// DEFAULT: 1 (on). Enables BLE GATT peripheral for live Android app telemetry & diagnostics.
+#ifndef PULSESHIFT_BLE_ENABLED
+#define PULSESHIFT_BLE_ENABLED 1
+#endif
+
+// Export legacy names and reject old/new conflicts before validation.
 #define PULSESHIFT_CONFIG_VALUES_READY 1
 
 // Internal compile-time validation below. These are not user settings.
@@ -280,7 +286,9 @@
 #if PULSESHIFT_SERIAL_BAUD < 1 || PULSESHIFT_SERIAL_BAUD > 2000000
 #error "PULSESHIFT_SERIAL_BAUD must be between 1 and 2000000"
 #endif
-
+#if PULSESHIFT_BLE_ENABLED != 0 && PULSESHIFT_BLE_ENABLED != 1
+#error "PULSESHIFT_BLE_ENABLED must be 0 or 1"
+#endif
 
 // UART0 is used by Serial diagnostics on the original ESP32 DevKit V1.
 // CHANGE ONLY IF: disabling diagnostics also requires checking USB-UART wiring.
@@ -294,7 +302,8 @@
 #endif
 
 // Fix D8: PSRAM conflict check on GPIO16/17 for ESP32-WROVER modules
-#if defined(BOARD_HAS_PSRAM) || defined(CONFIG_SPIRAM_SUPPORT)
+// In Arduino-ESP32, BOARD_HAS_PSRAM is the official macro when PSRAM is enabled for the board.
+#if defined(BOARD_HAS_PSRAM) || (defined(CONFIG_SPIRAM_SUPPORT) && defined(CONFIG_SPIRAM) && !defined(ARDUINO))
 #if (PULSESHIFT_CAN_RX_GPIO == 16 || PULSESHIFT_CAN_RX_GPIO == 17 || \
      PULSESHIFT_CAN_TX_GPIO == 16 || PULSESHIFT_CAN_TX_GPIO == 17)
 #error "GPIO16/17 are reserved for external PSRAM on WROVER boards. Use non-PSRAM GPIOs or verify board is standard WROOM-32."

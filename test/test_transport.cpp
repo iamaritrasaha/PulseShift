@@ -19,7 +19,7 @@ int gpio_set_direction(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_MODE_INPUT);ro
 int gpio_set_pull_mode(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_PULLUP_ONLY);routing.push_back(3);return ESP_OK;}
 int twai_driver_install(const twai_general_config_t* g,const twai_timing_config_t* t,const twai_filter_config_t*) {
   ++installs;CHECK(g->mode==TWAI_MODE_LISTEN_ONLY);CHECK(g->tx_io==17 && g->rx_io==16);
-  CHECK(g->tx_queue_len==0 && g->rx_queue_len==128);CHECK(t->bitrate==500000);
+  CHECK(g->tx_queue_len==0 && g->rx_queue_len==256);CHECK(t->bitrate==500000);
   CHECK(!(g->alerts_enabled & (TWAI_ALERT_TX_SUCCESS|TWAI_ALERT_TX_FAILED|TWAI_ALERT_TX_IDLE)));
   return installResult;
 }

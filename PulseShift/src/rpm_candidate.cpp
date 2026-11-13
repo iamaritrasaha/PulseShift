@@ -1,8 +1,4 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
-#include "rpm_candidate.h"
-#include <stdio.h>
-#include <math.h>
-
 #if defined(ARDUINO)
   #include <Arduino.h>
   #define RPM_PRINTF(...) Serial.printf(__VA_ARGS__)
@@ -20,6 +16,11 @@
   #define RPM_PRINTF(...) printf(__VA_ARGS__)
   #define RPM_PRINTLN(x) printf("%s\r\n", (x))
 #endif
+
+#include "rpm_candidate.h"
+#include "config.h"
+#include <stdio.h>
+#include <math.h>
 
 RpmCandidateMonitor::RpmCandidateMonitor(uint32_t candidateId,
                                          uint8_t byteIndex,
