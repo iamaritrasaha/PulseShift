@@ -325,7 +325,7 @@ void RpmCandidateMonitor::printStatus(uint32_t nowMs,
   }
 
   RPM_PRINTF("Calibration      : %s\r\n", calibrationVerified_ ? "VERIFIED" : "UNVERIFIED");
-  RPM_PRINTF("LED Shift Mode   : %s\r\n", calibrationVerified_ ? "AVAILABLE" : "DISABLED");
+  RPM_PRINTF("Verified LED Mode: %s\r\n", calibrationVerified_ ? "AVAILABLE" : "CALIBRATION REQUIRED");
   RPM_PRINTLN("CAN TX           : SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)");
 
   RPM_PRINTLN("\n--- Candidate Diagnostics ---");

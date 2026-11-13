@@ -332,7 +332,8 @@ void BleManager::updateCapabilitiesChar() {
                      BLE_FEAT_NVS_PERSISTENCE | BLE_FEAT_AUTH_WRITES |
                      BLE_FEAT_DECODER_EXT | BLE_FEAT_HYSTERESIS |
                      BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
-                     BLE_FEAT_CAPTURE_EXPORT;
+                     BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
+                     BLE_FEAT_LED_BENCH_TEST;
   caps.currentRevision = ConfigManager::instance().activeRevision();
   caps.hardwarePresetCapacity = 0; // Phone-managed presets
   caps.securityMode = ConfigManager::instance().securityMode();
@@ -1466,6 +1467,37 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       } else {
         rec.flush();
         rec.setRecording(false);
+        status = BLE_CFG_STATUS_OK;
+        resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_CAPTURE_STAGE: {
+      if (pkt.payloadLength != 1 || pkt.payload[0] < 1 || pkt.payload[0] > 3) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        CanRecorder::instance().setStage(static_cast<CanRecorder::Stage>(pkt.payload[0]));
+        status = BLE_CFG_STATUS_OK;
+        resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_LED_TEST_RPM: {
+      if (pkt.payloadLength != 3 ||
+          (pkt.payload[2] != 0 && pkt.payload[2] != 1)) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      const uint16_t rpm = static_cast<uint16_t>(pkt.payload[0]) |
+                           (static_cast<uint16_t>(pkt.payload[1]) << 8);
+      if (rpm > 20000) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        benchTestRpm_ = rpm;
+        benchTestActive_ = pkt.payload[2] != 0;
+        benchTestPending_ = true;
         status = BLE_CFG_STATUS_OK;
         resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
       }

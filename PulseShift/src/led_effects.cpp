@@ -222,9 +222,16 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
 
   // ---- Priority 3: RPM validity safeguard ------------------------------
   // Effect 4 is the protected, calibrated shift light. Effect 5 is a
-  // separate, explicitly UNVERIFIED diagnostic preview for stationary tests.
+  // separate, explicitly UNVERIFIED diagnostic preview of the live CAN signal.
   // Neither mode is allowed to display stale, unavailable or invalid RPM.
-  if (cfg.effect == 4 || (cfg.effect == 5 && !input.testRpmActive)) {
+  // A provisional preview must still show non-RPM startup/commissioning
+  // indications without a bike connected. Do not apply this exception to
+  // the verified shift-light mode. Once startup finishes and no owner window
+  // is open, stale/invalid RPM is strictly blanked as before.
+  const bool previewIndicatorActive = cfg.effect == 5 &&
+      (input.authWindowOpen || (cfg.isPowerOn && !startupComplete_));
+  if (!input.testRpmActive &&
+      (cfg.effect == 4 || (cfg.effect == 5 && !previewIndicatorActive))) {
     const bool verifiedBar = cfg.effect == 4;
     const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
         (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
@@ -267,9 +274,10 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // Explicit synthetic RPM bench test works even when no CAN data is present.
-  // The separate verified mode (effect 4) preserves its original priority.
-  if (input.testRpmActive && cfg.effect == 5) {
+  // An explicitly requested synthetic bench test takes precedence over
+  // real RPM display modes but not hardware faults, owner feedback, power
+  // or startup. Never treat the test value as a received CAN sample.
+  if (input.testRpmActive) {
     activeLayer_ = LedActiveLayer::BenchTest;
     renderRpmBar(nowMs, cfg, input.testRpm);
     return finishFrame(nowMs, cfg);
@@ -282,12 +290,6 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     renderRpmBar(nowMs, cfg, rpm.rpm);
     return finishFrame(nowMs, cfg);
   }
-  if (input.testRpmActive) {
-    activeLayer_ = LedActiveLayer::BenchTest;
-    renderRpmBar(nowMs, cfg, input.testRpm);
-    return finishFrame(nowMs, cfg);
-  }
-
   // ---- Priority 7: manual decorative lighting --------------------------
   activeLayer_ = LedActiveLayer::Decorative;
   renderEffect(nowMs, cfg);

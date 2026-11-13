@@ -151,6 +151,8 @@ These lines are reassembled as multi-chunk messages and routed to the capture fl
 - `Bit 12` (`0x1000`): `BLE_FEAT_CAL_WORKFLOW`
 - `Bit 13` (`0x2000`): `BLE_FEAT_DIAGNOSTICS_TLV`
 - `Bit 14` (`0x4000`): `BLE_FEAT_CAPTURE_EXPORT`
+- `Bit 15` (`0x8000`): `BLE_FEAT_CAPTURE_STAGE` (authenticated stage-label command)
+- `Bit 16` (`0x10000`): `BLE_FEAT_LED_BENCH_TEST` (authenticated 10-second synthetic test)
 
 ---
 
@@ -196,7 +198,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x11` | `SET_BRIGHTNESS` | `[brightness: u8 (0..255)]` | Master LED brightness |
 | `0x12` | `SET_GLOBAL_RGB`| `[R: u8, G: u8, B: u8]` | Set uniform color across all 6 LEDs |
 | `0x13` | `SET_LED_RGB` | `[index: u8 (0..5), R, G, B]` | Set individual LED color |
-| `0x14` | `SET_EFFECT` | `[effectId: u8 (0..4), speed: u8 (0..100)]` | 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=RPM_Bar |
+| `0x14` | `SET_EFFECT` | `[effectId: u8 (0..5), speed: u8 (0..100)]` | 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=Verified RPM Bar, **5=Provisional CAN RPM Preview (unverified)** |
 | `0x15` | `SET_STARTUP` | `[animId: u8 (0..3), durationMs: u16 LE]` | 0=None, 1=Sweep, 2=Wave, 3=Pulse |
 | `0x16` | `SET_LED_THRESHOLD`| `[index: u8 (0..5), rpm: u16 LE]` | Set threshold for LED index (must remain monotonic) |
 | `0x17` | `SET_SHIFT_WARNING`| `[warningRpm: u16 LE, patternId: u8]` | Pattern: 0=Flash (10 Hz), 1=Strobe (20 Hz), 2=Solid, 3=Off |
@@ -205,7 +207,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x1A` | `SET_LED_DIRECTION`| `[direction: u8 (0=Forward, 1=Reverse)]`| Shift light display direction |
 | `0x1B` | `SET_WARNING_RGB`| `[R: u8, G: u8, B: u8]` | Warning color for over-rev alert |
 | `0x1C` | `SET_RPM_HYSTERESIS` | `[hysteresisRpm: u16 LE (0..2000)]` | Falling-RPM dead band for bar/warning latching |
-| `0x1D` | `SET_RPM_DECODER_EXT` | `[width: u8 (1|2), endian: u8, offsetX1000: s32 LE, maxValid: u16 LE]` (9 bytes) | Byte width/order, RPM offset, validity clamp. **Invalidates calibration!** |
+| `0x1D` | `SET_RPM_DECODER_EXT` | `[width: u8 (1|2), endian: u8, offsetX1000: s32 LE, maxValid: u16 LE]` (8 bytes) | Byte width/order, RPM offset, validity clamp. **Invalidates calibration!** |
 | `0x20` | `SAVE_CONFIG` | None | Commit active configuration to flash NVS (`"ps_cfg"`) |
 | `0x21` | `RESTORE_DEFAULTS` | `[0xA5, 0x5A]` | Restore safe lighting/decoder defaults and save to NVS. **Owner credentials and captures are preserved.** |
 | `0x22` | `RELOAD_CONFIG` | None | Re-read the persisted NVS blob and apply it to the active state |
@@ -226,6 +228,8 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x51` | `RESTART_DEVICE` | `[0xA5, 0x5A]` | Acknowledge, then soft-restart the ESP32 |
 | `0x52` | `CLEAR_DIAGNOSTICS` | `[0xA5, 0x5A]` | Clear the diagnostic event log ONLY (captures and credentials untouched) |
 | `0x53` | `SET_CAPTURE_RECORDING` | `[enable: u8]` | Start/stop flash recording; start is state-gated (damaged/preserved/full storage => `INVALID_STATE`) |
+| `0x54` | `SET_CAPTURE_STAGE` | `[stage: u8 (1..3)]` | Label subsequent CAN capture records: 1=KeyOn, 2=Idle, 3=RPM sweep. Does not change operation or synthesize CAN data. |
+| `0x55` | `SET_LED_TEST_RPM` | `[testRpm: u16 LE (0..20000), enable: u8 (0 or 1)]` | Authenticated, temporary 10-second synthetic six-LED bench test. `enable=0` stops it; independent of real CAN data. Does not persist or inject CAN frames. |
 
 ---
 

@@ -276,6 +276,57 @@ static void device_commands() {
   CHECK(!CanRecorder::instance().isRecording());
 }
 
+static void mobile_terminal_stage_and_led_test() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  auto& cm = ConfigManager::instance();
+  uint16_t rpm = 0;
+  bool active = false;
+
+  // A disconnected or unauthenticated terminal must not control LEDs/stages.
+  cm.closeAuthWindow();
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_LED_TEST_RPM, {0x94, 0x11, 1}, 80), 250);
+  drain(ble, cand, 180000);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_UNAUTHORIZED);
+  CHECK(!ble.takeBenchTestRequest(rpm, active));
+
+  cm.triggerAuthWindow(180001);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_CAPTURE_STAGE, {2}, 81), 250);
+  drain(ble, cand, 180002);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(lastResult(ble).resultFlags & BLE_CFG_RESULT_FLAG_APPLIED);
+  CHECK(CanRecorder::instance().currentStage() == CanRecorder::STAGE_ENGINE_IDLING);
+
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_CAPTURE_STAGE, {0}, 82), 250);
+  drain(ble, cand, 180003);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  CHECK(CanRecorder::instance().currentStage() == CanRecorder::STAGE_ENGINE_IDLING);
+
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_LED_TEST_RPM, {0x94, 0x11, 1}, 83), 250); // 4500 RPM
+  drain(ble, cand, 180004);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(ble.takeBenchTestRequest(rpm, active));
+  CHECK(active && rpm == 4500);
+  CHECK(!ble.takeBenchTestRequest(rpm, active)); // consume once
+
+  // Malformed payloads must not change the pending test.
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_LED_TEST_RPM, {0x94}, 84), 250);
+  drain(ble, cand, 180005);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  CHECK(!ble.takeBenchTestRequest(rpm, active));
+
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_LED_TEST_RPM, {0xA8, 0x61, 1}, 85), 250); // >20000
+  drain(ble, cand, 180006);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  CHECK(!ble.takeBenchTestRequest(rpm, active));
+
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_LED_TEST_RPM, {0, 0, 0}, 86), 250);
+  drain(ble, cand, 180007);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(ble.takeBenchTestRequest(rpm, active));
+  CHECK(!active && rpm == 0);
+}
+
 static void diagnostics_blob_shape() {
   BleManager& ble = BleManager::instance();
   RpmCandidateMonitor cand;
@@ -377,6 +428,7 @@ int main() {
   staged_transaction_over_ble();
   calibration_workflow_over_ble();
   device_commands();
+  mobile_terminal_stage_and_led_test();
   diagnostics_blob_shape();
   reload_and_decoder_ext();
   malformed_and_duplicate_commands();

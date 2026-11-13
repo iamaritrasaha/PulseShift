@@ -166,6 +166,45 @@ static void provisional_rpm_preview_tracks_throttle_without_calibration() {
   CHECK(e.activeLayer() == LedActiveLayer::Fault);
 }
 
+static void preview_indicators_visible_without_can() {
+  LedEffectEngine e;
+  e.reset(0);
+  PulseShiftConfig cfg{};
+  cfg.effect = 5;
+  cfg.brightness = 255;
+  cfg.startupAnimation = 1;
+  cfg.startupDurationMs = 2000;
+  LedFrameInput input;
+  LiveRpmSnapshot noCan{};
+
+  // No CAN candidate yet, but non-RPM boot indication must still be visible.
+  e.update(100, cfg, noCan, input);
+  CHECK(e.activeLayer() == LedActiveLayer::Startup);
+  CHECK(!allBlack(e));
+
+  // After the boot indication, invalid RPM must NOT render a phantom bar.
+  e.update(2500, cfg, noCan, input);
+  e.update(2600, cfg, noCan, input);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(e));
+
+  // Owner enrollment is possible even without CAN traffic. Its cyan pulse
+  // must not be masked by the preview's missing-signal safeguard.
+  input.authWindowOpen = true;
+  e.update(3250, cfg, noCan, input);
+  CHECK(e.activeLayer() == LedActiveLayer::Commissioning);
+  CHECK(e.getPixel(0).g > 0);
+  input.authWindowOpen = false;
+  e.update(3300, cfg, noCan, input);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(e));
+
+  // A stopped CAN controller still gets the higher priority red fault blink.
+  input.canHealthy = false;
+  e.update(3400, cfg, noCan, input);
+  CHECK(e.activeLayer() == LedActiveLayer::Fault);
+}
+
 static void feedback_overrides_decorative_not_fault() {
   LedEffectEngine e;
   e.reset(0);
@@ -323,6 +362,25 @@ static void provisional_default_keeps_synthetic_bench_test() {
   CHECK(allBlack(e));
 }
 
+static void verified_effect_bench_test_without_live_can() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  LedFrameInput input;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+  LiveRpmSnapshot offline{};
+  e.update(6000, cfg, offline, input);
+  CHECK(e.activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(countLit(e) == 4);
+
+  input.testRpmActive = false;
+  e.update(6100, cfg, offline, input);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(e));
+}
+
 static void master_power_off() {
   LedEffectEngine e;
   e.reset(0);
@@ -382,6 +440,8 @@ int main() {
   unverified_rpm_bar_renders_nothing();
   provisional_rpm_preview_tracks_throttle_without_calibration();
   provisional_default_keeps_synthetic_bench_test();
+  verified_effect_bench_test_without_live_can();
+  preview_indicators_visible_without_can();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
   rpm_bar_latches_and_hysteresis();

@@ -167,6 +167,15 @@ public:
     // 5b. Service BLE GATT notifications, command queue and page streaming
     BleManager::instance().poll(now, candidateMonitor_, transport_, CanRecorder::instance());
 
+    // A terminal-style Android app can request the same 10-second LED bench
+    // test as Serial, but only through an authenticated BLE v2 command.
+    uint16_t requestedTestRpm = 0;
+    bool requestedTestActive = false;
+    if (BleManager::instance().takeBenchTestRequest(requestedTestRpm, requestedTestActive)) {
+      ledController_.setTestRpm(requestedTestRpm, requestedTestActive);
+      rpmTestStartMs_ = now;
+    }
+
     // 6. Refresh the unified LED controller from the authoritative RPM snapshot
     logger_.pump();
     const auto rpmSnap = candidateMonitor_.snapshot(now);
@@ -383,7 +392,7 @@ private:
       if (parseUnsignedNumber(cmd + 9, 20000, val)) {
         ledController_.setTestRpm(static_cast<uint16_t>(val), true);
         rpmTestStartMs_ = millis();
-        Serial.printf("[TEST] 6-LED shift-light bench test active: %u RPM for 10s (Physical CAN shift lights remain DISABLED)\r\n", (unsigned)val);
+        Serial.printf("[TEST] 6-LED shift-light bench test active: %u RPM for 10s (Verified RPM mode requires calibration; provisional preview is separate)\r\n", (unsigned)val);
       } else {
         Serial.println("[ERROR] Test RPM must be a valid integer between 0 and 20000.");
       }
@@ -393,11 +402,19 @@ private:
       while (*p == ' ' || *p == '\t') ++p;
       const float m = strtof(p, &endptr);
       while (endptr && (*endptr == ' ' || *endptr == '\t')) ++endptr;
-      if (endptr && endptr != p && *endptr == '\0' && !isnan(m) && !isinf(m) && m > 0.0f && m <= 1000.0f) {
-        candidateMonitor_.setMultiplier(m);
-        Serial.printf("[RPM] Candidate multiplier updated to %.1f (Calibration remains UNVERIFIED)\r\n", m);
+      if (endptr && endptr != p && *endptr == '\0' && !isnan(m) && !isinf(m) && m >= 0.1f && m <= 1000.0f) {
+        const BleConfigStatusCode status = ConfigManager::instance().setRpmMultiplier(m, false);
+        if (status == BLE_CFG_STATUS_OK) {
+          // Both serial and BLE must use the same authoritative decoder config.
+          // The change takes effect immediately but is not persistent until
+          // CONFIG SAVE (or SAVE_CONFIG over BLE).
+          BleManager::syncDecoderToMonitor(candidateMonitor_);
+          Serial.printf("[RPM] Multiplier %.3f applied (UNVERIFIED; type CONFIG SAVE to persist)\r\n", m);
+        } else {
+          Serial.printf("[ERROR] Multiplier update rejected (status=%u).\r\n", (unsigned)status);
+        }
       } else {
-        Serial.println("[ERROR] Multiplier must be a valid positive number between 0.1 and 1000.0.");
+        Serial.println("[ERROR] Multiplier must be between 0.1 and 1000.0.");
       }
     } else if (strcasecmp(cmd, "CONFIG STATUS") == 0) {
       const auto& c = ConfigManager::instance().active();
@@ -421,10 +438,19 @@ private:
                     ConfigManager::instance().isAuthWindowOpen(millis()) ? "OPEN (Active)" : "CLOSED");
       Serial.printf("Transaction: %s\r\n",
                     ConfigManager::instance().isStagedTransactionActive() ? "STAGED IN PROGRESS" : "IDLE");
+    } else if (strcasecmp(cmd, "CONFIG SAVE") == 0) {
+      const bool saved = ConfigManager::instance().saveToNvs();
+      Serial.println(saved ? "[CONFIG] Saved active lighting/decoder settings to NVS."
+                           : "[ERROR] NVS save failed; current changes may be lost on reboot.");
     } else if (strcasecmp(cmd, "CONFIG RESET") == 0) {
-      ConfigManager::instance().restoreDefaults(0xA5, 0x5A);
-      BleManager::syncDecoderToMonitor(candidateMonitor_);
-      Serial.println("[CONFIG] Restored lighting/decoder defaults and saved to NVS (owner credentials preserved).");
+      bool saved = false;
+      if (ConfigManager::instance().restoreDefaults(0xA5, 0x5A, &saved)) {
+        BleManager::syncDecoderToMonitor(candidateMonitor_);
+        Serial.println(saved ? "[CONFIG] Restored defaults and saved to NVS (owner credentials preserved)."
+                             : "[WARNING] Defaults applied but NVS save FAILED; changes may be lost on reboot.");
+      } else {
+        Serial.println("[ERROR] Failed to restore configuration defaults.");
+      }
     } else if (strcasecmp(cmd, "AUTH") == 0 || strcasecmp(cmd, "AUTH ON") == 0) {
       ConfigManager::instance().triggerAuthWindow(millis());
       Serial.println("[AUTH] Owner configuration window OPEN for 60 seconds (cyan pulse).");
@@ -495,6 +521,7 @@ private:
     Serial.println("  BLE STATUS      : Bluetooth Low Energy peripheral & connection status");
     Serial.println("  CONFIG STATUS   : Display active BLE configuration, security & transaction state");
     Serial.println("  CONFIG RESET    : Restore lighting/decoder defaults (owner credentials preserved)");
+    Serial.println("  CONFIG SAVE     : Persist current lighting/decoder settings to flash NVS");
     Serial.println("  AUTH            : Open 60-second owner authorization window (cyan pulse)");
     Serial.println("  RPM STATUS      : Candidate 0x301 engine-speed monitor & calibration status");
     Serial.println("  RPM MONITOR ON  : Enable rate-limited (10 Hz) 0x301 candidate streaming");
