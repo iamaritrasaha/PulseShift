@@ -79,7 +79,11 @@ class LedEffectEngine {
   void renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg);
   void renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg, uint16_t rpm);
   void setAllPixels(RgbColor color);
-  void finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg);
+  // Renders logicalPixels_ into outputPixels_ (direction + brightness),
+  // detects the change against the previous physical frame, records the
+  // change flag and refreshes the previous-frame buffer. Returns whether the
+  // visible output changed and therefore requires a physical LED write.
+  bool finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg);
 
   // Fast integer HSV to RGB converter (h: 0..255, s: 0..255, v: 0..255)
   static RgbColor hsvToRgb(uint8_t h, uint8_t s, uint8_t v);

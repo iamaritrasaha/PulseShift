@@ -257,6 +257,49 @@ static void master_power_off() {
   CHECK(allBlack(e));
 }
 
+// Change-detection contract: update() returns true exactly when the visible
+// output changed, so the controller issues a physical leds_.show() only for
+// real transitions (including lit -> all-black) and skips redundant writes.
+static void change_detection_flags() {
+  LedEffectEngine e;
+  e.reset(0);
+  PulseShiftConfig cfg{};
+  cfg.brightness = 255;
+  cfg.effect = 0; // static
+  for (uint8_t i = 0; i < 6; ++i) cfg.ledColors[i] = RgbColor{200, 0, 0};
+  LedFrameInput input;
+
+  // First rendered frame differs from the (black) initial state: changed.
+  CHECK(e.update(3000, cfg, LiveRpmSnapshot{}, input));
+  // Identical static frame: unchanged, no physical write required.
+  CHECK(!e.update(3100, cfg, LiveRpmSnapshot{}, input));
+  CHECK(!e.update(3300, cfg, LiveRpmSnapshot{}, input));
+
+  // Lit -> all-black (power off) must report changed so the LEDs actually
+  // turn off on the strip.
+  PulseShiftConfig off = cfg;
+  off.isPowerOn = false;
+  CHECK(e.update(3400, off, LiveRpmSnapshot{}, input));
+  CHECK(allBlack(e));
+  // Staying off: unchanged.
+  CHECK(!e.update(3500, off, LiveRpmSnapshot{}, input));
+
+  // Black -> lit again: changed.
+  CHECK(e.update(3600, cfg, LiveRpmSnapshot{}, input));
+
+  // Color change on one LED: changed; then stable: unchanged.
+  PulseShiftConfig cfg2 = cfg;
+  cfg2.ledColors[3] = RgbColor{0, 200, 0};
+  CHECK(e.update(3700, cfg2, LiveRpmSnapshot{}, input));
+  CHECK(!e.update(3800, cfg2, LiveRpmSnapshot{}, input));
+
+  // Direction flip changes the physical mapping: changed.
+  PulseShiftConfig rev = cfg2;
+  rev.ledDirection = 1;
+  CHECK(e.update(3900, rev, LiveRpmSnapshot{}, input));
+  CHECK(!e.update(4000, rev, LiveRpmSnapshot{}, input));
+}
+
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
@@ -268,6 +311,7 @@ int main() {
   direction_and_brightness_scaling();
   bench_test_preview_is_explicit();
   master_power_off();
+  change_detection_flags();
   std::printf("PASS unified LED engine priorities, safeguard, hysteresis, warnings: %u checks\n", checks);
   return 0;
 }
