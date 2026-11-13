@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #if !defined(PULSESHIFT_TEST_BUILD)
 #include <Preferences.h>
+#include <mbedtls/sha256.h>
 #endif
 #elif defined(PULSESHIFT_TEST_BUILD)
 #include <Arduino.h>
@@ -25,12 +26,24 @@ constexpr const char* NVS_NAMESPACE = "ps_cfg";
 constexpr const char* NVS_KEY_BLOB = "blob";
 constexpr uint32_t NVS_MAGIC = 0x50534332; // "PSC2" in ASCII (PulseShift Config v2)
 
+constexpr const char* NVS_SEC_NAMESPACE = "ps_sec";
+constexpr const char* NVS_KEY_CREDS = "creds";
+constexpr uint32_t NVS_SEC_MAGIC = 0x50534543; // "PSEC" in ASCII (PulseShift Security)
+
 #pragma pack(push, 1)
 struct NvsConfigBlob {
   uint32_t magic;
   uint16_t version;
   uint16_t length;
   PulseShiftConfig cfg;
+  uint32_t crc32;
+};
+
+struct OwnerSecurityBlob {
+  uint32_t magic;
+  uint8_t  isEnrolled;
+  uint8_t  ownerSecret[12];
+  uint32_t enrollTimestamp;
   uint32_t crc32;
 };
 #pragma pack(pop)
@@ -153,6 +166,29 @@ bool ConfigManager::begin() {
 #endif
 
   applySafeDefaults(active_);
+
+#if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
+  // Load owner security credentials from dedicated NVS namespace
+  Preferences secPrefs;
+  if (secPrefs.begin(NVS_SEC_NAMESPACE, true)) { // Read-only mount
+    OwnerSecurityBlob secBlob{};
+    const size_t secLen = secPrefs.getBytes(NVS_KEY_CREDS, &secBlob, sizeof(secBlob));
+    secPrefs.end();
+
+    if (secLen == sizeof(secBlob) && secBlob.magic == NVS_SEC_MAGIC && secBlob.isEnrolled == 1) {
+      const uint32_t calcCrc = computeCrc32(reinterpret_cast<const uint8_t*>(&secBlob),
+                                            sizeof(secBlob) - sizeof(uint32_t));
+      if (calcCrc == secBlob.crc32) {
+        ownerEnrolled_ = true;
+        memcpy(ownerSecret_, secBlob.ownerSecret, OWNER_SECRET_LEN);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.println("[SECURITY] Owner credential loaded from NVS.");
+#endif
+      }
+    }
+  }
+#endif
+
   return true;
 }
 
@@ -162,6 +198,20 @@ void ConfigManager::poll(uint32_t nowMs) {
     stagedTxActive_ = false;
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.println("[CONFIG] Staged transaction timed out; discarded.");
+#endif
+  }
+
+  // Check active challenge timeout
+  if (challengeValid_ && uint32_t(nowMs - challengeCreatedAtMs_) >= CHALLENGE_TIMEOUT_MS) {
+    challengeValid_ = false;
+    activeChallenge_ = 0;
+  }
+
+  // Check authenticated session inactivity timeout (5 minutes)
+  if (sessionAuthorized_ && uint32_t(nowMs - sessionLastActivityMs_) >= SESSION_TIMEOUT_MS) {
+    sessionAuthorized_ = false;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[SECURITY] Authenticated session expired due to inactivity.");
 #endif
   }
 }
@@ -390,6 +440,7 @@ bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2) {
   applySafeDefaults(active_);
   active_.activeRevision++;
   saveToNvs();
+  clearOwnerEnrollment();
   return true;
 }
 
@@ -512,25 +563,235 @@ bool ConfigManager::isAuthWindowOpen(uint32_t nowMs) const {
 }
 
 bool ConfigManager::isAuthorized(uint32_t nowMs) const {
-  return sessionAuthorized_ || isAuthWindowOpen(nowMs);
-}
-
-bool ConfigManager::authenticate(const uint8_t* token, size_t len) {
-  // If physical auth window is currently open, claim session immediately
-  if (isAuthWindowOpen(millis())) {
-    sessionAuthorized_ = true;
+  if (isAuthWindowOpen(nowMs)) {
     return true;
   }
-  // Otherwise verify token (e.g. 6-byte token or PIN)
-  if (len >= 4 && token != nullptr) {
-    // For bench demonstration, accept non-zero token
-    sessionAuthorized_ = true;
+  if (sessionAuthorized_ && uint32_t(nowMs - sessionLastActivityMs_) < SESSION_TIMEOUT_MS) {
     return true;
   }
   return false;
 }
 
+void ConfigManager::refreshSessionActivity(uint32_t nowMs) {
+  if (sessionAuthorized_) {
+    sessionLastActivityMs_ = nowMs;
+  }
+}
+
+BleConfigStatusCode ConfigManager::enrollOwner(const uint8_t* secret, size_t len, uint32_t nowMs) {
+  // Owner enrollment strictly requires physical presence proof via BOOT authorization window
+  if (!isAuthWindowOpen(nowMs)) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[SECURITY] Enrollment rejected: Physical BOOT window not open.");
+#endif
+    return BLE_CFG_STATUS_UNAUTHORIZED;
+  }
+
+  if (secret == nullptr || len != OWNER_SECRET_LEN) {
+    return BLE_CFG_STATUS_INVALID_PARAM;
+  }
+
+  // Validate that the secret is not trivial (e.g., not all zeros)
+  bool allZero = true;
+  for (size_t i = 0; i < len; ++i) {
+    if (secret[i] != 0) {
+      allZero = false;
+      break;
+    }
+  }
+  if (allZero) {
+    return BLE_CFG_STATUS_INVALID_PARAM;
+  }
+
+  // Store in memory
+  memcpy(ownerSecret_, secret, OWNER_SECRET_LEN);
+  ownerEnrolled_ = true;
+  sessionAuthorized_ = true;
+  sessionLastActivityMs_ = nowMs;
+  authFailureCount_ = 0;
+
+  // Persist to NVS
+#if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
+  Preferences secPrefs;
+  if (secPrefs.begin(NVS_SEC_NAMESPACE, false)) {
+    OwnerSecurityBlob secBlob{};
+    secBlob.magic = NVS_SEC_MAGIC;
+    secBlob.isEnrolled = 1;
+    memcpy(secBlob.ownerSecret, ownerSecret_, OWNER_SECRET_LEN);
+    secBlob.enrollTimestamp = nowMs;
+    secBlob.crc32 = computeCrc32(reinterpret_cast<const uint8_t*>(&secBlob),
+                                 sizeof(secBlob) - sizeof(uint32_t));
+    secPrefs.putBytes(NVS_KEY_CREDS, &secBlob, sizeof(secBlob));
+    secPrefs.end();
+  }
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+  Serial.println("[SECURITY] New owner enrolled and credentials persisted to NVS.");
+#endif
+#endif
+
+  return BLE_CFG_STATUS_OK;
+}
+
+bool ConfigManager::requestChallenge(uint32_t nowMs, uint32_t& outChallenge) {
+  // If owner is not enrolled, challenge-response cannot be performed
+  if (!ownerEnrolled_) {
+    return false;
+  }
+
+  // Rate-limiting check: if under lockout due to failed attempts
+  if (authFailureCount_ >= 5 && uint32_t(nowMs - lastAuthFailureMs_) < 3000) {
+    return false;
+  }
+
+#if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
+  activeChallenge_ = esp_random();
+#else
+  static uint32_t s_mockRng = 0x12345678;
+  s_mockRng = s_mockRng * 1664525u + 1013904223u;
+  activeChallenge_ = s_mockRng;
+#endif
+
+  // Avoid generating 0 as a valid challenge
+  if (activeChallenge_ == 0) {
+    activeChallenge_ = 0x5A5AA5A5;
+  }
+
+  challengeCreatedAtMs_ = nowMs;
+  challengeValid_ = true;
+  outChallenge = activeChallenge_;
+  return true;
+}
+
+void ConfigManager::computeAuthProof(const uint8_t secret[OWNER_SECRET_LEN], uint32_t challenge, uint16_t sequence, uint8_t outProof[8]) {
+  uint8_t msg[18]; // 12 bytes secret + 4 bytes challenge + 2 bytes sequence
+  memcpy(&msg[0], secret, OWNER_SECRET_LEN);
+  msg[12] = static_cast<uint8_t>(challenge & 0xFF);
+  msg[13] = static_cast<uint8_t>((challenge >> 8) & 0xFF);
+  msg[14] = static_cast<uint8_t>((challenge >> 16) & 0xFF);
+  msg[15] = static_cast<uint8_t>((challenge >> 24) & 0xFF);
+  msg[16] = static_cast<uint8_t>(sequence & 0xFF);
+  msg[17] = static_cast<uint8_t>((sequence >> 8) & 0xFF);
+
+#if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
+  uint8_t fullHash[32];
+  mbedtls_sha256(msg, sizeof(msg), fullHash, 0); // 0 = SHA-256
+  memcpy(outProof, fullHash, 8);
+#else
+  // Host test stub SHA-256 / digest simulation
+  const uint32_t c1 = computeCrc32(msg, 9);
+  const uint32_t c2 = computeCrc32(msg + 9, 9);
+  outProof[0] = static_cast<uint8_t>(c1 & 0xFF);
+  outProof[1] = static_cast<uint8_t>((c1 >> 8) & 0xFF);
+  outProof[2] = static_cast<uint8_t>((c1 >> 16) & 0xFF);
+  outProof[3] = static_cast<uint8_t>((c1 >> 24) & 0xFF);
+  outProof[4] = static_cast<uint8_t>(c2 & 0xFF);
+  outProof[5] = static_cast<uint8_t>((c2 >> 8) & 0xFF);
+  outProof[6] = static_cast<uint8_t>((c2 >> 16) & 0xFF);
+  outProof[7] = static_cast<uint8_t>((c2 >> 24) & 0xFF);
+#endif
+}
+
+BleConfigStatusCode ConfigManager::authenticateChallenge(const uint8_t* proof, size_t len, uint16_t sequence, uint32_t nowMs) {
+  // 1. Check physical button window presence first
+  if (isAuthWindowOpen(nowMs)) {
+    sessionAuthorized_ = true;
+    sessionLastActivityMs_ = nowMs;
+    authFailureCount_ = 0;
+    challengeValid_ = false;
+    activeChallenge_ = 0;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[SECURITY] Session authorized via physical BOOT window presence.");
+#endif
+    return BLE_CFG_STATUS_OK;
+  }
+
+  // 2. Reject if owner has never been enrolled
+  if (!ownerEnrolled_) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[SECURITY] Authentication rejected: Owner un-enrolled. Press BOOT button.");
+#endif
+    return BLE_CFG_STATUS_UNAUTHORIZED;
+  }
+
+  // 3. Enforce rate-limiting lockout after repeated failures (5 attempts -> 3s cooldown)
+  if (authFailureCount_ >= 5 && uint32_t(nowMs - lastAuthFailureMs_) < 3000) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[SECURITY] Authentication rate-limited; retry shortly.");
+#endif
+    return BLE_CFG_STATUS_BUSY;
+  }
+
+  // 4. Verify single-use challenge validity and expiration (30 seconds TTL)
+  if (!challengeValid_ || uint32_t(nowMs - challengeCreatedAtMs_) >= CHALLENGE_TIMEOUT_MS) {
+    challengeValid_ = false;
+    activeChallenge_ = 0;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[SECURITY] Authentication rejected: Missing or expired challenge.");
+#endif
+    return BLE_CFG_STATUS_INVALID_STATE;
+  }
+
+  // Single-use guarantee: Invalidate challenge immediately upon presentation to defeat replay attacks
+  challengeValid_ = false;
+  const uint32_t challengeToVerify = activeChallenge_;
+  activeChallenge_ = 0;
+
+  if (proof == nullptr || len != 8) {
+    authFailureCount_++;
+    lastAuthFailureMs_ = nowMs;
+    return BLE_CFG_STATUS_INVALID_PARAM;
+  }
+
+  // 5. Compute expected proof and compare in constant time
+  uint8_t expectedProof[8];
+  computeAuthProof(ownerSecret_, challengeToVerify, sequence, expectedProof);
+
+  uint8_t diff = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    diff |= (proof[i] ^ expectedProof[i]);
+  }
+
+  if (diff != 0) {
+    authFailureCount_++;
+    lastAuthFailureMs_ = nowMs;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.println("[SECURITY] Authentication failed: Cryptographic proof mismatch.");
+#endif
+    return BLE_CFG_STATUS_UNAUTHORIZED;
+  }
+
+  // Authentication succeeded!
+  sessionAuthorized_ = true;
+  sessionLastActivityMs_ = nowMs;
+  authFailureCount_ = 0;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+  Serial.println("[SECURITY] Session authorized via challenge-response cryptographic proof.");
+#endif
+  return BLE_CFG_STATUS_OK;
+}
+
+void ConfigManager::clearOwnerEnrollment() {
+  ownerEnrolled_ = false;
+  memset(ownerSecret_, 0, sizeof(ownerSecret_));
+  sessionAuthorized_ = false;
+  challengeValid_ = false;
+  activeChallenge_ = 0;
+
+#if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
+  Preferences secPrefs;
+  if (secPrefs.begin(NVS_SEC_NAMESPACE, false)) {
+    secPrefs.clear();
+    secPrefs.end();
+  }
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+  Serial.println("[SECURITY] Owner enrollment erased from NVS.");
+#endif
+#endif
+}
+
 void ConfigManager::onClientDisconnected() {
   sessionAuthorized_ = false;
+  challengeValid_ = false;
+  activeChallenge_ = 0;
   abortTransaction();
 }

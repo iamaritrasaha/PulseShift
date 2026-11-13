@@ -2,6 +2,7 @@
 # Copyright (c) 2026 Aritra Saha. All rights reserved.
 """Unit tests for PulseShift BLE Protocol v2 configuration, snapshot TLVs, and security."""
 
+import hashlib
 import struct
 import unittest
 import zlib
@@ -12,7 +13,7 @@ PULSESHIFT_BLE_CHAR_CONFIG_RESULT_UUID   = "fe12d216-3d4f-4b9d-a21c-92782ecb4000
 PULSESHIFT_BLE_CHAR_CONFIG_SNAPSHOT_UUID = "fe12d217-3d4f-4b9d-a21c-92782ecb4000"
 PULSESHIFT_BLE_CHAR_CAPABILITIES_UUID    = "fe12d218-3d4f-4b9d-a21c-92782ecb4000"
 
-# Opcodes
+# Opcodes (Authoritative contract shared between firmware, Android app, and documentation)
 BLE_CFG_OP_GET_CAPABILITIES  = 0x01
 BLE_CFG_OP_GET_CONFIG        = 0x02
 BLE_CFG_OP_SET_POWER         = 0x10
@@ -27,34 +28,31 @@ BLE_CFG_OP_SET_RPM_MULTIPLIER= 0x18
 BLE_CFG_OP_SET_CAN_CANDIDATE = 0x19
 BLE_CFG_OP_SET_LED_DIRECTION = 0x1A
 BLE_CFG_OP_SET_WARNING_COLOR = 0x1B
-BLE_CFG_OP_BEGIN_TRANSACTION = 0x20
-BLE_CFG_OP_COMMIT_TRANSACTION= 0x21
-BLE_CFG_OP_ABORT_TRANSACTION = 0x22
-BLE_CFG_OP_SAVE_TO_NVS       = 0x30
-BLE_CFG_OP_RESTORE_DEFAULTS  = 0x31
-BLE_CFG_OP_REQUEST_AUTH_CHALLENGE = 0x40
-BLE_CFG_OP_AUTHENTICATE      = 0x41
+BLE_CFG_OP_SAVE_CONFIG       = 0x20
+BLE_CFG_OP_RESTORE_DEFAULTS  = 0x21
+BLE_CFG_OP_ENROLL_OWNER      = 0x24
+BLE_CFG_OP_AUTHENTICATE      = 0x25
+BLE_CFG_OP_REQUEST_CHALLENGE = 0x26
+BLE_CFG_OP_BEGIN_TRANSACTION = 0x30
+BLE_CFG_OP_COMMIT_TRANSACTION= 0x31
+BLE_CFG_OP_ABORT_TRANSACTION = 0x32
 
-# Status Codes
-BLE_CFG_STATUS_OK             = 0x00
-BLE_CFG_STATUS_INVALID_PARAM  = 0x01
-BLE_CFG_STATUS_UNAUTHORIZED   = 0x02
-BLE_CFG_STATUS_BUSY           = 0x03
-BLE_CFG_STATUS_CRC_ERROR      = 0x04
-BLE_CFG_STATUS_NOT_SUPPORTED  = 0x05
-BLE_CFG_STATUS_NVS_ERROR      = 0x06
-BLE_CFG_STATUS_TX_ABORTED     = 0x07
-BLE_CFG_STATUS_INVALID_STATE  = 0x08
+# Status Codes (Authoritative contract)
+BLE_CFG_STATUS_OK                 = 0
+BLE_CFG_STATUS_INVALID_PARAM      = 1
+BLE_CFG_STATUS_UNSUPPORTED        = 2
+BLE_CFG_STATUS_BUSY               = 3
+BLE_CFG_STATUS_UNAUTHORIZED       = 4
+BLE_CFG_STATUS_INVALID_STATE      = 5
+BLE_CFG_STATUS_STORAGE_ERROR      = 6
+BLE_CFG_STATUS_VERSION_MISMATCH   = 7
+BLE_CFG_STATUS_VALIDATION_FAILED  = 8
 
 # Result Flags
 BLE_CFG_RESULT_FLAG_PERSISTED     = 0x01
 BLE_CFG_RESULT_FLAG_STAGED        = 0x02
 BLE_CFG_RESULT_FLAG_APPLIED       = 0x04
 BLE_CFG_RESULT_FLAG_AUTH_REQUIRED = 0x08
-
-# Snapshot Flags
-BLE_CFG_SNAP_FLAG_FIRST_CHUNK = 0x01
-BLE_CFG_SNAP_FLAG_FINAL_CHUNK = 0x02
 
 # Feature Mask Bits
 FEATURE_PERSISTENT_NVS        = 0x0001
@@ -68,6 +66,104 @@ FEATURE_INDIVIDUAL_LEDS       = 0x0080
 FEATURE_HISTORICAL_LOGS       = 0x0100
 FEATURE_CAN_PASSIVE_LISTEN    = 0x0200
 FULL_FEATURE_MASK             = 0x03FF # 1023
+
+
+class MockConfigManager:
+    """Mock implementation mirroring ConfigManager in C++ for protocol test verification."""
+    def __init__(self):
+        self.auth_window_open = False
+        self.session_authorized = False
+        self.session_last_activity_ms = 0
+        self.owner_enrolled = False
+        self.owner_secret = bytearray(12)
+        self.active_challenge = 0
+        self.challenge_valid = False
+        self.challenge_created_at_ms = 0
+        self.auth_failure_count = 0
+        self.last_auth_failure_ms = 0
+        self.staged_tx_active = False
+
+    def is_authorized(self, now_ms):
+        if self.auth_window_open:
+            return True
+        if self.session_authorized and (now_ms - self.session_last_activity_ms) < 300000:
+            return True
+        return False
+
+    def trigger_boot_button(self):
+        self.auth_window_open = True
+
+    def close_boot_window(self):
+        self.auth_window_open = False
+
+    def enroll_owner(self, secret: bytes, now_ms: int):
+        if not self.auth_window_open:
+            return BLE_CFG_STATUS_UNAUTHORIZED
+        if secret is None or len(secret) != 12 or all(b == 0 for b in secret):
+            return BLE_CFG_STATUS_INVALID_PARAM
+        self.owner_secret = bytearray(secret)
+        self.owner_enrolled = True
+        self.session_authorized = True
+        self.session_last_activity_ms = now_ms
+        self.auth_failure_count = 0
+        return BLE_CFG_STATUS_OK
+
+    def request_challenge(self, now_ms: int):
+        if not self.owner_enrolled:
+            return False, 0
+        if self.auth_failure_count >= 5 and (now_ms - self.last_auth_failure_ms) < 3000:
+            return False, 0
+        self.active_challenge = 0xA1B2C3D4
+        self.challenge_valid = True
+        self.challenge_created_at_ms = now_ms
+        return True, self.active_challenge
+
+    def compute_auth_proof(self, secret: bytes, challenge: int, sequence: int) -> bytes:
+        msg = secret + struct.pack("<IH", challenge, sequence)
+        return hashlib.sha256(msg).digest()[:8]
+
+    def authenticate_challenge(self, proof: bytes, sequence: int, now_ms: int):
+        if self.auth_window_open:
+            self.session_authorized = True
+            self.session_last_activity_ms = now_ms
+            self.auth_failure_count = 0
+            self.challenge_valid = False
+            self.active_challenge = 0
+            return BLE_CFG_STATUS_OK
+        if not self.owner_enrolled:
+            return BLE_CFG_STATUS_UNAUTHORIZED
+        if self.auth_failure_count >= 5 and (now_ms - self.last_auth_failure_ms) < 3000:
+            return BLE_CFG_STATUS_BUSY
+        if not self.challenge_valid or (now_ms - self.challenge_created_at_ms) >= 30000:
+            self.challenge_valid = False
+            self.active_challenge = 0
+            return BLE_CFG_STATUS_INVALID_STATE
+
+        challenge_to_verify = self.active_challenge
+        self.challenge_valid = False
+        self.active_challenge = 0
+
+        if proof is None or len(proof) != 8:
+            self.auth_failure_count += 1
+            self.last_auth_failure_ms = now_ms
+            return BLE_CFG_STATUS_INVALID_PARAM
+
+        expected_proof = self.compute_auth_proof(self.owner_secret, challenge_to_verify, sequence)
+        if proof != expected_proof:
+            self.auth_failure_count += 1
+            self.last_auth_failure_ms = now_ms
+            return BLE_CFG_STATUS_UNAUTHORIZED
+
+        self.session_authorized = True
+        self.session_last_activity_ms = now_ms
+        self.auth_failure_count = 0
+        return BLE_CFG_STATUS_OK
+
+    def on_client_disconnected(self):
+        self.session_authorized = False
+        self.challenge_valid = False
+        self.active_challenge = 0
+        self.staged_tx_active = False
 
 
 class TestBleConfigProtocolV2(unittest.TestCase):
@@ -91,7 +187,7 @@ class TestBleConfigProtocolV2(unittest.TestCase):
             FULL_FEATURE_MASK,   # featureMask: 0x03FF (1023)
             1,                   # currentRevision = 1
             0,                   # hardwarePresetCapacity = 0 (phone-managed)
-            1,                   # securityMode = 1 (BUTTON_WINDOW)
+            3,                   # securityMode = 3 (HYBRID: Physical button presence OR Challenge-Response)
             b"\x00" * 8          # reserved
         )
         self.assertEqual(len(data), 20)
@@ -101,7 +197,7 @@ class TestBleConfigProtocolV2(unittest.TestCase):
         self.assertEqual(u[2], 0x03FF)
         self.assertEqual(u[3], 1)
         self.assertEqual(u[4], 0)
-        self.assertEqual(u[5], 1)
+        self.assertEqual(u[5], 3)
 
     def test_config_command_packet(self):
         cmd_fmt = "<BBHBB14s"
@@ -226,7 +322,6 @@ class TestBleConfigProtocolV2(unittest.TestCase):
         for idx, c in enumerate(chunks):
             u = struct.unpack(chunk_fmt, c)
             self.assertEqual(u[0], 2) # version
-            c_id = u[1]
             c_idx = u[2]
             c_tot = u[3]
             c_len = u[4]
@@ -242,12 +337,10 @@ class TestBleConfigProtocolV2(unittest.TestCase):
         self.assertEqual(zlib.crc32(payload_data) & 0xFFFFFFFF, embedded_crc)
 
     def test_monotonic_rpm_thresholds_validation(self):
-        # Valid monotonic thresholds:
         valid_thresholds = [1500, 3000, 4500, 6000, 7500, 8500]
         for i in range(1, len(valid_thresholds)):
             self.assertGreaterEqual(valid_thresholds[i], valid_thresholds[i - 1])
 
-        # Invalid non-monotonic thresholds:
         invalid_thresholds = [1500, 3000, 2500, 6000, 7500, 8500]
         is_monotonic = True
         for i in range(1, len(invalid_thresholds)):
@@ -257,15 +350,158 @@ class TestBleConfigProtocolV2(unittest.TestCase):
         self.assertFalse(is_monotonic)
 
     def test_rpm_multiplier_validation(self):
-        # Valid: 0.1 to 1000.0
         self.assertTrue(0.1 <= 40.0 <= 1000.0)
         self.assertTrue(0.1 <= 0.1 <= 1000.0)
         self.assertTrue(0.1 <= 1000.0 <= 1000.0)
 
-        # Invalid: 0.0, negative, > 1000.0
         self.assertFalse(0.1 <= 0.0 <= 1000.0)
         self.assertFalse(0.1 <= -5.0 <= 1000.0)
         self.assertFalse(0.1 <= 1500.0 <= 1000.0)
+
+    # --- Comprehensive Security & Negative Tests ---
+
+    def test_security_rejection_of_arbitrary_tokens(self):
+        mgr = MockConfigManager()
+        # Outside physical BOOT window, un-enrolled device rejects arbitrary tokens
+        now_ms = 10000
+        status = mgr.authenticate_challenge(b"fake_tok", sequence=1, now_ms=now_ms)
+        self.assertEqual(status, BLE_CFG_STATUS_UNAUTHORIZED)
+        self.assertFalse(mgr.is_authorized(now_ms))
+
+    def test_security_owner_enrollment_gated_by_boot_window(self):
+        mgr = MockConfigManager()
+        now_ms = 5000
+        secret = b"PULSE_KEY_96" # 12 bytes
+
+        # Rejects enrollment when BOOT window is closed
+        status = mgr.enroll_owner(secret, now_ms)
+        self.assertEqual(status, BLE_CFG_STATUS_UNAUTHORIZED)
+        self.assertFalse(mgr.owner_enrolled)
+
+        # Allows enrollment when physical BOOT button pressed
+        mgr.trigger_boot_button()
+        status = mgr.enroll_owner(secret, now_ms)
+        self.assertEqual(status, BLE_CFG_STATUS_OK)
+        self.assertTrue(mgr.owner_enrolled)
+        self.assertTrue(mgr.is_authorized(now_ms))
+
+        # Rejects trivial / all-zero secrets
+        status_zero = mgr.enroll_owner(b"\x00" * 12, now_ms)
+        self.assertEqual(status_zero, BLE_CFG_STATUS_INVALID_PARAM)
+
+    def test_security_challenge_response_workflow(self):
+        mgr = MockConfigManager()
+        now_ms = 1000
+        secret = b"PULSE_KEY_96" # 12 bytes
+
+        # Step 1: Enroll owner under BOOT window
+        mgr.trigger_boot_button()
+        self.assertEqual(mgr.enroll_owner(secret, now_ms), BLE_CFG_STATUS_OK)
+        mgr.close_boot_window()
+
+        # Step 2: New session (e.g. phone connects later)
+        mgr.on_client_disconnected()
+        self.assertFalse(mgr.is_authorized(now_ms + 1000))
+
+        # Step 3: Request challenge
+        ok, challenge = mgr.request_challenge(now_ms + 2000)
+        self.assertTrue(ok)
+        self.assertNotEqual(challenge, 0)
+
+        # Step 4: Compute cryptographic proof
+        seq = 55
+        proof = mgr.compute_auth_proof(secret, challenge, seq)
+        self.assertEqual(len(proof), 8)
+
+        # Step 5: Authenticate
+        auth_status = mgr.authenticate_challenge(proof, sequence=seq, now_ms=now_ms + 2100)
+        self.assertEqual(auth_status, BLE_CFG_STATUS_OK)
+        self.assertTrue(mgr.is_authorized(now_ms + 2100))
+
+    def test_security_replay_attack_prevention(self):
+        mgr = MockConfigManager()
+        now_ms = 1000
+        secret = b"PULSE_KEY_96"
+        mgr.trigger_boot_button()
+        mgr.enroll_owner(secret, now_ms)
+        mgr.close_boot_window()
+        mgr.on_client_disconnected()
+
+        # Get challenge & compute proof
+        _, challenge = mgr.request_challenge(now_ms + 2000)
+        seq = 10
+        proof = mgr.compute_auth_proof(secret, challenge, seq)
+
+        # Authenticate successfully first time
+        self.assertEqual(mgr.authenticate_challenge(proof, seq, now_ms + 2100), BLE_CFG_STATUS_OK)
+
+        # Disconnect and attempt to replay the exact same proof
+        mgr.on_client_disconnected()
+        replay_status = mgr.authenticate_challenge(proof, seq, now_ms + 2200)
+        # Must fail because challenge is single-use and was already invalidated
+        self.assertEqual(replay_status, BLE_CFG_STATUS_INVALID_STATE)
+        self.assertFalse(mgr.is_authorized(now_ms + 2200))
+
+    def test_security_challenge_expiration(self):
+        mgr = MockConfigManager()
+        now_ms = 1000
+        secret = b"PULSE_KEY_96"
+        mgr.trigger_boot_button()
+        mgr.enroll_owner(secret, now_ms)
+        mgr.close_boot_window()
+        mgr.on_client_disconnected()
+
+        # Request challenge at t=2000
+        _, challenge = mgr.request_challenge(now_ms + 2000)
+        proof = mgr.compute_auth_proof(secret, challenge, 1)
+
+        # Attempt authentication after 35 seconds (> 30s TTL)
+        expired_status = mgr.authenticate_challenge(proof, 1, now_ms + 37000)
+        self.assertEqual(expired_status, BLE_CFG_STATUS_INVALID_STATE)
+        self.assertFalse(mgr.is_authorized(now_ms + 37000))
+
+    def test_security_rate_limiting_lockout(self):
+        mgr = MockConfigManager()
+        now_ms = 1000
+        secret = b"PULSE_KEY_96"
+        mgr.trigger_boot_button()
+        mgr.enroll_owner(secret, now_ms)
+        mgr.close_boot_window()
+        mgr.on_client_disconnected()
+
+        # Perform 5 consecutive failed authentications
+        for i in range(5):
+            mgr.request_challenge(now_ms + 100 * i)
+            bad_proof = b"BADPROOF"
+            self.assertEqual(mgr.authenticate_challenge(bad_proof, i, now_ms + 100 * i), BLE_CFG_STATUS_UNAUTHORIZED)
+
+        # 6th attempt immediately (< 3s) must be rejected with BUSY (rate-limited)
+        ok, _ = mgr.request_challenge(now_ms + 600)
+        self.assertFalse(ok) # Challenge generation blocked under lockout
+
+    def test_security_session_inactivity_timeout(self):
+        mgr = MockConfigManager()
+        now_ms = 1000
+        secret = b"PULSE_KEY_96"
+        mgr.trigger_boot_button()
+        mgr.enroll_owner(secret, now_ms)
+        mgr.close_boot_window()
+
+        self.assertTrue(mgr.is_authorized(now_ms))
+        # After 4 minutes: still valid
+        self.assertTrue(mgr.is_authorized(now_ms + 240000))
+        # After 5 minutes (300,000 ms): session expired
+        self.assertFalse(mgr.is_authorized(now_ms + 301000))
+
+    def test_cross_language_auth_fixture(self):
+        # Known test vectors for Android / Kotlin unit test matching
+        secret = b"PULSE_KEY_96" # 12 bytes: 50 55 4c 53 45 5f 4b 45 59 5f 39 36
+        challenge = 0x12345678    # 4 bytes LE: 78 56 34 12
+        sequence = 42             # 2 bytes LE: 2a 00
+        msg = secret + struct.pack("<IH", challenge, sequence)
+        proof = hashlib.sha256(msg).digest()[:8]
+        expected_hex = "1238a09b107e9d79"
+        self.assertEqual(proof.hex(), expected_hex)
 
 
 if __name__ == "__main__":

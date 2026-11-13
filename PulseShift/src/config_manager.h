@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
 
+#include "config.h"
 #include <stdint.h>
 #include <stddef.h>
 #include "ble_protocol.h"
@@ -76,11 +77,22 @@ class ConfigManager {
 
   // Security / Provisioning
   void triggerAuthWindow(uint32_t nowMs);
+  void closeAuthWindow() { authWindowStartMs_ = 0; }
   bool isAuthWindowOpen(uint32_t nowMs) const;
   bool isAuthorized(uint32_t nowMs) const;
-  bool authenticate(const uint8_t* token, size_t len);
+  bool isOwnerEnrolled() const { return ownerEnrolled_; }
+  BleConfigStatusCode enrollOwner(const uint8_t* secret, size_t len, uint32_t nowMs);
+  bool requestChallenge(uint32_t nowMs, uint32_t& outChallenge);
+  BleConfigStatusCode authenticateChallenge(const uint8_t* proof, size_t len, uint16_t sequence, uint32_t nowMs);
+  void refreshSessionActivity(uint32_t nowMs);
+  void clearOwnerEnrollment();
   void onClientDisconnected();
   uint8_t securityMode() const { return BLE_SEC_MODE_HYBRID; }
+
+  static constexpr size_t OWNER_SECRET_LEN = 12;
+
+  // Cryptographic Auth Proof Helper
+  static void computeAuthProof(const uint8_t secret[OWNER_SECRET_LEN], uint32_t challenge, uint16_t sequence, uint8_t outProof[8]);
 
   // Static CRC32 Helper
   static uint32_t computeCrc32(const uint8_t* data, size_t length);
@@ -98,7 +110,17 @@ class ConfigManager {
   // Security state
   uint32_t authWindowStartMs_ = 0;
   static constexpr uint32_t AUTH_WINDOW_MS = 60000;
+  static constexpr uint32_t SESSION_TIMEOUT_MS = 300000;
+  static constexpr uint32_t CHALLENGE_TIMEOUT_MS = 30000;
   bool sessionAuthorized_ = false;
+  uint32_t sessionLastActivityMs_ = 0;
+  bool ownerEnrolled_ = false;
+  uint8_t ownerSecret_[16]{};
+  uint32_t activeChallenge_ = 0;
+  uint32_t challengeCreatedAtMs_ = 0;
+  bool challengeValid_ = false;
+  uint8_t authFailureCount_ = 0;
+  uint32_t lastAuthFailureMs_ = 0;
 
   void applySafeDefaults(PulseShiftConfig& cfg);
 };

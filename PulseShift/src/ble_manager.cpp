@@ -797,7 +797,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
 
   // Authorization check
   const bool isReadQuery = (pkt.opcode == BLE_CFG_OP_GET_CAPABILITIES || pkt.opcode == BLE_CFG_OP_GET_SNAPSHOT);
-  if (!isReadQuery && pkt.opcode != BLE_CFG_OP_AUTHENTICATE) {
+  const bool isAuthFlow = (pkt.opcode == BLE_CFG_OP_AUTHENTICATE ||
+                           pkt.opcode == BLE_CFG_OP_REQUEST_CHALLENGE ||
+                           pkt.opcode == BLE_CFG_OP_ENROLL_OWNER);
+  if (!isReadQuery && !isAuthFlow) {
     if (!ConfigManager::instance().isAuthorized(nowMs)) {
       res.statusCode = BLE_CFG_STATUS_UNAUTHORIZED;
       res.resultFlags = BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
@@ -810,6 +813,9 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       return;
     }
   }
+
+  // Activity refresh for authorized sessions
+  ConfigManager::instance().refreshSessionActivity(nowMs);
 
   switch (pkt.opcode) {
     case BLE_CFG_OP_GET_CAPABILITIES: {
@@ -829,10 +835,42 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       break;
     }
 
+    case BLE_CFG_OP_ENROLL_OWNER: {
+      status = ConfigManager::instance().enrollOwner(pkt.payload, pkt.payloadLength, nowMs);
+      if (status == BLE_CFG_STATUS_OK) {
+        resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
+      } else if (status == BLE_CFG_STATUS_UNAUTHORIZED) {
+        resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_REQUEST_CHALLENGE: {
+      uint32_t challengeNonce = 0;
+      bool ok = ConfigManager::instance().requestChallenge(nowMs, challengeNonce);
+      if (ok) {
+        status = BLE_CFG_STATUS_OK;
+        res.payload[0] = static_cast<uint8_t>(challengeNonce & 0xFF);
+        res.payload[1] = static_cast<uint8_t>((challengeNonce >> 8) & 0xFF);
+        res.payload[2] = static_cast<uint8_t>((challengeNonce >> 16) & 0xFF);
+        res.payload[3] = static_cast<uint8_t>((challengeNonce >> 24) & 0xFF);
+        res.payloadLength = 4;
+      } else {
+        if (!ConfigManager::instance().isOwnerEnrolled()) {
+          status = BLE_CFG_STATUS_INVALID_STATE;
+          resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+        } else {
+          status = BLE_CFG_STATUS_BUSY;
+        }
+      }
+      break;
+    }
+
     case BLE_CFG_OP_AUTHENTICATE: {
-      bool ok = ConfigManager::instance().authenticate(pkt.payload, pkt.payloadLength);
-      status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_UNAUTHORIZED;
-      if (!ok) resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+      status = ConfigManager::instance().authenticateChallenge(pkt.payload, pkt.payloadLength, pkt.sequence, nowMs);
+      if (status != BLE_CFG_STATUS_OK) {
+        resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+      }
       break;
     }
 
@@ -1060,7 +1098,6 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   res.statusCode = status;
   res.resultFlags = resFlags;
   res.activeRevision = ConfigManager::instance().activeRevision();
-  res.payloadLength = 0;
 
   if (s_pConfigResultChar) {
     s_pConfigResultChar->setValue(reinterpret_cast<const uint8_t*>(&res), sizeof(res));

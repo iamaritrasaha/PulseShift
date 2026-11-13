@@ -537,6 +537,9 @@ private:
     } else if (strcasecmp(cmd, "AUTH") == 0 || strcasecmp(cmd, "AUTH ON") == 0) {
       ConfigManager::instance().triggerAuthWindow(millis());
       Serial.println("[AUTH] Owner configuration window OPEN for 60 seconds (cyan pulse).");
+    } else if (strcasecmp(cmd, "AUTH OFF") == 0) {
+      ConfigManager::instance().closeAuthWindow();
+      Serial.println("[AUTH] Owner configuration window CLOSED.");
     } else if (strcmp(upper, "LOGS") == 0) {
       DiagLogger::instance().dumpToSerial();
     } else if (strcasecmp(cmd, "DUMP") == 0 || strcasecmp(cmd, "DUMP NEXT") == 0) {
