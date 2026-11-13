@@ -1,12 +1,12 @@
-# PulseShift
+﻿# PulseShift
 
 **ESP32 motorcycle shift-light and CAN bus acquisition firmware.**
 
-PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network) diagnostic logger and progressive shift-light display for motorcycles. It boots directly into listen-only capture mode, records every CAN frame to internal flash storage, and streams live telemetry over USB — all without transmitting a single bit onto the motorcycle's network.
+PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network) diagnostic logger and progressive shift-light display for motorcycles. It boots directly into listen-only capture mode, records every CAN frame to internal flash storage, and streams live telemetry over USB - all without transmitting a single bit onto the motorcycle's network.
 
 > [!IMPORTANT]
 > **Real motorcycle CAN communication has already been successfully captured.**
-> Session 2 on a **2025 Bajaj Pulsar NS125 ABS** produced **22,542 exported records** across three capture stages, 18 distinct CAN IDs, and approximately 82.5 seconds of data at 500 kbps — with zero corrupt records. A candidate engine-speed signal has been identified but its RPM conversion formula is not yet independently verified. Physical RPM-driven shift lights remain disabled until calibration is confirmed against an independent reference tachometer.
+> Session 2 on a **2025 Bajaj Pulsar NS125 ABS** produced **22,542 exported records** across three capture stages, 18 distinct CAN IDs, and approximately 82.5 seconds of data at 500 kbps - with zero corrupt records. A candidate engine-speed signal has been identified but its RPM conversion formula is not yet independently verified. Physical RPM-driven shift lights remain disabled until calibration is confirmed against an independent reference tachometer.
 
 ---
 
@@ -16,8 +16,8 @@ PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network)
 2. [How PulseShift Works](#2-how-pulseshift-works)
 3. [Hardware Requirements](#3-hardware-requirements)
 4. [Hardware Wiring](#4-hardware-wiring)
-5. [Software Installation — Windows](#5-software-installation-windows)
-6. [Quick Start — LED Bench Test](#6-quick-start-led-bench-test)
+5. [Software Installation - Windows](#5-software-installation-windows)
+6. [Quick Start - LED Bench Test](#6-quick-start-led-bench-test)
 7. [Connecting to the Motorcycle](#7-connecting-to-the-motorcycle)
 8. [Capturing CAN Data](#8-capturing-can-data)
 9. [Exporting and Preserving Recordings](#9-exporting-and-preserving-recordings)
@@ -36,16 +36,16 @@ PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network)
 
 | Capability | Status |
 |---|---|
-| Firmware compilation (CAN Capture mode) | ✅ Verified — GitHub Actions CI |
-| Firmware compilation (Vehicle RPM mode) | ✅ Verified — GitHub Actions CI |
-| Physical CAN reception on motorcycle | ✅ **Verified** — 2025 Bajaj Pulsar NS125 ABS |
-| CAN recording to internal flash | ✅ Verified — 22,542 records, 0 corrupt |
-| CAN export via Serial Monitor | ✅ Demonstrated — paginated DUMP workflow |
+| Firmware compilation (CAN Capture mode) | ✅ Verified - GitHub Actions CI |
+| Firmware compilation (Vehicle RPM mode) | ✅ Verified - GitHub Actions CI |
+| Physical CAN reception on motorcycle | ✅ **Verified** - 2025 Bajaj Pulsar NS125 ABS |
+| CAN recording to internal flash | ✅ Verified - 22,542 records, 0 corrupt |
+| CAN export via Serial Monitor | ✅ Demonstrated - paginated DUMP workflow |
 | LED bench test (`RPM TEST`) | ✅ Implemented and software-tested |
 | LED status display in CAN capture mode | ✅ Implemented |
 | RPM candidate identification (CAN ID `0x301`) | ✅ Observed in real capture data |
-| RPM conversion formula (multiplier 40.0) | ⚠️ Provisional — not independently verified |
-| Real engine RPM-driven shift lights | 🔒 Disabled — requires calibration verification |
+| RPM conversion formula (multiplier 40.0) | ⚠️ Provisional - not independently verified |
+| Real engine RPM-driven shift lights | 🔒 Disabled - requires calibration verification |
 | Android integration | 🔗 Separate project, not part of this firmware |
 
 **Verified capture details:**
@@ -58,7 +58,7 @@ PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network)
 - Three capture stages (key-on, idle, gentle RPM sweep)
 - Corrupt records: 0 (CRC16 verified)
 - Candidate RPM frame: CAN ID `0x301`, payload byte 0 (`data[0]`)
-- Provisional multiplier: 40.0 — consistent with idle behavior, **not yet validated**
+- Provisional multiplier: 40.0 - consistent with idle behavior, **not yet validated**
 
 > [!NOTE]
 > Zero corrupt records means every exported frame passed its embedded CRC16 checksum check as transmitted by the ESP32. It does not guarantee that the PC's Serial Monitor buffer retained every line during export, which is why the [paginated export procedure](#9-exporting-and-preserving-recordings) includes independent host-side verification steps.
@@ -86,9 +86,9 @@ ESP32 GPIO16  →  TWAI Controller  (extracts complete CAN frames, listen-only)
                                        (currently disabled until calibration verified)
 ```
 
-**CAN — Controller Area Network** is the communication protocol used by the motorcycle's ECU (Engine Control Unit) to broadcast sensor data to the instrument cluster and other modules. All messages travel on two wires: CAN-H (high) and CAN-L (low), which carry complementary voltages.
+**CAN - Controller Area Network** is the communication protocol used by the motorcycle's ECU (Engine Control Unit) to broadcast sensor data to the instrument cluster and other modules. All messages travel on two wires: CAN-H (high) and CAN-L (low), which carry complementary voltages.
 
-**TWAI — Two-Wire Automotive Interface** is Espressif's name for the CAN controller built into the ESP32 chip. PulseShift configures it in listen-only mode, so the ESP32 receives frames but never transmits.
+**TWAI - Two-Wire Automotive Interface** is Espressif's name for the CAN controller built into the ESP32 chip. PulseShift configures it in listen-only mode, so the ESP32 receives frames but never transmits.
 
 **Each CAN frame** has an identifier (CAN ID) and up to 8 payload bytes. The identifier indicates the type of message; the payload carries the actual data. The firmware records every frame with a millisecond timestamp, stage label, and CRC checksum.
 
@@ -111,12 +111,12 @@ ESP32 GPIO16  →  TWAI Controller  (extracts complete CAN frames, listen-only)
 
 | Part | Notes |
 |---|---|
-| 6× WS2812B addressable LEDs | 5V, GRB format, 800 kHz — a 6-pixel strip segment |
+| 6× WS2812B addressable LEDs | 5V, GRB format, 800 kHz - a 6-pixel strip segment |
 | 330–470 Ω resistor | Placed in series with the LED data line, close to DIN |
 | 1000 µF / 10V electrolytic capacitor | Across LED +5V and GND at the strip |
 | Regulated 5V supply, ≥ 1A | Powers LEDs; use a DC-DC buck converter from motorcycle 12V |
 | Optional: SN74AHCT125 level shifter | Recommended for vehicle harness runs >20 cm |
-| Optional: SSD1306 128×64 OLED display | I²C display — disabled by default in `UserConfig.h` |
+| Optional: SSD1306 128×64 OLED display | I²C display - disabled by default in `UserConfig.h` |
 
 > [!NOTE]
 > Six WS2812B LEDs at full white (brightness 255) draw approximately 360 mA. Combined with the ESP32 (~90–120 mA) and transceiver (~15 mA), worst-case demand is around 465 mA peak on the 5V rail. A supply rated for at least 1 A is recommended.
@@ -138,22 +138,22 @@ The table below shows the exact connections used in the physically verified conf
 | Motorcycle CAN-H | Breakout `CANH` (Pin 7) |
 | Motorcycle CAN-L | Breakout `CANL` (Pin 6) |
 | Breakout `CRX` / `RXD` (Pin 4) | ESP32 **GPIO16** |
-| Breakout `CTX` / `TXD` (Pin 1) | ESP32 **3V3** directly — **no resistor** |
-| ESP32 **GPIO17** | **Physically disconnected** — air gap, no wire |
+| Breakout `CTX` / `TXD` (Pin 1) | ESP32 **3V3** directly - **no resistor** |
+| ESP32 **GPIO17** | **Physically disconnected** - air gap, no wire |
 | Breakout `VCC` (Pin 3) | ESP32 **3V3** |
 | Breakout `GND` (Pin 2) | Common circuit ground |
 | Breakout `Rs` (Pin 8) | Ground (often hardwired on the PCB already) |
 | Breakout `Vref` (Pin 5) | Unconnected (leave open) |
 
 > [!WARNING]
-> **CTX connects directly to ESP32 3V3. No 10 kΩ pull-up resistor was used or is needed.** This clamps the transceiver's transmit driver permanently in the recessive (idle) state, preventing the hardware from asserting any dominant bits onto the motorcycle bus. Do not add a resistor here — the direct connection is intentional and was verified working.
+> **CTX connects directly to ESP32 3V3. No 10 kΩ pull-up resistor was used or is needed.** This clamps the transceiver's transmit driver permanently in the recessive (idle) state, preventing the hardware from asserting any dominant bits onto the motorcycle bus. Do not add a resistor here - the direct connection is intentional and was verified working.
 
 > [!WARNING]
 > **GPIO17 must remain physically disconnected.** The ESP32's TWAI transmit pin has no wire inserted. Software listen-only mode alone cannot guarantee isolation if a bootloader glitch or firmware misconfiguration occurs. Firmware cannot detect whether a physical wire is present. Inspect the GPIO17 socket visually before every motorcycle connection.
 
 **Why both safeguards matter:**
-- `CTX → 3V3`: Hardware clamp — prevents the transceiver IC from ever driving the bus dominant, regardless of software state.
-- `GPIO17 air gap`: Physical isolation — eliminates any electrical path between the TWAI TX pin and the transceiver even if the firmware misbehaves during boot.
+- `CTX → 3V3`: Hardware clamp - prevents the transceiver IC from ever driving the bus dominant, regardless of software state.
+- `GPIO17 air gap`: Physical isolation - eliminates any electrical path between the TWAI TX pin and the transceiver even if the firmware misbehaves during boot.
 
 **CAN-H and CAN-L explained:** The motorcycle ECU communicates on a differential pair. CAN-H is pulled toward ~3.5V during a dominant bit; CAN-L is pulled toward ~1.5V. The difference (~2V) is what the transceiver detects. Neither wire should be connected directly to any supply voltage.
 
@@ -166,8 +166,8 @@ The table below shows the exact connections used in the physically verified conf
 
 | Connection | Detail |
 |---|---|
-| ESP32 **GPIO27** → 330–470 Ω resistor → LED strip **DIN** | Data signal — connect resistor close to the DIN terminal |
-| Regulated **5V** → LED strip **+5V** | LED power — never use 3.3V |
+| ESP32 **GPIO27** → 330–470 Ω resistor → LED strip **DIN** | Data signal - connect resistor close to the DIN terminal |
+| Regulated **5V** → LED strip **+5V** | LED power - never use 3.3V |
 | Common **GND** → LED strip **GND** | Ground |
 | 1000 µF capacitor | Across +5V and GND at the strip entry |
 | LED strip **DOUT** (6th LED) | Leave unconnected |
@@ -188,15 +188,15 @@ Data flows in one direction, indicated by the arrow printed on the strip. Connec
 
 ---
 
-## 5. Software Installation — Windows
+## 5. Software Installation - Windows
 
 This section walks through every step from a fresh Windows machine to a running PulseShift firmware upload. No command-line tools, Python, or PlatformIO are required.
 
-### Step 1 — Install Arduino IDE
+### Step 1 - Install Arduino IDE
 
 Download **Arduino IDE 2.x** from [arduino.cc/en/software](https://www.arduino.cc/en/software) and run the installer. Accept the default options.
 
-### Step 2 — Add the ESP32 board package URL
+### Step 2 - Add the ESP32 board package URL
 
 1. Open Arduino IDE.
 2. Go to **File → Preferences**.
@@ -209,7 +209,7 @@ https://espressif.github.io/arduino-esp32/package_esp32_index.json
 
 5. Click **OK**.
 
-### Step 3 — Install the ESP32 board package
+### Step 3 - Install the ESP32 board package
 
 1. Go to **Tools → Board → Boards Manager**.
 2. Search for `esp32`.
@@ -220,7 +220,7 @@ https://espressif.github.io/arduino-esp32/package_esp32_index.json
 > [!NOTE]
 > If you do not see version 3.3.12 listed, click the boards manager refresh button or check your internet connection. Older versions are listed below the latest; scroll the dropdown to find 3.3.12.
 
-### Step 4 — Install required libraries
+### Step 4 - Install required libraries
 
 Go to **Tools → Manage Libraries** and install each of the following by searching the exact name shown:
 
@@ -233,29 +233,29 @@ Go to **Tools → Manage Libraries** and install each of the following by search
 
 Click **Install** for each. If prompted to install dependencies, choose **Install all**.
 
-### Step 5 — Download PulseShift
+### Step 5 - Download PulseShift
 
 Either:
 - **Clone:** `git clone https://github.com/iamaritrasaha/PulseShift.git PulseShift-Firmware`
 - **Download ZIP:** Click **Code → Download ZIP** on GitHub, then extract the archive.
 
-### Step 6 — Open the sketch
+### Step 6 - Open the sketch
 
 In Arduino IDE, go to **File → Open** and navigate to `PulseShift-Firmware/PulseShift/PulseShift.ino`. Open that file.
 
 > [!IMPORTANT]
-> Open `PulseShift.ino` specifically — not the folder. Arduino IDE must open the `.ino` file directly so it recognizes the full sketch with all source files in `src/`.
+> Open `PulseShift.ino` specifically - not the folder. Arduino IDE must open the `.ino` file directly so it recognizes the full sketch with all source files in `src/`.
 
-### Step 7 — Connect the ESP32
+### Step 7 - Connect the ESP32
 
 Plug the ESP32 DevKit V1 into your PC using a **USB data cable**. The board has a power LED that should light up immediately.
 
 **If no COM port appears:**
-- Try a different USB cable — many cheap cables are charge-only and have no data wires.
+- Try a different USB cable - many cheap cables are charge-only and have no data wires.
 - Check Device Manager (search "Device Manager" in Windows Start). Look under **Ports (COM & LPT)** for a CP210x or CH340 device.
 - If nothing appears, install the CP2102 driver from [silabs.com/developers/usb-to-uart-bridge-vcp-drivers](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers) or the CH340 driver from your board supplier.
 
-### Step 8 — Select board and configure settings
+### Step 8 - Select board and configure settings
 
 Go to **Tools** and set each option:
 
@@ -274,13 +274,13 @@ Go to **Tools** and set each option:
 > [!WARNING]
 > If your ESP32 already contains a valuable CAN recording from a motorcycle session, **do not upload new firmware or change the partition scheme** without first exporting the data using the `DUMP` command. Uploading new firmware does not automatically erase flash recordings, but changing the partition scheme may format the entire flash. See [Section 9](#9-exporting-and-preserving-recordings) first.
 
-### Step 9 — Compile the firmware
+### Step 9 - Compile the firmware
 
 Click the **✓ (Verify)** button in the toolbar, or press **Ctrl+R**. This compiles the firmware without uploading it. All files should compile without errors in roughly 10–60 seconds.
 
 **If compilation fails with "library not found":** Return to Step 4 and confirm the library was installed under the exact name shown.
 
-### Step 10 — Upload the firmware
+### Step 10 - Upload the firmware
 
 Click the **→ (Upload)** button, or press **Ctrl+U**.
 
@@ -292,7 +292,7 @@ If the upload fails with "Failed to connect to ESP32":
 > [!NOTE]
 > This manual BOOT button hold is only needed on some older ESP32 DevKit boards. Most modern boards enter upload mode automatically.
 
-### Step 11 — Open Serial Monitor
+### Step 11 - Open Serial Monitor
 
 Go to **Tools → Serial Monitor** (or press **Ctrl+Shift+M**).
 
@@ -313,7 +313,7 @@ If the Serial Monitor is blank, check that the baud rate is set to 115200 and th
 
 ---
 
-## 6. Quick Start — LED Bench Test
+## 6. Quick Start - LED Bench Test
 
 You can test the LED shift-light display on your desk without connecting to any motorcycle. This verifies that the LEDs, wiring, and firmware are all working correctly.
 
@@ -359,7 +359,7 @@ Try different values to see the full LED progression:
 | `RPM TEST 6000` | All 6 | Flashing red shift alert |
 
 > [!NOTE]
-> `RPM TEST` only controls the LEDs — it does not inject fake CAN frames or affect the recording. CAN recording continues normally in the background. The notice "Physical CAN shift lights remain DISABLED" confirms that RPM-based LED control from real CAN data is still gated pending calibration.
+> `RPM TEST` only controls the LEDs - it does not inject fake CAN frames or affect the recording. CAN recording continues normally in the background. The notice "Physical CAN shift lights remain DISABLED" confirms that RPM-based LED control from real CAN data is still gated pending calibration.
 
 The production firmware does not include a Demo or synthetic ECU mode. Do not attempt to enable it.
 
@@ -377,7 +377,7 @@ Before connecting to the motorcycle, verify the following by physical inspection
 1. ☐ **GPIO17 air gap**: No wire is inserted into the ESP32 GPIO17 pin socket.
 2. ☐ **CTX → 3V3 direct**: The transceiver `CTX`/`TXD` pin connects directly to ESP32 3V3. No resistor in this connection.
 3. ☐ **CRX → GPIO16**: The transceiver `CRX`/`RXD` pin connects to ESP32 GPIO16.
-4. ☐ **Transceiver VCC**: Connects to ESP32 3V3 — not 5V or any motorcycle power.
+4. ☐ **Transceiver VCC**: Connects to ESP32 3V3 - not 5V or any motorcycle power.
 5. ☐ **Common ground**: ESP32 GND, transceiver GND, and motorcycle signal GND are all connected.
 6. ☐ **Termination resistor verified**: You have measured CANH–CANL resistance on the unpowered breakout. If it reads ~120 Ω, you have desoldered R2. If open circuit, no action needed.
 
@@ -420,9 +420,9 @@ PulseShift records CAN frames automatically from boot. Stages label your recordi
 
 ### Stage commands
 
-Stages label blocks of your recording for later analysis. They do not start or stop recording — that happens automatically.
+Stages label blocks of your recording for later analysis. They do not start or stop recording - that happens automatically.
 
-**Stage 1 — Ignition ON, engine OFF**
+**Stage 1 - Ignition ON, engine OFF**
 
 This is the default stage at boot. No command is needed if you turn the ignition on before powering the ESP32. To set it explicitly:
 
@@ -432,7 +432,7 @@ STAGE 1
 
 Captures: instrument cluster wake-up messages, sensor baseline values, and any ECU initialization frames.
 
-**Stage 2 — Warm engine idle**
+**Stage 2 - Warm engine idle**
 
 Start the motorcycle engine and let it settle at idle (~1,300–1,500 RPM). Then type:
 
@@ -442,7 +442,7 @@ STAGE 2
 
 Captures: steady-state ECU messages at idle. The LED strip shows amber indicators for the active stage.
 
-**Stage 3 — Gentle, controlled RPM changes**
+**Stage 3 - Gentle, controlled RPM changes**
 
 With the motorcycle stationary in neutral, gently apply and release the throttle. Then type:
 
@@ -501,7 +501,7 @@ Recorded frames are exported as CSV text through the Serial Monitor. The process
 | Command | What it does |
 |---|---|
 | `DUMP` | Export the first (or next) 500-record page |
-| `DUMP NEXT` | Equivalent to `DUMP` — advances to the next page |
+| `DUMP NEXT` | Equivalent to `DUMP` - advances to the next page |
 | `DUMP PAGE 2` | Export a specific page number directly |
 | `DUMP STATUS` | Show current export cursor position and total pages |
 | `DUMP CANCEL` | Reset export cursor back to page 1 |
@@ -533,13 +533,13 @@ timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok
 
 After saving all pages, verify the export:
 
-**Check 1 — Page boundaries:** Confirm every page from 1 to N is present with contiguous record numbers. The final page shows the total summary:
+**Check 1 - Page boundaries:** Confirm every page from 1 to N is present with contiguous record numbers. The final page shows the total summary:
 
 ```text
 === END PULSESHIFT RAW CAN CAPTURE expected=22542 exported=22542 valid=22542 corrupt=0 totalBytes=450840 ===
 ```
 
-**Check 2 — Row count:** Count actual CSV data rows in PowerShell:
+**Check 2 - Row count:** Count actual CSV data rows in PowerShell:
 
 ```powershell
 (Get-Content capture.csv | Where-Object { $_ -match "^\d+," }).Count
@@ -547,7 +547,7 @@ After saving all pages, verify the export:
 
 Confirm the count matches `expected` in the final summary line.
 
-**Check 3 — CRC column:** Every data row ends with `,1` in the `crc_ok` column. Any `,0` indicates a corrupt record.
+**Check 3 - CRC column:** Every data row ends with `,1` in the `crc_ok` column. Any `,0` indicates a corrupt record.
 
 > [!NOTE]
 > The `expected=N exported=M` counters confirm what the ESP32 transmitted. They cannot confirm what the PC's Serial Monitor retained in its scroll buffer. This is why page-by-page copy is recommended for captures over ~5,000 records.
@@ -637,9 +637,9 @@ The multiplier was chosen because it places warm idle readings (raw ~35–40) in
 
 | Condition | CAN ID `0x301` data[0] raw value |
 |---|---|
-| Stage 1 — Ignition ON, engine OFF | Constant 0 |
-| Stage 2 — Warm idle | Settles to 35–40 (median ~37) after transient |
-| Stage 3 — Gentle throttle sweeps | Rises smoothly to ~240, falls back to idle, then 0 |
+| Stage 1 - Ignition ON, engine OFF | Constant 0 |
+| Stage 2 - Warm idle | Settles to 35–40 (median ~37) after transient |
+| Stage 3 - Gentle throttle sweeps | Rises smoothly to ~240, falls back to idle, then 0 |
 
 The range (0 to 240) and the smooth, continuous response to throttle changes are consistent with an engine speed signal. However, until the formula is validated against an independent instrument, the values must be treated as provisional.
 
@@ -672,12 +672,12 @@ Before the shift-light LEDs can respond to real engine speed, the RPM conversion
 
 ### Two-point calibration procedure
 
-**Sample point 1 — Warm idle:**
+**Sample point 1 - Warm idle:**
 1. Run the engine at operating temperature until idle is completely stable.
 2. Simultaneously note the raw value from `RPM STATUS` and the reference instrument reading.
 3. Record the pair: e.g. `(raw=37, ref_rpm=1450)`.
 
-**Sample point 2 — Moderate steady hold:**
+**Sample point 2 - Moderate steady hold:**
 1. With the motorcycle stationary in neutral, hold the throttle steady at approximately 3,000–4,000 RPM.
 2. Wait for the reading to stabilize (a few seconds).
 3. Record the pair simultaneously: e.g. `(raw=75, ref_rpm=3050)`.
@@ -716,10 +716,10 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 | `RPM MULTIPLIER <value>` | Update provisional multiplier (range 0.01–1000.0) |
 | `RPM TEST <value>` | Bench-test LEDs with simulated RPM for 10 seconds (0–20000) |
 | `RPM TEST OFF` | Immediately end shift-light bench test |
-| `STAGE 1` | Set recording stage to 1 — Key ON, Engine OFF |
-| `STAGE 2` | Set recording stage to 2 — Engine Idling |
-| `STAGE 3` | Set recording stage to 3 — Gentle RPM Sweeps |
-| `1` / `2` / `3` | Shorthand stage shortcuts — same as `STAGE 1/2/3` |
+| `STAGE 1` | Set recording stage to 1 - Key ON, Engine OFF |
+| `STAGE 2` | Set recording stage to 2 - Engine Idling |
+| `STAGE 3` | Set recording stage to 3 - Gentle RPM Sweeps |
+| `1` / `2` / `3` | Shorthand stage shortcuts - same as `STAGE 1/2/3` |
 | `CAPTURE STOP` | Flush in-memory buffers and pause flash recording |
 | `CAPTURE RESUME` | Resume flash recording |
 | `STREAM ON` | Enable live raw CAN frame streaming |
@@ -731,7 +731,7 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 | `DUMP CANCEL` | Reset export cursor to page 1 |
 | `DUMP ALL` | Export all records in one uninterrupted stream |
 | `CLEAR` | Show warning and ask for confirmation before erasing |
-| `CLEAR YES` | **⚠️ Destructive** — permanently erase all recordings and reinitialize |
+| `CLEAR YES` | **⚠️ Destructive** - permanently erase all recordings and reinitialize |
 
 > [!CAUTION]
 > `CLEAR YES` is irreversible. It permanently erases all stored CAN capture data and diagnostic logs. Only use it after successfully exporting and verifying your recordings.
@@ -765,8 +765,8 @@ Edit `PulseShift/UserConfig.h` before uploading to customize the firmware for yo
 | Setting | Default | Notes |
 |---|---|---|
 | `PULSESHIFT_CAN_RX_GPIO` | `16` | ESP32 GPIO connected to breakout CRX/RXD |
-| `PULSESHIFT_CAN_TX_GPIO` | `17` | Reserved — must remain physically disconnected |
-| `PULSESHIFT_CAN_BITRATE` | `500000` | 500 kbps — do not change without verifying motorcycle bitrate |
+| `PULSESHIFT_CAN_TX_GPIO` | `17` | Reserved - must remain physically disconnected |
+| `PULSESHIFT_CAN_BITRATE` | `500000` | 500 kbps - do not change without verifying motorcycle bitrate |
 
 > [!WARNING]
 > `PULSESHIFT_CAN_RX_GPIO` and `PULSESHIFT_CAN_TX_GPIO` are hardware-critical. Changing GPIO numbers without updating your physical wiring will prevent CAN reception. `PULSESHIFT_CAN_BITRATE` must match the motorcycle's actual CAN bitrate exactly (the NS125 ABS uses 500,000 bps).
@@ -776,7 +776,7 @@ Edit `PulseShift/UserConfig.h` before uploading to customize the firmware for yo
 | Setting | Default | Description |
 |---|---|---|
 | `PULSESHIFT_SERIAL_BAUD` | `115200` | Match this in Arduino IDE Serial Monitor |
-| `PULSESHIFT_BOOT_BUTTON_GPIO` | `0` | BOOT button GPIO — short press cycles stages, long press pauses recording |
+| `PULSESHIFT_BOOT_BUTTON_GPIO` | `0` | BOOT button GPIO - short press cycles stages, long press pauses recording |
 | `PULSESHIFT_MAX_CAPTURE_BYTES` | `1000000` | Maximum capture file size in bytes (~50,000 frames) |
 
 ### RPM thresholds (for shift-light calibration, not yet active)
@@ -788,7 +788,7 @@ Edit `PulseShift/UserConfig.h` before uploading to customize the firmware for yo
 | `PULSESHIFT_DEMO_MAX_RPM` | `6500` | Maximum valid RPM scale |
 
 > [!NOTE]
-> These threshold names include "DEMO" for historical reasons. They define the LED progression scale. No threshold value here represents a verified calibration setting for the NS125 — they are placeholder defaults only.
+> These threshold names include "DEMO" for historical reasons. They define the LED progression scale. No threshold value here represents a verified calibration setting for the NS125 - they are placeholder defaults only.
 
 ### Optional OLED
 
@@ -902,9 +902,9 @@ The host-side C++ test suite (run on Ubuntu in CI) validates:
 
 | Test | Result |
 |---|---|
-| CAN reception from motorcycle | ✅ Verified — 2025 Bajaj Pulsar NS125 ABS, 500 kbps |
-| CAN recording to LittleFS | ✅ Verified — 22,542 records, 0 corrupt |
-| Paginated DUMP export | ✅ Demonstrated — full session export completed |
+| CAN reception from motorcycle | ✅ Verified - 2025 Bajaj Pulsar NS125 ABS, 500 kbps |
+| CAN recording to LittleFS | ✅ Verified - 22,542 records, 0 corrupt |
+| Paginated DUMP export | ✅ Demonstrated - full session export completed |
 | LED bench test (`RPM TEST`) | ✅ Implemented and software-tested |
 | RPM formula calibration | ⚠️ Not yet verified against independent reference |
 
@@ -912,7 +912,7 @@ The host-side C++ test suite (run on Ubuntu in CI) validates:
 
 ## 17. Safety and Technical References
 
-### Critical electrical rules — summary
+### Critical electrical rules - summary
 
 1. **GPIO17 must remain physically disconnected** (air gap) from the transceiver at all times during motorcycle use. Physical inspection is mandatory before every connection.
 2. **CTX connects directly to ESP32 3V3** (no resistor). Do not add a resistor between CTX and 3V3.
