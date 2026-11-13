@@ -77,7 +77,7 @@ static void fault_priority_wins_over_everything() {
   e.update(400, cfg, freshVerifiedSnapshot(9000), input);
   CHECK(e.activeLayer() == LedActiveLayer::Fault);
   // Red blink phase A (on) at even 100 ms tick
-  CHECK(e.getPixel(0) == RgbColor{255, 0, 0});
+  CHECK((e.getPixel(0) == RgbColor{255, 0, 0}));
   e.update(500, cfg, freshVerifiedSnapshot(9000), input);
   CHECK(allBlack(e)); // odd tick -> blink off
 }
@@ -120,7 +120,7 @@ static void feedback_overrides_decorative_not_fault() {
   input.feedbackActive = true;
   e.update(2000, cfg, LiveRpmSnapshot{}, input);
   CHECK(e.activeLayer() == LedActiveLayer::Feedback);
-  CHECK(e.getPixel(0) == RgbColor{255, 255, 255});
+  CHECK((e.getPixel(0) == RgbColor{255, 255, 255}));
 }
 
 static void startup_then_decorative() {
@@ -137,7 +137,7 @@ static void startup_then_decorative() {
   e.update(2500, cfg, LiveRpmSnapshot{}, input);
   CHECK(e.isStartupComplete());
   CHECK(e.activeLayer() == LedActiveLayer::Decorative);
-  CHECK(e.getPixel(0) == RgbColor{10, 20, 30});
+  CHECK((e.getPixel(0) == RgbColor{10, 20, 30}));
 }
 
 static void rpm_bar_latches_and_hysteresis() {
@@ -183,7 +183,7 @@ static void warning_patterns() {
   // Flash pattern toggles with the 100 ms period.
   cfg.warningPatternId = 0;
   e.update(20100, cfg, freshVerifiedSnapshot(7500), input);
-  CHECK(e.getPixel(0) == RgbColor{0, 0, 0}); // 20100-20000 = 100 -> off phase
+  CHECK((e.getPixel(0) == RgbColor{0, 0, 0})); // 20100-20000 = 100 -> off phase
   e.update(20150, cfg, freshVerifiedSnapshot(7500), input);
   CHECK(e.getPixel(0) == cfg.warningColor); // 150 -> on phase
 
@@ -208,7 +208,7 @@ static void warning_hysteresis_no_chatter() {
   CHECK(e.getPixel(0) == cfg.warningColor);
   // Below 6850 it clears.
   e.update(30200, cfg, freshVerifiedSnapshot(6800), input);
-  CHECK(e.getPixel(0) == RgbColor{255, 0, 0}); // bar colors, not warning color
+  CHECK((e.getPixel(0) == RgbColor{255, 0, 0})); // bar colors, not warning color
 }
 
 static void direction_and_brightness_scaling() {
@@ -224,8 +224,8 @@ static void direction_and_brightness_scaling() {
   LedFrameInput input;
   e.update(100, cfg, LiveRpmSnapshot{}, input);
   // Physical pixel 0 shows logical LED 5, scaled to ~50%.
-  CHECK(e.getPixel(0) == RgbColor{0, 0, 128});
-  CHECK(e.getPixel(5) == RgbColor{128, 0, 0});
+  CHECK((e.getPixel(0) == RgbColor{0, 0, 128}));
+  CHECK((e.getPixel(5) == RgbColor{128, 0, 0}));
 }
 
 static void bench_test_preview_is_explicit() {
