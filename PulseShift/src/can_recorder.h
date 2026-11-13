@@ -135,5 +135,4 @@ class CanRecorder {
   uint32_t recordedFrames_ = 0;
   uint32_t droppedFrames_ = 0;
   uint32_t lastFlushMs_ = 0;
-  File captureFile_;
 };

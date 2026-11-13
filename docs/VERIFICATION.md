@@ -1,6 +1,9 @@
-> Historical snapshot. Current release evidence and remaining gates are in [research-2026-10-26/VERIFICATION.md](research-2026-10-26/VERIFICATION.md) and [FINDINGS.md](research-2026-10-26/FINDINGS.md). Use the current public README for run instructions.
+> [!NOTE]
+> **Historical Development Snapshot (October 2026)**:
+> This document records early PlatformIO/Wokwi development iterations. The project has since transitioned to the standalone **PulseShift** Arduino IDE firmware. Real motorcycle CAN acquisition was subsequently achieved on the 2025 Bajaj Pulsar NS125 ABS at 500 kbps (Session 2: 22,542 records across 3 stages, 18 CAN IDs, 0 corrupt records).
+> For current verification procedures, see [the main README](../README.md) and [docs/TESTING.md](TESTING.md).
 
-# Verification: 2026-10-25
+# Verification: 2026-10-25 (Historical)
 
 ## Hardware target update: 2025 NS125 ABS
 

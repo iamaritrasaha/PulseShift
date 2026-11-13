@@ -491,7 +491,7 @@ def make_sn65hvd230_circuit():
     s = Svg(
         'sn65hvd230-circuit.svg', 760, 960,
         'ESP32 to SN65HVD230 CAN Transceiver Circuit',
-        'Passive receive-only bus tap: 8-pin connections, RS to GND, TXD pull-up, GPIO17 air gap, and 120 ohm removal.'
+        'Passive receive-only bus tap: 8-pin connections, RS to GND, CTX to 3V3 direct, GPIO17 air gap, and 120 ohm verification.'
     )
     s.text(28, 80, 'Passive receive-only bus tap: electrical connections and safety requirements', 20, MUTED)
 
@@ -539,14 +539,12 @@ def make_sn65hvd230_circuit():
     s.arrow(185, 311, 'left', color=PURPLE)
     s.text(tx_x + 10, 316, '4: R / RXD', 12, PURPLE, bold=True)
 
-    # Pin 1 TXD: Pull-up to 3.3V & Air-gap Disconnect
-    s.text(tx_x + 10, 356, '1: D / TXD', 12, RED, bold=True)
-    # Pull-up resistor to 3.3V
-    s.line([(tx_x, 351), (250, 351)], color=RED, width=2.5)
-    s.resistor(250, 351, label="10kΩ", vertical=True)
-    s.line([(250, 351), (250, 231)], color=ORANGE, width=2.5)
+    # Pin 1 TXD: Direct connection to 3.3V & Air-gap Disconnect
+    s.text(tx_x + 10, 356, '1: D / TXD (CTX)', 12, RED, bold=True)
+    # Direct wire to 3.3V (NO resistor)
+    s.line([(tx_x, 351), (250, 351), (250, 231)], color=ORANGE, width=2.5)
     s.dot(250, 231, color=ORANGE)
-    s.text(268, 290, 'Recessive pull-up', 11, ORANGE)
+    s.text(268, 290, 'Direct to 3.3V', 11, ORANGE)
 
     # GPIO17 wire terminates at air gap
     s.line([(185, 351), (220, 351)], color=RED, width=2.5, dash='4,3')
@@ -593,26 +591,26 @@ def make_sn65hvd230_circuit():
     s.rect(20, 510, 720, 130, fill='#fef2f2', stroke=RED, r=10, stroke_width=2)
     s.text(35, 535, '1. MANDATORY PASSIVE CAN SAFETY SAFEGUARDS', 15, RED, bold=True)
     s.text(35, 558, '• GPIO17 PHYSICAL ISOLATION: ESP32 GPIO17 must remain completely disconnected (open air gap).', 13, INK, bold=True)
-    s.text(50, 576, 'Software listen-only mode alone cannot protect against bootloader pulses or hardware bugs.', 12, MUTED)
-    s.text(35, 598, '• TXD FORCED RECESSIVE: Pin 1 (TXD) is pulled up to 3.3V via a 10kΩ resistor, forcing the transmitter recessive.', 13, INK, bold=True)
-    s.text(50, 616, 'The SN65HVD230 cannot drive dominant bits onto the motorcycle CAN bus while TXD is held HIGH.', 12, MUTED)
-    s.text(35, 634, '• RS PIN TO GND: Pin 8 (Rs) to GND selects normal high-speed mode. Rs LOW does NOT enable TX when TXD is high.', 12, INK)
+    s.text(50, 576, 'Software listen-only mode alone cannot protect against bootloader pulses; software cannot verify physical wiring.', 12, MUTED)
+    s.text(35, 598, '• CTX / TXD DIRECT 3.3V CONNECTION: Breakout CTX (Pin 1 / TXD) connects directly to 3.3V (NO resistor), clamping the transmitter recessive.', 13, INK, bold=True)
+    s.text(50, 616, 'The SN65HVD230 cannot drive dominant bits onto the motorcycle CAN bus while CTX is clamped directly to 3.3V.', 12, MUTED)
+    s.text(35, 634, '• RS PIN TO GND: Pin 8 (Rs) to GND selects normal high-speed mode. Rs LOW does NOT enable TX when CTX is at 3.3V.', 12, INK)
 
-    # Callout 2: 120 Ohm Termination Removal
+    # Callout 2: 120 Ohm Termination Verification
     s.rect(20, 655, 720, 130, fill='#fff7ed', stroke=ORANGE, r=10, stroke_width=2)
-    s.text(35, 680, '2. REMOVE ONBOARD 120Ω TERMINATION RESISTOR (CRITICAL)', 15, ORANGE, bold=True)
-    s.text(35, 703, '• Commercial SN65HVD230 breakout boards typically include an onboard 120Ω SMD resistor (labeled R2 or 1200).', 13, INK)
-    s.text(35, 723, '• The motorcycle CAN bus already has 120Ω terminating resistors at each end (total bus impedance = 60Ω).', 13, INK)
-    s.text(35, 743, '• Adding an extra 120Ω stub resistor drops bus impedance to 40Ω, causing ECU communication failure and error codes!', 13, RED, bold=True)
-    s.text(35, 765, '• Action: Measure CANH-to-CANL resistance with a multimeter. If ~120Ω, desolder resistor R2 or cut the trace.', 13, INK, bold=True)
+    s.text(35, 680, '2. 120Ω TERMINATION RESISTOR VERIFICATION', 15, ORANGE, bold=True)
+    s.text(35, 703, '• The motorcycle CAN bus already has 120Ω terminating resistors at each end (total bus impedance = 60Ω).', 13, INK)
+    s.text(35, 723, '• Some breakout boards have an onboard 120Ω resistor (R2), while others have open pads or no termination.', 13, INK)
+    s.text(35, 743, '• Test with multimeter: measure CANH-to-CANL resistance. Only if ~120Ω is measured, desolder R2 or cut trace.', 13, RED, bold=True)
+    s.text(35, 765, '• If reading is open circuit / infinity, no modification is needed. Adding an unneeded 120Ω drops bus to 40Ω.', 13, INK, bold=True)
 
     # Callout 3: Automotive Protection & Summary Table
     s.rect(20, 798, 720, 145, fill='#f8fafc', stroke=EDGE, r=10)
     s.text(35, 822, '3. CONNECTION REFERENCE & VOLTAGE RULES', 15, INK, bold=True)
-    s.text(35, 846, 'Pin 1 (TXD) -> 3.3V via 10kΩ pull-up (forced recessive)     Pin 5 (Vref) -> Leave unconnected (NC)', 12, MUTED, mono=True)
+    s.text(35, 846, 'Pin 1 / CTX -> 3.3V direct wire (forced recessive)          Pin 5 (Vref) -> Leave unconnected (NC)', 12, MUTED, mono=True)
     s.text(35, 866, 'Pin 2 (GND) -> ESP32 GND and Motorcycle Signal GND          Pin 6 (CANL) -> Motorcycle CAN-L', 12, MUTED, mono=True)
     s.text(35, 886, 'Pin 3 (VCC) -> ESP32 3V3 ONLY (never connect 5V or 12V)     Pin 7 (CANH) -> Motorcycle CAN-H', 12, MUTED, mono=True)
-    s.text(35, 906, 'Pin 4 (RXD) -> ESP32 GPIO16 (TWAI receive)                  Pin 8 (Rs)   -> GND (Normal high-speed)', 12, MUTED, mono=True)
+    s.text(35, 906, 'Pin 4 / CRX -> ESP32 GPIO16 (TWAI receive)                  Pin 8 (Rs)   -> GND (Normal high-speed)', 12, MUTED, mono=True)
     s.text(35, 930, 'Recommended Protection: Add bidirectional TVS diodes (e.g. PESD1CAN) from CANH/CANL to GND for automotive ESD protection.', 11, CYAN, bold=True)
 
     s.save()
@@ -692,8 +690,8 @@ def make_pulseshift_complete():
     s.rect(35, 560, 315, 108, fill='#fef2f2', stroke=RED, r=6)
     s.text(45, 582, 'PASSIVE SAFETY REQUIREMENTS:', 12, RED, bold=True)
     s.text(45, 600, '1. GPIO17 Physically Disconnected (Air Gap)', 11, INK, bold=True)
-    s.text(45, 618, '2. Transceiver TXD pulled up to 3.3V (Recessive)', 11, INK)
-    s.text(45, 636, '3. Onboard 120Ω resistor REMOVED from module', 11, ORANGE, bold=True)
+    s.text(45, 618, '2. Transceiver CTX tied directly to 3.3V (Recessive)', 11, INK)
+    s.text(45, 636, '3. Onboard 120Ω verified (desolder only if ~120Ω)', 11, ORANGE, bold=True)
     s.text(45, 654, '4. Transceiver VCC powered from ESP32 3V3 rail', 11, INK)
 
     # 3. ESP32 DevKit V1 (Center-Right)
@@ -806,7 +804,7 @@ def make_hardware_overview():
         ('330-470Ω resistor', 'Series data resistor for DIN'),
         ('1000µF 10V capacitor', 'Bulk cap across LED power'),
         ('Regulated 5V supply', 'At least 1A capacity (or DC-DC)'),
-        ('SN65HVD230 module', '3.3V CAN transceiver (remove 120Ω)'),
+        ('SN65HVD230 module', '3.3V CAN transceiver (verify 120Ω)'),
         ('Secure wires & breadboard', 'Short data lead + common GND'),
         ('Digital multimeter', 'Verify voltages and bus resistance')
     ]

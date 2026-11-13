@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="760" height="960" viewBox="0 0 760 960" role="img" aria-labelledby="title desc">
 <title id="title">PulseShift: ESP32 to SN65HVD230 CAN Transceiver Circuit</title>
-<desc id="desc">Passive receive-only bus tap: 8-pin connections, RS to GND, TXD pull-up, GPIO17 air gap, and 120 ohm removal.</desc>
+<desc id="desc">Passive receive-only bus tap: 8-pin connections, RS to GND, CTX to 3V3 direct, GPIO17 air gap, and 120 ohm verification.</desc>
 <style>
 text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}
@@ -38,15 +38,10 @@ path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}
 <path d="M 280,311 L 185,311" fill="none" stroke="#7c3aed" stroke-width="3"/>
 <path d="M 197,303 L 185,311 L 197,319" fill="none" stroke="#7c3aed" stroke-width="3"/>
 <text x="290" y="316" font-size="12" fill="#7c3aed" font-weight="700" text-anchor="start">4: R / RXD</text>
-<text x="290" y="356" font-size="12" fill="#ba2e34" font-weight="700" text-anchor="start">1: D / TXD</text>
-<path d="M 280,351 L 250,351" fill="none" stroke="#ba2e34" stroke-width="2.5"/>
-<path d="M 250,351 L 250,363" fill="none" stroke="#334155" stroke-width="3"/>
-<rect x="238" y="363" width="24" height="46" rx="3" fill="#fef3c7" stroke="#334155" stroke-width="2"/>
-<path d="M 250,409 L 250,421" fill="none" stroke="#334155" stroke-width="3"/>
-<text x="268" y="393" font-size="16" fill="#142b3b" font-weight="700" text-anchor="start">10kΩ</text>
-<path d="M 250,351 L 250,231" fill="none" stroke="#ea580c" stroke-width="2.5"/>
+<text x="290" y="356" font-size="12" fill="#ba2e34" font-weight="700" text-anchor="start">1: D / TXD (CTX)</text>
+<path d="M 280,351 L 250,351 L 250,231" fill="none" stroke="#ea580c" stroke-width="2.5"/>
 <circle cx="250" cy="231" r="5" fill="#ea580c"/>
-<text x="268" y="290" font-size="11" fill="#ea580c" font-weight="400" text-anchor="start">Recessive pull-up</text>
+<text x="268" y="290" font-size="11" fill="#ea580c" font-weight="400" text-anchor="start">Direct to 3.3V</text>
 <path d="M 185,351 L 220,351" fill="none" stroke="#ba2e34" stroke-width="2.5" stroke-dasharray="4,3"/>
 <circle cx="225" cy="351" r="4" fill="#ffffff" stroke="#ba2e34" stroke-width="2"/>
 <circle cx="237" cy="351" r="4" fill="#ffffff" stroke="#ba2e34" stroke-width="2"/>
@@ -74,21 +69,21 @@ path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}
 <rect x="20" y="510" width="720" height="130" rx="10" fill="#fef2f2" stroke="#ba2e34" stroke-width="2"/>
 <text x="35" y="535" font-size="15" fill="#ba2e34" font-weight="700" text-anchor="start">1. MANDATORY PASSIVE CAN SAFETY SAFEGUARDS</text>
 <text x="35" y="558" font-size="13" fill="#142b3b" font-weight="700" text-anchor="start">• GPIO17 PHYSICAL ISOLATION: ESP32 GPIO17 must remain completely disconnected (open air gap).</text>
-<text x="50" y="576" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">Software listen-only mode alone cannot protect against bootloader pulses or hardware bugs.</text>
-<text x="35" y="598" font-size="13" fill="#142b3b" font-weight="700" text-anchor="start">• TXD FORCED RECESSIVE: Pin 1 (TXD) is pulled up to 3.3V via a 10kΩ resistor, forcing the transmitter recessive.</text>
-<text x="50" y="616" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">The SN65HVD230 cannot drive dominant bits onto the motorcycle CAN bus while TXD is held HIGH.</text>
-<text x="35" y="634" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">• RS PIN TO GND: Pin 8 (Rs) to GND selects normal high-speed mode. Rs LOW does NOT enable TX when TXD is high.</text>
+<text x="50" y="576" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">Software listen-only mode alone cannot protect against bootloader pulses; software cannot verify physical wiring.</text>
+<text x="35" y="598" font-size="13" fill="#142b3b" font-weight="700" text-anchor="start">• CTX / TXD DIRECT 3.3V CONNECTION: Breakout CTX (Pin 1 / TXD) connects directly to 3.3V (NO resistor), clamping the transmitter recessive.</text>
+<text x="50" y="616" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start">The SN65HVD230 cannot drive dominant bits onto the motorcycle CAN bus while CTX is clamped directly to 3.3V.</text>
+<text x="35" y="634" font-size="12" fill="#142b3b" font-weight="400" text-anchor="start">• RS PIN TO GND: Pin 8 (Rs) to GND selects normal high-speed mode. Rs LOW does NOT enable TX when CTX is at 3.3V.</text>
 <rect x="20" y="655" width="720" height="130" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
-<text x="35" y="680" font-size="15" fill="#ea580c" font-weight="700" text-anchor="start">2. REMOVE ONBOARD 120Ω TERMINATION RESISTOR (CRITICAL)</text>
-<text x="35" y="703" font-size="13" fill="#142b3b" font-weight="400" text-anchor="start">• Commercial SN65HVD230 breakout boards typically include an onboard 120Ω SMD resistor (labeled R2 or 1200).</text>
-<text x="35" y="723" font-size="13" fill="#142b3b" font-weight="400" text-anchor="start">• The motorcycle CAN bus already has 120Ω terminating resistors at each end (total bus impedance = 60Ω).</text>
-<text x="35" y="743" font-size="13" fill="#ba2e34" font-weight="700" text-anchor="start">• Adding an extra 120Ω stub resistor drops bus impedance to 40Ω, causing ECU communication failure and error codes!</text>
-<text x="35" y="765" font-size="13" fill="#142b3b" font-weight="700" text-anchor="start">• Action: Measure CANH-to-CANL resistance with a multimeter. If ~120Ω, desolder resistor R2 or cut the trace.</text>
+<text x="35" y="680" font-size="15" fill="#ea580c" font-weight="700" text-anchor="start">2. 120Ω TERMINATION RESISTOR VERIFICATION</text>
+<text x="35" y="703" font-size="13" fill="#142b3b" font-weight="400" text-anchor="start">• The motorcycle CAN bus already has 120Ω terminating resistors at each end (total bus impedance = 60Ω).</text>
+<text x="35" y="723" font-size="13" fill="#142b3b" font-weight="400" text-anchor="start">• Some breakout boards have an onboard 120Ω resistor (R2), while others have open pads or no termination.</text>
+<text x="35" y="743" font-size="13" fill="#ba2e34" font-weight="700" text-anchor="start">• Test with multimeter: measure CANH-to-CANL resistance. Only if ~120Ω is measured, desolder R2 or cut trace.</text>
+<text x="35" y="765" font-size="13" fill="#142b3b" font-weight="700" text-anchor="start">• If reading is open circuit / infinity, no modification is needed. Adding an unneeded 120Ω drops bus to 40Ω.</text>
 <rect x="20" y="798" width="720" height="145" rx="10" fill="#f8fafc" stroke="#c5d4dd" stroke-width="2"/>
 <text x="35" y="822" font-size="15" fill="#142b3b" font-weight="700" text-anchor="start">3. CONNECTION REFERENCE &amp; VOLTAGE RULES</text>
-<text x="35" y="846" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start" class="mono">Pin 1 (TXD) -&gt; 3.3V via 10kΩ pull-up (forced recessive)     Pin 5 (Vref) -&gt; Leave unconnected (NC)</text>
+<text x="35" y="846" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start" class="mono">Pin 1 / CTX -&gt; 3.3V direct wire (forced recessive)          Pin 5 (Vref) -&gt; Leave unconnected (NC)</text>
 <text x="35" y="866" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start" class="mono">Pin 2 (GND) -&gt; ESP32 GND and Motorcycle Signal GND          Pin 6 (CANL) -&gt; Motorcycle CAN-L</text>
 <text x="35" y="886" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start" class="mono">Pin 3 (VCC) -&gt; ESP32 3V3 ONLY (never connect 5V or 12V)     Pin 7 (CANH) -&gt; Motorcycle CAN-H</text>
-<text x="35" y="906" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start" class="mono">Pin 4 (RXD) -&gt; ESP32 GPIO16 (TWAI receive)                  Pin 8 (Rs)   -&gt; GND (Normal high-speed)</text>
+<text x="35" y="906" font-size="12" fill="#425c6d" font-weight="400" text-anchor="start" class="mono">Pin 4 / CRX -&gt; ESP32 GPIO16 (TWAI receive)                  Pin 8 (Rs)   -&gt; GND (Normal high-speed)</text>
 <text x="35" y="930" font-size="11" fill="#0284c7" font-weight="700" text-anchor="start">Recommended Protection: Add bidirectional TVS diodes (e.g. PESD1CAN) from CANH/CANL to GND for automotive ESD protection.</text>
 </svg>

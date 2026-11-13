@@ -52,6 +52,14 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
     -o "$BUILD_DIR/test_vehicle"
 "$BUILD_DIR/test_vehicle"
 
+# Candidate 0x301 monitor tests
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
+    -fsanitize=address,undefined -fno-omit-frame-pointer \
+    -IPulseShift -IPulseShift/src \
+    PulseShift/src/rpm_candidate.cpp test/test_candidate_monitor.cpp \
+    -o "$BUILD_DIR/test_candidate_monitor"
+"$BUILD_DIR/test_candidate_monitor"
+
 # Python integration tests
 python3 -m unittest discover -s test -p 'test_*.py'
 

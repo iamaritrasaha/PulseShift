@@ -12,7 +12,10 @@ class Dashboard {
  public:
   bool begin();
   void update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
-  void triggerButtonFeedback(uint32_t now) { feedbackUntilMs_ = now + 200; }
+  void triggerButtonFeedback(uint32_t now) {
+    feedbackStartMs_ = now;
+    feedbackActive_ = true;
+  }
   void notifyRxActivity(uint32_t now) { lastRxActivityMs_ = now; }
 
   void setTestRpm(uint16_t rpm, bool active) {
@@ -40,7 +43,8 @@ class Dashboard {
   bool lastAlertActive_ = false;
   bool lastStartupActive_ = false, drawn_ = false;
 
-  uint32_t feedbackUntilMs_ = 0;
+  uint32_t feedbackStartMs_ = 0;
+  bool feedbackActive_ = false;
   uint32_t lastRxActivityMs_ = 0;
   uint16_t testRpm_ = 0;
   bool testRpmActive_ = false;

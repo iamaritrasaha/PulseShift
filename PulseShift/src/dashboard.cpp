@@ -29,7 +29,7 @@ bool Dashboard::begin() {
   Wire.begin(config::sda, config::scl);
   // Fix D6: 400 kHz fast mode drops transfer latency from ~95ms to ~24ms
   Wire.setClock(400000);
-  Wire.setTimeOut(20);
+  Wire.setTimeout(20);
   ready_ = display_.begin(SSD1306_SWITCHCAPVCC, 0x3C, false, false);
 #endif
   leds_.begin();
@@ -55,13 +55,17 @@ void Dashboard::renderFieldStatus(uint32_t now, bool healthy, bool configured) {
   RgbColor pix[6]{};
 
   // Button press visual feedback takes priority across all LEDs
-  if (now < feedbackUntilMs_) {
-    const RgbColor white = scaleColor(RgbColor{255, 255, 255}, br);
-    for (uint8_t i = 0; i < count; ++i) {
-      leds_.setPixelColor(i, leds_.Color(white.r, white.g, white.b));
+  if (feedbackActive_) {
+    if (uint32_t(now - feedbackStartMs_) < 200) {
+      const RgbColor white = scaleColor(RgbColor{255, 255, 255}, br);
+      for (uint8_t i = 0; i < count; ++i) {
+        leds_.setPixelColor(i, leds_.Color(white.r, white.g, white.b));
+      }
+      leds_.show();
+      return;
+    } else {
+      feedbackActive_ = false;
     }
-    leds_.show();
-    return;
   }
 
   // LED 0: Controller / System State

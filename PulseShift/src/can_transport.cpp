@@ -25,7 +25,11 @@ bool CanTransport::begin() {
 
   twai_general_config_t general = TWAI_GENERAL_CONFIG_DEFAULT(
       gpio_num_t(config::txPin), gpio_num_t(config::rxPin), mode);
+#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
+  general.tx_queue_len = 5;
+#else
   general.tx_queue_len = 0;
+#endif
   general.rx_queue_len = 128;
   general.alerts_enabled = TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF |
                            TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN |
@@ -52,15 +56,16 @@ bool CanTransport::begin() {
   installed_ = (err == ESP_OK);
 
 #if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_TWAI_TEST)
-  // Arduino 2.0.17's prebuilt SDK lacks LISTEN_ONLY_DOM workaround. Disconnect
-  // the TX pad while the controller is still STOPPED. Keep it disconnected for
-  // the entire passive capture; no code here ever re-enables that output.
+  // Ensure the ESP32 TX pin (GPIO17) is isolated in input/pull-up mode
+  // while the controller is running in listen-only mode.
+  // Note: The physical hardware installation keeps ESP32 GPIO17 physically
+  // disconnected, while transceiver CTX/TXD is tied directly to 3V3.
   if (err == ESP_OK) err = gpio_reset_pin(gpio_num_t(config::txPin));
   if (err == ESP_OK) err = gpio_set_direction(gpio_num_t(config::txPin), GPIO_MODE_INPUT);
   if (err == ESP_OK) err = gpio_set_pull_mode(gpio_num_t(config::txPin), GPIO_PULLUP_ONLY);
   if (err == ESP_OK) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-    Serial.printf("PASSIVE CAPTURE: GPIO%d output disabled; external TXD pull-up required\r\n", config::txPin);
+    Serial.printf("PASSIVE CAPTURE: GPIO%d muted (input/pull-up); verify CTX->3V3 and GPIO17 physically disconnected\r\n", config::txPin);
 #endif
   }
 #endif

@@ -34,14 +34,14 @@ jobs:
           path: |
             ~/.arduino15
             ~/.cache/arduino
-          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-2.0.17-neopixel-1.12.3-oled-2.5.13-gfx-1.11.11-busio-1.17.0
+          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-3.3.12-neopixel-1.12.3-oled-2.5.13-gfx-1.11.11-busio-1.17.0
 
       - name: Install ESP32 core and libraries
         run: |
           arduino-cli config init --overwrite
           arduino-cli config add board_manager.additional_urls "$ESP32_INDEX_URL"
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32@2.0.17
+          arduino-cli core install esp32:esp32@3.3.12
           arduino-cli lib update-index
           arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
           arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"

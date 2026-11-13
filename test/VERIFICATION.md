@@ -1,38 +1,18 @@
 # Software verification
 
-Run from the repository root inside Ubuntu WSL.
+PulseShift includes automated regression tests covering decoders, profiles, stale/fault blanking, power-loss safe LittleFS capture, candidate monitor bounds, and release guards.
 
 ~~~sh
 bash test/run.sh
-~/.platformio/penv/bin/pio run -e esp32dev_wokwi -e esp32dev_twai_test -e esp32dev_bike -e esp32dev_vehicle
-python3 scripts/verify_firmware_isolation.py
-python3 -O scripts/verify_firmware_isolation.py
 ~~~
 
-The host suite covers decoding, profiles, stale/fault blanking, recovery, GPIO
-validation, bounded logging, capture analysis and release guards. Native C++
-checks enable ASan, UBSan and warnings as errors.
+Native C++ checks enable ASan, UBSan, and warnings treated as errors.
 
-For an Arduino distribution, run package_arduino.py, verify_arduino_package.py
-and verify_arduino_matrix.py under scripts/. Use the matching version, ESP32
-core 2.0.17 and the pinned libraries in [the Arduino guide](../arduino/README.txt).
-The matrix compiles 15 configurations and checks linked mode isolation; its
-work directory must not already exist.
+For firmware compilation, use Arduino IDE or Arduino CLI with ESP32 board support (esp32:esp32@3.3.12) as documented in [the README](../README.md).
 
-## Simulator limits
+## Verification scope and hardware limits
 
-- DEMO uses full synthetic CAN frames through the shared decoder and dashboard.
-  It does not validate TWAI or a physical CAN bus.
-- The isolated TWAI test still has a known transmission-completion failure.
-  Keep its checks enabled and report the failure honestly.
-- [TWAI reproduction and evidence](TWAI_WOKWI.md) remain available.
-
-No compilation or simulation result qualifies the actual LED strip, CAN module
-or NS125 protocol. Keep detailed run logs and reports local.
-
-Passive discovery regressions cover frozen-fit independent sessions, duplicate
-capture rejection, missing references, clock offsets, malformed/oversized input,
-structural hints and mandatory broadcast/holdout evidence gates. Normal and
-optimized isolation checks also reject TX queue and recovery symbols. The
-[advanced Arduino guide](../arduino/README.txt) documents qualified collection
-and offline analysis; all candidate results remain UNVERIFIED.
+- DEMO uses full synthetic CAN frames through the shared decoder and dashboard. It does not validate TWAI or a physical CAN bus.
+- [TWAI reproduction and evidence](../docs/CAN-INVESTIGATION.md) document early Wokwi simulator investigations.
+- No host compilation or simulation result qualifies physical LED power or vehicle behavior. Physical motorcycle acquisition was achieved on the 2025 Bajaj Pulsar NS125 ABS at 500 kbps (Session 2: 22,542 frames, 18 IDs, 0 corrupt records), but RPM numerical calibration remains strictly UNVERIFIED.
+- [the README](../README.md) documents verified wiring, live serial commands, and LittleFS export; all candidate RPM results remain UNVERIFIED until independent calibration is complete.

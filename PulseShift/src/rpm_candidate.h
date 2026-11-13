@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <math.h>
 #include "can_frame.h"
 
 // Diagnostic-only candidate engine-speed monitor for passive CAN exploration.
@@ -30,8 +31,13 @@ class RpmCandidateMonitor {
   // Status accessors
   uint32_t candidateId() const { return candidateId_; }
   uint8_t byteIndex() const { return byteIndex_; }
+  void setByteIndex(uint8_t idx) { if (idx < 8) byteIndex_ = idx; }
   float multiplier() const { return multiplier_; }
-  void setMultiplier(float m) { if (m > 0.0f) multiplier_ = m; }
+  void setMultiplier(float m) {
+    if (!isnan(m) && !isinf(m) && m > 0.0f && m <= 1000.0f) {
+      multiplier_ = m;
+    }
+  }
 
   uint32_t freshnessTimeoutMs() const { return freshnessTimeoutMs_; }
   void setFreshnessTimeoutMs(uint32_t timeoutMs) { if (timeoutMs > 0) freshnessTimeoutMs_ = timeoutMs; }
@@ -51,7 +57,8 @@ class RpmCandidateMonitor {
   // Explicit safety constraints
   bool isCalibrated() const { return false; }          // Calibration is UNVERIFIED
   bool isShiftLightEnabled() const { return false; }   // Shift lights DISABLED
-  bool isTxIsolated() const { return true; }           // CAN TX PHYSICALLY ISOLATED
+  bool isTxIsolated() const { return true; }           // Compatibility alias: software mutes TX
+  bool isTxDisabledInSoftware() const { return true; } // CAN TX software muted; physical isolation must be verified manually
 
   // Formatting helpers for Arduino Serial Monitor
   void printStatus(uint32_t nowMs, bool controllerHealthy, uint32_t bitrate, bool busTrafficActive) const;

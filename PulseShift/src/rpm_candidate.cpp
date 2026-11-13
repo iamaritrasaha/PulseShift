@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "rpm_candidate.h"
 #include <stdio.h>
+#include <math.h>
 
 #if defined(ARDUINO)
   #include <Arduino.h>
@@ -25,9 +26,9 @@ RpmCandidateMonitor::RpmCandidateMonitor(uint32_t candidateId,
                                          float multiplier,
                                          uint32_t freshnessTimeoutMs)
     : candidateId_(candidateId),
-      byteIndex_(byteIndex),
-      multiplier_(multiplier),
-      freshnessTimeoutMs_(freshnessTimeoutMs) {}
+      byteIndex_(byteIndex < 8 ? byteIndex : 0),
+      multiplier_((!isnan(multiplier) && !isinf(multiplier) && multiplier > 0.0f && multiplier <= 1000.0f) ? multiplier : DEFAULT_MULTIPLIER),
+      freshnessTimeoutMs_(freshnessTimeoutMs > 0 ? freshnessTimeoutMs : DEFAULT_FRESHNESS_TIMEOUT_MS) {}
 
 bool RpmCandidateMonitor::ingest(const CanFrame& frame, uint32_t nowMs) {
   if (frame.id != candidateId_) {
@@ -35,9 +36,16 @@ bool RpmCandidateMonitor::ingest(const CanFrame& frame, uint32_t nowMs) {
   }
 
   // Reject invalid candidate frame envelopes:
-  // Must be standard 11-bit identifier, not RTR, and DLC must be exactly 8 bytes
+  // Must match standard/extended expectation, not RTR, and DLC must be exactly 8 bytes
   // matching the Bajaj Pulsar NS125 broadcast specification.
-  if (frame.extended || frame.remote || frame.dlc != 8 || !validEnvelope(frame)) {
+  const bool expectExtended = (candidateId_ > 0x7FFUL);
+  if (frame.extended != expectExtended || frame.remote || frame.dlc != 8 || !validEnvelope(frame)) {
+    ++rejectedCount_;
+    return false;
+  }
+
+  // Safeguard array bounds
+  if (byteIndex_ >= frame.dlc || byteIndex_ >= 8) {
     ++rejectedCount_;
     return false;
   }
@@ -74,7 +82,13 @@ uint16_t RpmCandidateMonitor::estimatedRpm(uint32_t nowMs) const {
   if (!isFresh(nowMs) || rawValue_ == 0) {
     return 0;
   }
+  if (isnan(multiplier_) || isinf(multiplier_) || multiplier_ <= 0.0f) {
+    return 0;
+  }
   const float est = static_cast<float>(rawValue_) * multiplier_ + 0.5f;
+  if (isnan(est) || est <= 0.0f) {
+    return 0;
+  }
   if (est > 65535.0f) {
     return 65535;
   }
@@ -124,7 +138,7 @@ void RpmCandidateMonitor::printStatus(uint32_t nowMs,
 
   RPM_PRINTLN("Calibration      : UNVERIFIED");
   RPM_PRINTLN("LED Shift Mode   : DISABLED");
-  RPM_PRINTLN("CAN TX           : PHYSICALLY ISOLATED");
+  RPM_PRINTLN("CAN TX           : SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)");
 
   RPM_PRINTLN("\n--- Candidate Diagnostics ---");
   RPM_PRINTF("Frames Received  : %lu\r\n", (unsigned long)receivedCount_);

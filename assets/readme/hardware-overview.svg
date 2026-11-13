@@ -62,7 +62,7 @@ path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}
 <text x="536" y="533" font-size="16" fill="#38bdf8" font-weight="700" text-anchor="middle">CAN</text>
 <text x="536" y="550" font-size="10" fill="#94a3b8" font-weight="400" text-anchor="middle">SN65HVD230</text>
 <text x="536" y="610" font-size="20" fill="#142b3b" font-weight="700" text-anchor="middle">SN65HVD230 module</text>
-<text x="536" y="636" font-size="14" fill="#425c6d" font-weight="400" text-anchor="middle">3.3V CAN transceiver (remove 120Ω)</text>
+<text x="536" y="636" font-size="14" fill="#425c6d" font-weight="400" text-anchor="middle">3.3V CAN transceiver (verify 120Ω)</text>
 <rect x="28" y="678" width="320" height="172" rx="10" fill="#f8fafc" stroke="#c5d4dd" stroke-width="2"/>
 <path d="M 134,716 L 242,716" fill="none" stroke="#0969aa" stroke-width="4"/>
 <path d="M 134,730 L 242,730" fill="none" stroke="#ba2e34" stroke-width="4"/>
