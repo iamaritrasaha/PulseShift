@@ -315,3 +315,5 @@ int main() {
   std::printf("PASS unified LED engine priorities, safeguard, hysteresis, warnings: %u checks\n", checks);
   return 0;
 }
+
+// Pre-check trigger note: this suite is exercised first by the disposable precheck workflow.
