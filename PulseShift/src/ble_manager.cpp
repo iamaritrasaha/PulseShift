@@ -822,6 +822,7 @@ void BleManager::processHistoricalPageRead() {
 #endif
 }
 
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
 namespace {
 void formatCaptureRecordLine(const CanLogRecord& rec, char* out, size_t outLen) {
   char hexData[17] = "";
@@ -839,6 +840,7 @@ void formatCaptureRecordLine(const CanLogRecord& rec, char* out, size_t outLen) 
            hexData);
 }
 }  // namespace
+#endif // NimBLE guard for the capture-line formatter
 
 void BleManager::processCapturePage() {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
@@ -1680,11 +1682,11 @@ size_t BleManager::buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen, uint32_t
   // TLV 0x46: BLE state
   {
     const uint8_t v[5] = {
-      isClientConnected() ? 1 : 0,
-      isAdvertising() ? 1 : 0,
-      cfgMgr.securityMode(),
-      cfgMgr.isOwnerEnrolled() ? 1 : 0,
-      cfgMgr.isSessionAuthorized() ? 1 : 0
+      static_cast<uint8_t>(isClientConnected() ? 1 : 0),
+      static_cast<uint8_t>(isAdvertising() ? 1 : 0),
+      static_cast<uint8_t>(cfgMgr.securityMode()),
+      static_cast<uint8_t>(cfgMgr.isOwnerEnrolled() ? 1 : 0),
+      static_cast<uint8_t>(cfgMgr.isSessionAuthorized() ? 1 : 0)
     };
     appendTlv(BLE_DIAG_TLV_BLE_STATE, v, 5);
   }
