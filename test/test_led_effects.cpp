@@ -362,6 +362,25 @@ static void provisional_default_keeps_synthetic_bench_test() {
   CHECK(allBlack(e));
 }
 
+static void verified_effect_bench_test_without_live_can() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  LedFrameInput input;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+  LiveRpmSnapshot offline{};
+  e.update(6000, cfg, offline, input);
+  CHECK(e.activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(countLit(e) == 4);
+
+  input.testRpmActive = false;
+  e.update(6100, cfg, offline, input);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(e));
+}
+
 static void master_power_off() {
   LedEffectEngine e;
   e.reset(0);
@@ -421,6 +440,7 @@ int main() {
   unverified_rpm_bar_renders_nothing();
   provisional_rpm_preview_tracks_throttle_without_calibration();
   provisional_default_keeps_synthetic_bench_test();
+  verified_effect_bench_test_without_live_can();
   preview_indicators_visible_without_can();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
