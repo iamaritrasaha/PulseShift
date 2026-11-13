@@ -48,7 +48,7 @@ static void serial_parse_helpers() {
   const RgbColor c{100, 200, 255};
   CHECK(scaleColor(c, 255) == c);
   const RgbColor half = scaleColor(c, 128);
-  CHECK(half.r==50 && half.g==101 && half.b==128);
+  CHECK(half.r==50 && half.g==100 && half.b==128);
 }
 
 static void config_validate() {

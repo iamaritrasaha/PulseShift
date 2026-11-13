@@ -712,6 +712,114 @@ void BleManager::processLogQueue() {
 #endif
 }
 
+void BleManager::processHistoricalPageRead() {
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+  if (!s_pLogsChar) return;
+
+  if (histCancelRequested_) {
+    histPageActive_ = false;
+    histPageEopPending_ = false;
+    activeMsgInProgress_ = false;
+    return;
+  }
+
+  // If a pending End-of-Page notification was deferred until message chunks finished
+  if (histPageEopPending_) {
+    if (activeMsgInProgress_) {
+      // Must finish transmitting all chunks of the message first!
+      processLogQueue();
+      return;
+    }
+    // Now transmit the End-of-Page marker with its own dedicated paced transmission
+    BleLogChunkPacket eop{};
+    eop.version = PULSESHIFT_BLE_PROTOCOL_VERSION;
+    eop.flags = BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK;
+    eop.messageId = logMsgId_++;
+    eop.chunkIndex = 0;
+    eop.payloadLength = 5;
+    memcpy(&eop.payload[0], &histFileOffset_, 4);
+    eop.payload[4] = histPageFinished_;
+    s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&eop), sizeof(eop));
+    s_pLogsChar->notify();
+    ++notifyCount_;
+    ++logNotifyCount_;
+
+    histPageEopPending_ = false;
+    histPageActive_ = false;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.printf("[BLE] Historical log page completed (nextOffset=%lu, finished=%u)\r\n",
+                  (unsigned long)histFileOffset_, histPageFinished_);
+#endif
+    return;
+  }
+
+  auto& sm = StorageManager::instance();
+  if (!sm.isMounted() || !sm.exists(DiagLogger::LOG_PATH)) {
+    histFileOffset_ = 0;
+    histPageFinished_ = 1;
+    histPageEopPending_ = true;
+    histPageActive_ = false;
+    return;
+  }
+
+  File f = sm.open(DiagLogger::LOG_PATH, "r");
+  if (!f) {
+    histPageActive_ = false;
+    return;
+  }
+
+  const size_t fileSize = f.size();
+  if (histFileOffset_ >= fileSize) {
+    f.close();
+    histPageFinished_ = 1;
+    histPageEopPending_ = true;
+    histPageActive_ = false;
+    return;
+  }
+
+  f.seek(histFileOffset_);
+
+  // Read one line (bounded up to 128 chars)
+  char lineBuf[LIVE_LOG_MAX_LEN]{};
+  size_t bytesRead = 0;
+  int ch;
+  while (bytesRead < sizeof(lineBuf) - 1 && (ch = f.read()) != -1) {
+    lineBuf[bytesRead++] = static_cast<char>(ch);
+    if (ch == '\n') break;
+  }
+  lineBuf[bytesRead] = '\0';
+  histFileOffset_ = f.position();
+  f.close();
+
+  if (bytesRead > 0) {
+    // Stage this line as the active message
+    strncpy(activeMsgBuf_, lineBuf, sizeof(activeMsgBuf_) - 1);
+    activeMsgBuf_[sizeof(activeMsgBuf_) - 1] = '\0';
+    activeMsgLen_ = strlen(activeMsgBuf_);
+    activeMsgOffset_ = 0;
+    activeChunkIndex_ = 0;
+    activeMsgId_ = logMsgId_++;
+    activeMsgFlags_ = 0;
+    activeMsgInProgress_ = true;
+
+    // Send chunk 0 now
+    processLogQueue();
+
+    ++histLinesSent_;
+    if (histLinesSent_ >= 20 || histFileOffset_ >= fileSize) {
+      // Reached 20 lines or EOF; defer EOP marker to its own dedicated paced tick
+      histPageFinished_ = (histFileOffset_ >= fileSize) ? 1 : 0;
+      histPageEopPending_ = true;
+      histPageActive_ = false;
+    }
+  } else {
+    histPageFinished_ = 1;
+    histPageEopPending_ = true;
+    histPageActive_ = false;
+  }
+#endif
+}
+
 namespace {
 void formatCaptureRecordLine(const CanLogRecord& rec, char* out, size_t outLen) {
   char hexData[17] = "";
