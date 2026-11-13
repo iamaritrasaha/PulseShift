@@ -112,14 +112,14 @@ ESP32 GPIO16  →  TWAI Controller  (extracts complete CAN frames, listen-only)
 | Part | Notes |
 |---|---|
 | 6× WS2812B addressable LEDs | 5V, GRB format, 800 kHz - a 6-pixel strip segment |
-| 330–470 Ω resistor | Placed in series with the LED data line, close to DIN |
+| 330-470 Ω resistor | Placed in series with the LED data line, close to DIN |
 | 1000 µF / 10V electrolytic capacitor | Across LED +5V and GND at the strip |
 | Regulated 5V supply, ≥ 1A | Powers LEDs; use a DC-DC buck converter from motorcycle 12V |
 | Optional: SN74AHCT125 level shifter | Recommended for vehicle harness runs >20 cm |
 | Optional: SSD1306 128×64 OLED display | I²C display - disabled by default in `UserConfig.h` |
 
 > [!NOTE]
-> Six WS2812B LEDs at full white (brightness 255) draw approximately 360 mA. Combined with the ESP32 (~90–120 mA) and transceiver (~15 mA), worst-case demand is around 465 mA peak on the 5V rail. A supply rated for at least 1 A is recommended.
+> Six WS2812B LEDs at full white (brightness 255) draw approximately 360 mA. Combined with the ESP32 (~90-120 mA) and transceiver (~15 mA), worst-case demand is around 465 mA peak on the 5V rail. A supply rated for at least 1 A is recommended.
 
 ---
 
@@ -157,7 +157,7 @@ The table below shows the exact connections used in the physically verified conf
 
 **CAN-H and CAN-L explained:** The motorcycle ECU communicates on a differential pair. CAN-H is pulled toward ~3.5V during a dominant bit; CAN-L is pulled toward ~1.5V. The difference (~2V) is what the transceiver detects. Neither wire should be connected directly to any supply voltage.
 
-**Termination check:** Many SN65HVD230 breakout boards include an onboard 120 Ω resistor between CANH and CANL. The motorcycle bus is already terminated at both physical ends (total bus impedance 60 Ω). Adding a third 120 Ω terminator drops the bus to 40 Ω and can trigger ECU error warnings. **Measure the resistance across the unpowered breakout's CANH–CANL pins with a multimeter before connecting to the motorcycle.** If the reading is approximately 120 Ω, desolder resistor R2 (or cut its trace jumper). If the reading is open circuit, no modification is needed.
+**Termination check:** Many SN65HVD230 breakout boards include an onboard 120 Ω resistor between CANH and CANL. The motorcycle bus is already terminated at both physical ends (total bus impedance 60 Ω). Adding a third 120 Ω terminator drops the bus to 40 Ω and can trigger ECU error warnings. **Measure the resistance across the unpowered breakout's CANH-CANL pins with a multimeter before connecting to the motorcycle.** If the reading is approximately 120 Ω, desolder resistor R2 (or cut its trace jumper). If the reading is open circuit, no modification is needed.
 
 ### LED connections
 
@@ -166,7 +166,7 @@ The table below shows the exact connections used in the physically verified conf
 
 | Connection | Detail |
 |---|---|
-| ESP32 **GPIO27** → 330–470 Ω resistor → LED strip **DIN** | Data signal - connect resistor close to the DIN terminal |
+| ESP32 **GPIO27** → 330-470 Ω resistor → LED strip **DIN** | Data signal - connect resistor close to the DIN terminal |
 | Regulated **5V** → LED strip **+5V** | LED power - never use 3.3V |
 | Common **GND** → LED strip **GND** | Ground |
 | 1000 µF capacitor | Across +5V and GND at the strip entry |
@@ -276,7 +276,7 @@ Go to **Tools** and set each option:
 
 ### Step 9 - Compile the firmware
 
-Click the **✓ (Verify)** button in the toolbar, or press **Ctrl+R**. This compiles the firmware without uploading it. All files should compile without errors in roughly 10–60 seconds.
+Click the **✓ (Verify)** button in the toolbar, or press **Ctrl+R**. This compiles the firmware without uploading it. All files should compile without errors in roughly 10-60 seconds.
 
 **If compilation fails with "library not found":** Return to Step 4 and confirm the library was installed under the exact name shown.
 
@@ -320,7 +320,7 @@ You can test the LED shift-light display on your desk without connecting to any 
 ### What you need
 
 - ESP32 with PulseShift firmware uploaded
-- 6× WS2812B LED strip connected to GPIO27 via a 330–470 Ω resistor
+- 6× WS2812B LED strip connected to GPIO27 via a 330-470 Ω resistor
 - 5V power supply for the LEDs
 
 ### Running the bench test
@@ -332,7 +332,7 @@ You can test the LED shift-light display on your desk without connecting to any 
 RPM TEST 4500
 ```
 
-**Expected result:** The firmware acknowledges the test and illuminates four LEDs (LEDs 1–4) in a progressive green-to-orange pattern. The Serial Monitor shows:
+**Expected result:** The firmware acknowledges the test and illuminates four LEDs (LEDs 1-4) in a progressive green-to-orange pattern. The Serial Monitor shows:
 
 ```text
 [TEST] 6-LED shift-light bench test active: 4500 RPM for 10s (Physical CAN shift lights remain DISABLED)
@@ -354,8 +354,8 @@ Try different values to see the full LED progression:
 | Command | LEDs lit | Effect |
 |---|---|---|
 | `RPM TEST 1000` | 1 | Green |
-| `RPM TEST 3000` | 1–3 | Green |
-| `RPM TEST 5000` | 1–5 | Green through orange |
+| `RPM TEST 3000` | 1-3 | Green |
+| `RPM TEST 5000` | 1-5 | Green through orange |
 | `RPM TEST 6000` | All 6 | Flashing red shift alert |
 
 > [!NOTE]
@@ -379,13 +379,13 @@ Before connecting to the motorcycle, verify the following by physical inspection
 3. ☐ **CRX → GPIO16**: The transceiver `CRX`/`RXD` pin connects to ESP32 GPIO16.
 4. ☐ **Transceiver VCC**: Connects to ESP32 3V3 - not 5V or any motorcycle power.
 5. ☐ **Common ground**: ESP32 GND, transceiver GND, and motorcycle signal GND are all connected.
-6. ☐ **Termination resistor verified**: You have measured CANH–CANL resistance on the unpowered breakout. If it reads ~120 Ω, you have desoldered R2. If open circuit, no action needed.
+6. ☐ **Termination resistor verified**: You have measured CANH-CANL resistance on the unpowered breakout. If it reads ~120 Ω, you have desoldered R2. If open circuit, no action needed.
 
 ### Finding the motorcycle's CAN connector
 
 The 2025 Bajaj Pulsar NS125 ABS provides a diagnostic connector. Use a multimeter in DC voltage mode (key ON, engine OFF) to identify the CAN-H and CAN-L wires:
-- **CAN-H**: Approximately 2.5–3.0V measured to chassis ground.
-- **CAN-L**: Approximately 2.0–2.5V measured to chassis ground.
+- **CAN-H**: Approximately 2.5-3.0V measured to chassis ground.
+- **CAN-L**: Approximately 2.0-2.5V measured to chassis ground.
 
 > [!IMPORTANT]
 > Do not rely solely on wire color to identify CAN lines. Colors vary between production batches and harness revisions. Always verify with a multimeter. Do not assume that the pinout shown for one model applies to another model or year.
@@ -434,7 +434,7 @@ Captures: instrument cluster wake-up messages, sensor baseline values, and any E
 
 **Stage 2 - Warm engine idle**
 
-Start the motorcycle engine and let it settle at idle (~1,300–1,500 RPM). Then type:
+Start the motorcycle engine and let it settle at idle (~1,300-1,500 RPM). Then type:
 
 ```text
 STAGE 2
@@ -488,7 +488,7 @@ Every received CAN frame is saved to LittleFS flash (a filesystem stored in the 
 
 **Recordings survive power loss.** When you disconnect the ESP32 from the motorcycle and reconnect via USB, the firmware automatically detects and preserves the previous session. It will not start overwriting until you explicitly clear storage with `CLEAR YES`.
 
-**Storage capacity:** Up to approximately 50,000 frames (~1 MB). At 150 frames/second, this is roughly 5–6 minutes of continuous capture.
+**Storage capacity:** Up to approximately 50,000 frames (~1 MB). At 150 frames/second, this is roughly 5-6 minutes of continuous capture.
 
 ---
 
@@ -631,14 +631,14 @@ Provisional multiplier: 40.0
 Estimated RPM: 38 × 40.0 = 1520
 ```
 
-The multiplier was chosen because it places warm idle readings (raw ~35–40) in the range 1,400–1,600 RPM, consistent with the Bajaj owner manual's idle speed specification. However, the owner manual specification is a general guide, not a measurement from this specific motorcycle. The result remains a **candidate estimate**, not a verified engine speed reading.
+The multiplier was chosen because it places warm idle readings (raw ~35-40) in the range 1,400-1,600 RPM, consistent with the Bajaj owner manual's idle speed specification. However, the owner manual specification is a general guide, not a measurement from this specific motorcycle. The result remains a **candidate estimate**, not a verified engine speed reading.
 
 ### Observed behavior in real capture data
 
 | Condition | CAN ID `0x301` data[0] raw value |
 |---|---|
 | Stage 1 - Ignition ON, engine OFF | Constant 0 |
-| Stage 2 - Warm idle | Settles to 35–40 (median ~37) after transient |
+| Stage 2 - Warm idle | Settles to 35-40 (median ~37) after transient |
 | Stage 3 - Gentle throttle sweeps | Rises smoothly to ~240, falls back to idle, then 0 |
 
 The range (0 to 240) and the smooth, continuous response to throttle changes are consistent with an engine speed signal. However, until the formula is validated against an independent instrument, the values must be treated as provisional.
@@ -678,7 +678,7 @@ Before the shift-light LEDs can respond to real engine speed, the RPM conversion
 3. Record the pair: e.g. `(raw=37, ref_rpm=1450)`.
 
 **Sample point 2 - Moderate steady hold:**
-1. With the motorcycle stationary in neutral, hold the throttle steady at approximately 3,000–4,000 RPM.
+1. With the motorcycle stationary in neutral, hold the throttle steady at approximately 3,000-4,000 RPM.
 2. Wait for the reading to stabilize (a few seconds).
 3. Record the pair simultaneously: e.g. `(raw=75, ref_rpm=3050)`.
 
@@ -713,8 +713,8 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 | `RPM MONITOR` | Print one instantaneous candidate telemetry line |
 | `RPM MONITOR ON` | Enable 10 Hz live candidate stream |
 | `RPM MONITOR OFF` | Disable live candidate stream |
-| `RPM MULTIPLIER <value>` | Update provisional multiplier (range 0.01–1000.0) |
-| `RPM TEST <value>` | Bench-test LEDs with simulated RPM for 10 seconds (0–20000) |
+| `RPM MULTIPLIER <value>` | Update provisional multiplier (range 0.01-1000.0) |
+| `RPM TEST <value>` | Bench-test LEDs with simulated RPM for 10 seconds (0-20000) |
 | `RPM TEST OFF` | Immediately end shift-light bench test |
 | `STAGE 1` | Set recording stage to 1 - Key ON, Engine OFF |
 | `STAGE 2` | Set recording stage to 2 - Engine Idling |
@@ -755,9 +755,9 @@ Edit `PulseShift/UserConfig.h` before uploading to customize the firmware for yo
 
 | Setting | Default | Description |
 |---|---|---|
-| `PULSESHIFT_LED_DATA_GPIO` | `27` | ESP32 GPIO connected to LED DIN via 330–470 Ω resistor |
-| `PULSESHIFT_LED_COUNT` | `6` | Number of addressable pixels (1–32) |
-| `PULSESHIFT_LED_BRIGHTNESS` | `255` | Master brightness (0–255) |
+| `PULSESHIFT_LED_DATA_GPIO` | `27` | ESP32 GPIO connected to LED DIN via 330-470 Ω resistor |
+| `PULSESHIFT_LED_COUNT` | `6` | Number of addressable pixels (1-32) |
+| `PULSESHIFT_LED_BRIGHTNESS` | `255` | Master brightness (0-255) |
 | `PULSESHIFT_SHIFT_LIGHT_STYLE` | `CLASSIC` | `CLASSIC`, `RACING`, `MINIMAL`, `CUSTOM` |
 
 ### CAN hardware settings
@@ -821,7 +821,7 @@ If OLED is enabled without the hardware, the firmware continues normally and pri
 | RPM always zero | No 0x301 frames | Run `STREAM ON` and check whether 0x301 appears |
 | RPM estimate stale | Signal freshness timeout (250 ms) | Verify motorcycle engine is running and CAN is active |
 | LED strip not lighting | 5V power disconnected | Check LED strip +5V supply |
-| LED strip flickering | Data signal too weak | Add or verify 330–470 Ω series resistor on data line |
+| LED strip flickering | Data signal too weak | Add or verify 330-470 Ω series resistor on data line |
 | LittleFS mount failed | Unformatted flash | Type `CLEAR YES` to format for first use |
 | Preserved capture at boot | Prior session detected | Type `DUMP` to export before clearing |
 | Storage full | 1 MB quota reached | Type `DUMP` to export, then `CLEAR YES` to wipe |
@@ -918,7 +918,7 @@ The host-side C++ test suite (run on Ubuntu in CI) validates:
 2. **CTX connects directly to ESP32 3V3** (no resistor). Do not add a resistor between CTX and 3V3.
 3. **Never connect motorcycle 12V directly to the ESP32.** Use a regulated DC-DC converter.
 4. **Never connect any external 5V or 12V to the ESP32 3V3 pin.**
-5. **Measure the CANH–CANL termination resistance** before connecting to the motorcycle. Desolder R2 on the breakout only if approximately 120 Ω is measured.
+5. **Measure the CANH-CANL termination resistance** before connecting to the motorcycle. Desolder R2 on the breakout only if approximately 120 Ω is measured.
 6. **Use a laptop on internal battery** when capturing data with USB connected to the motorcycle. AC-earthed PCs create dangerous ground loops.
 7. **Power-on order**: External 5V LED supply first, then ESP32 USB. Power-off order: ESP32 USB first, then external supply.
 
