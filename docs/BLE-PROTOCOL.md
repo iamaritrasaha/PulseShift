@@ -1,42 +1,43 @@
 # PulseShift BLE Protocol Specification (v1 & v2)
 
-**Document Version:** 2.1.0  
-**Target Hardware:** ESP32 DevKit V1 (ESP32-D0WD-V3)  
-**Companion App:** PulseShift Android App (`D:\Development\PulseShift\android`)  
-**Firmware Library:** NimBLE-Arduino 2.3.8  
+**Document Version:** 2.2.0
+**Target Hardware:** ESP32 DevKit V1 (ESP32-D0WD-V3)
+**Companion App:** PulseShift Android App (`D:\Development\PulseShift\android`)
+**Firmware Library:** NimBLE-Arduino 2.3.8
 **Arduino-ESP32 Core:** 3.3.12 (ESP-IDF 5.3+)
 
 ---
 
 ## 1. Overview and Architecture
 
-PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication between the PulseShift ESP32 motorcycle firmware and the companion Android smartphone application.
+PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication between the PulseShift ESP32 motorcycle firmware and the companion Android smartphone application. The Android app is the complete command interface: every normal configuration and diagnostic operation is executable over BLE, and the firmware runs fully standalone without USB, serial or a PC.
 
 ### Key Tenets
-1. **Unidirectional CAN Safety:** The ESP32 is a passive, receive-only automotive monitor (SN65HVD230 CTX tied to 3V3, GPIO17 air-gapped, listen-only TWAI mode). BLE configuration changes modify only local LED rendering, RPM thresholds, shift alerts, animations, and candidate monitoring parameters. BLE **never** injects frames into the vehicle CAN bus or executes destructive storage operations.
-2. **Fixed 20-Byte Wire MTU:** Every characteristic command, response, and telemetry notification is constrained to exactly 20 bytes. No packet exceeds the universal BLE 4.0 ATT MTU limit (23 bytes total - 3 bytes ATT header = 20 bytes payload). No MTU renegotiation or L2CAP segmentation is required.
+1. **Unidirectional CAN Safety:** The ESP32 is a passive, receive-only automotive monitor (SN65HVD230 CTX tied to 3V3, GPIO17 air-gapped, listen-only TWAI mode with a zero-length TX queue). BLE configuration changes modify only local LED rendering, RPM thresholds, shift alerts, animations, and candidate monitoring parameters. BLE **never** injects frames into the vehicle CAN bus, and the firmware contains no CAN transmit API at all.
+2. **Fixed 20-Byte Wire MTU:** Every characteristic command, response, and telemetry notification is constrained to exactly 20 bytes. No MTU renegotiation or L2CAP segmentation is required; large payloads are reassembled at the application layer.
 3. **Little-Endian Architecture:** All multi-byte integers (`uint16_t`, `uint32_t`, `float`) are serialized in standard IEEE 754 little-endian byte ordering.
-4. **Resilient and Decoupled:** The ESP32 firmware functions autonomously without an active BLE connection. Telemetry notifications are sent only to subscribed GATT clients. Disconnections automatically re-arm advertising without interrupting CAN reception.
+4. **Resilient and Decoupled:** The ESP32 firmware functions autonomously without an active BLE connection. Telemetry notifications are sent only to subscribed GATT clients. Disconnections automatically re-arm advertising without interrupting CAN reception or LED rendering.
 5. **NVS Persistence and Staged Transactions:** Changes can be applied immediately, staged across atomic multi-parameter transactions, and saved to non-volatile storage (NVS) using CRC32 checksums.
-6. **Defensible Cryptographic Owner Security:** Physical presence proof (60-second authorization window triggered by the physical BOOT button on the ESP32) is mandatory for initial owner enrollment. Once enrolled, the phone authenticates via cryptographic challenge-response (SHA-256) without requiring physical button presses for ordinary configuration adjustments. Arbitrary tokens are strictly rejected.
+6. **Defensible Cryptographic Owner Security:** Physical presence proof (60-second authorization window triggered by the physical BOOT button on the ESP32) is mandatory for owner enrollment and credential recovery. Once enrolled, the phone authenticates via cryptographic challenge-response (SHA-256) without requiring physical button presses for ordinary configuration adjustments.
+7. **Acknowledged Execution:** A Bluetooth write returning success is NOT proof of execution. Every v2 command carries a client `sequence` echoed in the result packet together with a status code and result flags; the app requires request/response correlation plus snapshot readback for configuration changes.
 
 ---
 
 ## 2. GATT Service and Characteristics
 
-**Advertised Device Name:** `PulseShift`  
+**Advertised Device Name:** `PulseShift`
 **Primary Service UUID:** `fe12d210-3d4f-4b9d-a21c-92782ecb4000`
 
 | Purpose | Full UUID | Properties | Frequency / Access | Description |
 |---|---|---|---|---|
 | **RPM Telemetry** | `fe12d211-3d4f-4b9d-a21c-92782ecb4000` | `READ`, `NOTIFY` | 10 Hz (100 ms) | Live engine speed, raw candidate byte, age, CAN frame count |
 | **System Health** | `fe12d212-3d4f-4b9d-a21c-92782ecb4000` | `READ`, `NOTIFY` | 1 Hz (1000 ms) | CAN bus health, missed/overrun counters, storage status |
-| **Diagnostic Logs** | `fe12d213-3d4f-4b9d-a21c-92782ecb4000` | `NOTIFY` | Event / Paced (20 ms) | Live diagnostic events and paginated historical logs |
-| **Control Requests (v1)**| `fe12d214-3d4f-4b9d-a21c-92782ecb4000` | `WRITE` | On-demand | Diagnostic queries (e.g. GET_LOG_PAGE, CANCEL_LOGS) |
-| **Config Command (v2)** | `fe12d215-3d4f-4b9d-a21c-92782ecb4000` | `WRITE` | On-demand | Configuration write/read requests and transaction controls |
+| **Diagnostic Logs** | `fe12d213-3d4f-4b9d-a21c-92782ecb4000` | `NOTIFY` | Event / Paced (20 ms) | Live diagnostic events, paginated historical logs, CAN capture pages |
+| **Control Requests (v1)**| `fe12d214-3d4f-4b9d-a21c-92782ecb4000` | `WRITE` | On-demand | GET_LOG_PAGE / CANCEL_LOGS / GET_CAPTURE_PAGE / CANCEL_CAPTURE |
+| **Config Command (v2)** | `fe12d215-3d4f-4b9d-a21c-92782ecb4000` | `WRITE` | On-demand | Configuration write/read requests, device control, transaction controls |
 | **Config Result (v2)** | `fe12d216-3d4f-4b9d-a21c-92782ecb4000` | `READ`, `NOTIFY` | Immediate response | Status code, active revision counter, and result flags |
-| **Config Snapshot (v2)**| `fe12d217-3d4f-4b9d-a21c-92782ecb4000` | `NOTIFY` | Paced (20 ms stream) | Multi-chunk serialized configuration TLV blob with CRC32 |
-| **Capabilities (v2)** | `fe12d218-3d4f-4b9d-a21c-92782ecb4000` | `READ` | Static / On revision | Hardware capabilities, supported effects, feature mask |
+| **Config Snapshot (v2)**| `fe12d217-3d4f-4b9d-a21c-92782ecb4000` | `NOTIFY` | Paced (20 ms stream) | Multi-chunk serialized configuration TLV blob (schema 3) or diagnostics TLV blob (schema 1) with CRC32 |
+| **Capabilities (v2)** | `fe12d218-3d4f-4b9d-a21c-92782ecb4000` | `READ` | Static / On revision | Hardware capabilities, feature mask, firmware version |
 
 ---
 
@@ -50,22 +51,24 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | 1 | `statusFlags` | `uint8_t` | Bitmask representing live subsystem states (see Section 3.1.1) |
 | 2..3 | `sequenceNumber` | `uint16_t` | Incremental rolling packet sequence counter (0..65535) |
 | 4..7 | `uptimeMs` | `uint32_t` | ESP32 monotonic uptime in milliseconds (`millis()`) |
-| 8..9 | `provisionalRpm` | `uint16_t` | Engine RPM calculated as `candidateRawByte * multiplier`. `65535` = unavailable/stale |
-| 10 | `candidateRawByte` | `uint8_t` | Raw byte value extracted from candidate CAN ID |
-| 11 | `captureStage` | `uint8_t` | Current field stage: `0`=Unset, `1`=KeyOn, `2`=Idling, `3`=GentleRPM |
+| 8..9 | `provisionalRpm` | `uint16_t` | Estimated RPM from the unified decoder. `65535` = unavailable/stale |
+| 10 | `candidateRawByte` | `uint8_t` | Low byte of the raw candidate value (valid only if fresh flag set) |
+| 11 | `captureStage` | `uint8_t` | Current field stage: `0`=Standby, `1`=KeyOn, `2`=Idling, `3`=GentleRPM |
 | 12..15 | `canFramesRx` | `uint32_t` | Cumulative count of total CAN frames received by TWAI driver |
 | 16..17 | `candidateAgeMs` | `uint16_t` | Milliseconds elapsed since last candidate frame. `65535` = never received |
 | 18..19 | `reserved` | `uint16_t` | Reserved for alignment; always zero |
 
 #### 3.1.1 Status Flags Bitmask (`statusFlags`)
-- `Bit 0` (`0x01`): `BLE_RPM_FLAG_CANDIDATE_FRESH` (Candidate frame received within timeout)
-- `Bit 1` (`0x02`): `BLE_RPM_FLAG_CALIBRATION_VERIFIED` (Calibration verified by rider/developer)
-- `Bit 2` (`0x04`): `BLE_RPM_FLAG_RPM_MAPPED` (Candidate mapped to production shift lights)
-- `Bit 3` (`0x08`): `BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED` (Shift lights actively driving LEDs)
+- `Bit 0` (`0x01`): `BLE_RPM_FLAG_CANDIDATE_FRESH` (Candidate frame received within the freshness timeout, default 250 ms)
+- `Bit 1` (`0x02`): `BLE_RPM_FLAG_CALIBRATION_VERIFIED` (Verification record bound to the current decoder fingerprint)
+- `Bit 2` (`0x04`): `BLE_RPM_FLAG_RPM_MAPPED` (The unified candidate decoder is the production RPM mapping; always set on 2.2.0+)
+- `Bit 3` (`0x08`): `BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED` (Verified calibration may drive the six-stage RPM bar)
 - `Bit 4` (`0x10`): `BLE_RPM_FLAG_CAN_HEALTHY` (TWAI driver in running state)
 - `Bit 5` (`0x20`): `BLE_RPM_FLAG_TRAFFIC_ACTIVE` (CAN frames received in last 1000 ms)
 - `Bit 6` (`0x40`): `BLE_RPM_FLAG_RECORDING_ACTIVE` (Flash binary capture running)
 - `Bit 7` (`0x80`): `BLE_RPM_FLAG_CAPTURE_PRESERVED` (Prior flash recording preserved)
+
+When the candidate goes stale, `provisionalRpm` reports `65535` and LEDs blank: the device never continues rendering the last received RPM indefinitely.
 
 ---
 
@@ -74,14 +77,12 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | Byte Offset | Field Name | Data Type | Description |
 |---|---|---|---|
 | 0 | `version` | `uint8_t` | Protocol version = `1` |
-| 1 | `healthFlags` | `uint8_t` | System health bitmask (Bit 0=CanInit, Bit 1=StorageMounted, Bit 2=StorageFull, Bit 3=Preserved, Bit 4=Recording, Bit 5=BusError) |
-| 2..3 | `freeHeapKb` | `uint16_t` | Free heap memory in KiB |
-| 4..7 | `uptimeSeconds` | `uint32_t` | Controller uptime in integer seconds |
-| 8..11 | `canRxFrames` | `uint32_t` | Total CAN frames received since boot |
-| 12..13 | `canRxMissed` | `uint16_t` | TWAI RX buffer missed frames |
-| 14..15 | `canRxFifoOverruns` | `uint16_t` | Software queue overruns |
-| 16..17 | `canBusErrors` | `uint16_t` | TWAI bus error count |
-| 18..19 | `recordedFramesSession`| `uint16_t` | CAN frames saved to storage in current session |
+| 1 | `healthFlags` | `uint8_t` | Bit 0: Storage mounted (`0x01`), Bit 1: Storage full (`0x02`), Bit 2: RX degraded (`0x04`), Bit 3: BLE client connected (`0x08`) |
+| 2..3 | `sequenceNumber` | `uint16_t` | Incremental rolling packet sequence counter |
+| 4..7 | `missedFrames` | `uint32_t` | TWAI driver-missed CAN frames in current session |
+| 8..11 | `overrunFrames` | `uint32_t` | Hardware FIFO overruns in current session |
+| 12..15 | `busErrors` | `uint32_t` | TWAI bus error counter |
+| 16..19 | `recordedFrames` | `uint32_t` | CAN frames recorded to flash in current session |
 
 ---
 
@@ -90,11 +91,30 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | Byte Offset | Field Name | Data Type | Description |
 |---|---|---|---|
 | 0 | `version` | `uint8_t` | Protocol version = `1` |
-| 1 | `flags` | `uint8_t` | Bit 0: `FIRST_CHUNK` (`0x01`), Bit 1: `FINAL_CHUNK` (`0x02`), Bit 2: `END_OF_PAGE` (`0x04`) |
+| 1 | `flags` | `uint8_t` | Bit 0: `FIRST_CHUNK` (`0x01`), Bit 1: `FINAL_CHUNK` (`0x02`), Bit 2: `END_OF_PAGE` (`0x04`), Bit 3: `ERROR` (`0x08`), Bit 4: `CAPTURE_LINE` (`0x10`) |
 | 2..3 | `messageId` | `uint16_t` | Monotonic log message identifier |
 | 4 | `chunkIndex` | `uint8_t` | 0-based chunk index within message |
 | 5 | `payloadLength` | `uint8_t` | Number of valid payload bytes in `payload` (1..14) |
 | 6..19 | `payload[14]` | `uint8_t[14]` | Raw ASCII log text chunk, or End-of-Page metadata |
+
+For End-of-Page packets: `payloadLength = 5`, `payload[0..3]` = next byte offset (diagnostic logs) or next record index (capture pages) as `uint32_t` LE, `payload[4]` = finished flag (`1` = no more data).
+
+Capture pages stream CSV-like lines flagged with `CAPTURE_LINE`:
+```text
+CAP,<timestampMs>,<stage>,<idHex>,<ext>,<dlc>,<dataHex>
+```
+These lines are reassembled as multi-chunk messages and routed to the capture flow (never mixed with diagnostic messages).
+
+---
+
+### 3.4 Control Requests (`0xd214`, WRITE)
+
+| Opcode | Name | Frame | Description |
+|---|---|---|---|
+| `0x10` | `GET_LOG_PAGE` | `[0x01, 0x10, offset: u32 LE]` (6 bytes) | Stream one 20-line historical diagnostic log page from `offset` |
+| `0x11` | `CANCEL_LOGS` | `[0x01, 0x11]` (2 bytes) | Cancel the diagnostic log page transfer |
+| `0x12` | `GET_CAPTURE_PAGE` | `[0x01, 0x12, startRecord: u32 LE]` (6 bytes) | Stream one bounded page (12 records) of the recorded CAN capture from `startRecord`. Reading never mutates the capture file |
+| `0x13` | `CANCEL_CAPTURE` | `[0x01, 0x13]` (2 bytes) | Cancel the capture page transfer |
 
 ---
 
@@ -106,23 +126,31 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 |---|---|---|---|
 | 0 | `version` | `uint8_t` | Protocol version = `2` |
 | 1 | `physicalLedCount`| `uint8_t` | Physical LED count = `6` |
-| 2..5 | `featureMask` | `uint32_t` | Feature bitmask = `0x03FF` (1023, all 10 features supported) |
+| 2..5 | `featureMask` | `uint32_t` | Feature bitmask (see below; firmware 2.2.0 = `0x7FFF`) |
 | 6..9 | `currentRevision` | `uint32_t` | Monotonic active configuration revision counter |
 | 10 | `presetCapacity` | `uint8_t` | Hardware preset slots (`0` = smartphone-managed presets) |
 | 11 | `securityMode` | `uint8_t` | Security mode: `3` = Hybrid (Physical BOOT window presence OR Challenge-Response) |
-| 12..19 | `reserved[8]` | `uint8_t[8]` | Reserved for future expansion; all zeros |
+| 12 | `firmwareMajor` | `uint8_t` | Firmware version major = `2` |
+| 13 | `firmwareMinor` | `uint8_t` | Firmware version minor = `2` |
+| 14 | `firmwarePatch` | `uint8_t` | Firmware version patch = `0` |
+| 15..19 | `reserved[5]` | `uint8_t[5]` | Reserved for future expansion; all zeros |
 
 #### Feature Mask Bits (`featureMask`)
-- `Bit 0` (`0x0001`): `FEATURE_PERSISTENT_NVS`
-- `Bit 1` (`0x0002`): `FEATURE_STAGED_TRANSACTIONS`
-- `Bit 2` (`0x0004`): `FEATURE_CALIBRATION_SAFETY`
-- `Bit 3` (`0x0008`): `FEATURE_PHYSICAL_AUTH`
-- `Bit 4` (`0x0010`): `FEATURE_CUSTOM_ANIMATIONS`
-- `Bit 5` (`0x0020`): `FEATURE_SHIFT_WARNING`
-- `Bit 6` (`0x0040`): `FEATURE_REVERSIBLE_DIRECTION`
-- `Bit 7` (`0x0080`): `FEATURE_INDIVIDUAL_LEDS`
-- `Bit 8` (`0x0100`): `FEATURE_HISTORICAL_LOGS`
-- `Bit 9` (`0x0200`): `FEATURE_CAN_PASSIVE_LISTEN`
+- `Bit 0` (`0x0001`): `BLE_FEAT_INDIVIDUAL_RGB`
+- `Bit 1` (`0x0002`): `BLE_FEAT_EFFECTS`
+- `Bit 2` (`0x0004`): `BLE_FEAT_STARTUP_ANIM`
+- `Bit 3` (`0x0008`): `BLE_FEAT_RPM_THRESHOLDS`
+- `Bit 4` (`0x0010`): `BLE_FEAT_SHIFT_WARNING`
+- `Bit 5` (`0x0020`): `BLE_FEAT_RPM_MULTIPLIER`
+- `Bit 6` (`0x0040`): `BLE_FEAT_CANDIDATE_SOURCE`
+- `Bit 7` (`0x0080`): `BLE_FEAT_PHONE_PRESETS`
+- `Bit 8` (`0x0100`): `BLE_FEAT_NVS_PERSISTENCE`
+- `Bit 9` (`0x0200`): `BLE_FEAT_AUTH_WRITES`
+- `Bit 10` (`0x0400`): `BLE_FEAT_DECODER_EXT` (width/endianness/offset/clamp)
+- `Bit 11` (`0x0800`): `BLE_FEAT_HYSTERESIS`
+- `Bit 12` (`0x1000`): `BLE_FEAT_CAL_WORKFLOW`
+- `Bit 13` (`0x2000`): `BLE_FEAT_DIAGNOSTICS_TLV`
+- `Bit 14` (`0x4000`): `BLE_FEAT_CAPTURE_EXPORT`
 
 ---
 
@@ -137,6 +165,8 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | 5 | `flags` | `uint8_t` | Bit 0: `IS_STAGED` (1 = stage in active transaction, 0 = apply live) |
 | 6..19 | `payload[14]` | `uint8_t[14]` | Command arguments |
 
+Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed commands are counted and dropped rather than corrupting the queue.
+
 ---
 
 ### 4.3 Configuration Result Packet (`0xd216`, READ/NOTIFY, 20 Bytes)
@@ -150,36 +180,52 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | 5 | `resultFlags` | `uint8_t` | Result flags (Bit 0=Persisted, Bit 1=Staged, Bit 2=Applied, Bit 3=AuthRequired) |
 | 6..9 | `activeRevision` | `uint32_t` | Active configuration revision after command execution |
 | 10 | `payloadLength` | `uint8_t` | Number of response bytes in `payload` (0..9) |
-| 11..19 | `payload[9]` | `uint8_t[9]` | Optional response data (e.g. 4-byte challenge nonce) |
+| 11..19 | `payload[9]` | `uint8_t[9]` | Optional response data (challenge nonce, calibration fit, statuses) |
 
 ---
 
 ### 4.4 Command Opcodes
 
+**Authorization:** read-only queries (`0x01`, `0x02`, `0x43`, `0x46`, `0x50`) and the auth flow itself (`0x24`, `0x25`, `0x26`) are unauthenticated. Every other opcode requires a session bound to the current connection (challenge-response) or an open physical BOOT window.
+
 | Opcode | Name | Payload Arguments | Description |
 |---|---|---|---|
 | `0x01` | `GET_CAPABILITIES` | None | Updates Capabilities characteristic |
-| `0x02` | `GET_CONFIG` | None | Triggers complete snapshot streaming on `0xd217` |
+| `0x02` | `GET_SNAPSHOT` | None | Triggers complete config snapshot streaming on `0xd217` |
 | `0x10` | `SET_POWER` | `[power: u8 (0 or 1)]` | Master LED strip power switch |
 | `0x11` | `SET_BRIGHTNESS` | `[brightness: u8 (0..255)]` | Master LED brightness |
-| `0x12` | `SET_GLOBAL_COLOR`| `[R: u8, G: u8, B: u8]` | Set uniform color across all 6 LEDs |
-| `0x13` | `SET_LED_COLOR` | `[index: u8 (0..5), R, G, B]` | Set individual LED color |
+| `0x12` | `SET_GLOBAL_RGB`| `[R: u8, G: u8, B: u8]` | Set uniform color across all 6 LEDs |
+| `0x13` | `SET_LED_RGB` | `[index: u8 (0..5), R, G, B]` | Set individual LED color |
 | `0x14` | `SET_EFFECT` | `[effectId: u8 (0..4), speed: u8 (0..100)]` | 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=RPM_Bar |
-| `0x15` | `SET_STARTUP_ANIM` | `[animId: u8 (0..3), durationMs: u16 LE]` | 0=None, 1=Sweep, 2=Wave, 3=Pulse |
-| `0x16` | `SET_RPM_THRESHOLD`| `[index: u8 (0..5), rpm: u16 LE]` | Set threshold for LED index (must remain monotonic) |
+| `0x15` | `SET_STARTUP` | `[animId: u8 (0..3), durationMs: u16 LE]` | 0=None, 1=Sweep, 2=Wave, 3=Pulse |
+| `0x16` | `SET_LED_THRESHOLD`| `[index: u8 (0..5), rpm: u16 LE]` | Set threshold for LED index (must remain monotonic) |
 | `0x17` | `SET_SHIFT_WARNING`| `[warningRpm: u16 LE, patternId: u8]` | Pattern: 0=Flash (10 Hz), 1=Strobe (20 Hz), 2=Solid, 3=Off |
 | `0x18` | `SET_RPM_MULTIPLIER`| `[multX1000: u32 LE]` | Provisional multiplier (0.1..1000.0). **Invalidates calibration!** |
-| `0x19` | `SET_CAN_CANDIDATE` | `[canId: u32 LE, byteIdx: u8, ext: u8]` | Target CAN candidate source. **Invalidates calibration!** |
+| `0x19` | `SET_CANDIDATE_SOURCE` | `[canId: u32 LE, byteIdx: u8, ext: u8]` | Target CAN candidate source. **Invalidates calibration!** |
 | `0x1A` | `SET_LED_DIRECTION`| `[direction: u8 (0=Forward, 1=Reverse)]`| Shift light display direction |
-| `0x1B` | `SET_WARNING_COLOR`| `[R: u8, G: u8, B: u8]` | Warning color for over-rev alert |
+| `0x1B` | `SET_WARNING_RGB`| `[R: u8, G: u8, B: u8]` | Warning color for over-rev alert |
+| `0x1C` | `SET_RPM_HYSTERESIS` | `[hysteresisRpm: u16 LE (0..2000)]` | Falling-RPM dead band for bar/warning latching |
+| `0x1D` | `SET_RPM_DECODER_EXT` | `[width: u8 (1|2), endian: u8, offsetX1000: s32 LE, maxValid: u16 LE]` (9 bytes) | Byte width/order, RPM offset, validity clamp. **Invalidates calibration!** |
 | `0x20` | `SAVE_CONFIG` | None | Commit active configuration to flash NVS (`"ps_cfg"`) |
-| `0x21` | `RESTORE_DEFAULTS` | `[0xA5, 0x5A]` | Factory reset configuration and erase owner credentials |
-| `0x24` | `ENROLL_OWNER` | `[secret: u8[12]]` | One-time owner enrollment (requires open BOOT window) |
+| `0x21` | `RESTORE_DEFAULTS` | `[0xA5, 0x5A]` | Restore safe lighting/decoder defaults and save to NVS. **Owner credentials and captures are preserved.** |
+| `0x22` | `RELOAD_CONFIG` | None | Re-read the persisted NVS blob and apply it to the active state |
+| `0x24` | `ENROLL_OWNER` | `[secret: u8[12]]` | Owner enrollment or credential recovery (requires open BOOT window); safe re-enrollment overwrites the old credential |
 | `0x25` | `AUTHENTICATE` | `[proof: u8[8]]` | Authenticate connection session via SHA-256 proof |
 | `0x26` | `REQUEST_CHALLENGE`| None | Request 4-byte single-use cryptographic challenge nonce |
 | `0x30` | `BEGIN_TRANSACTION`| None | Start staged transaction (30s timeout) |
 | `0x31` | `COMMIT_TRANSACTION`| None | Validate all staged changes and apply atomically |
 | `0x32` | `ABORT_TRANSACTION` | None | Discard all staged changes without modifying active config |
+| `0x40` | `CAL_BEGIN` | None | Start the mobile-assisted calibration session (10 min timeout) |
+| `0x41` | `CAL_ABORT` | None | Abort the calibration session |
+| `0x42` | `CAL_CAPTURE_START` | None | Open the 2 s raw sampling window at the current operating point |
+| `0x43` | `CAL_CAPTURE_STATUS` | None | Query window. Result payload: `[samples: u16 LE, elapsedMs: u16 LE]` |
+| `0x44` | `CAL_POINT_COMMIT` | `[refRpm: u16 LE]` | Close the window, require >=10 stable samples (stddev <= 1.5 raw), store the point |
+| `0x45` | `CAL_COMPUTE` | `[apply: u8]` | Fit scale/offset over 3..6 points, validate evidence. Result payload on OK: `[multiplierX1000: s32 LE, offsetX1000: s32 LE, maxResidualRpm: u16 LE, pointsUsed: u8]`; on failure: reason string. Applying binds the verification record to the decoder fingerprint |
+| `0x46` | `CAL_STATUS` | None | Query session. Result payload: `[active: u8, points: u8, captureActive: u8, samples: u16 LE]` |
+| `0x50` | `GET_DIAGNOSTICS` | None | Stream the diagnostics TLV blob on `0xd217` (Section 4.8) |
+| `0x51` | `RESTART_DEVICE` | `[0xA5, 0x5A]` | Acknowledge, then soft-restart the ESP32 |
+| `0x52` | `CLEAR_DIAGNOSTICS` | `[0xA5, 0x5A]` | Clear the diagnostic event log ONLY (captures and credentials untouched) |
+| `0x53` | `SET_CAPTURE_RECORDING` | `[enable: u8]` | Start/stop flash recording; start is state-gated (damaged/preserved/full storage => `INVALID_STATE`) |
 
 ---
 
@@ -192,7 +238,7 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | `2` | `BLE_CFG_STATUS_UNSUPPORTED` | Opcode or parameter unsupported |
 | `3` | `BLE_CFG_STATUS_BUSY` | Controller busy or under rate-limiting lockout |
 | `4` | `BLE_CFG_STATUS_UNAUTHORIZED` | Authorization required; enrollment or authentication needed |
-| `5` | `BLE_CFG_STATUS_INVALID_STATE` | Staged outside tx, expired challenge, or un-enrolled challenge request |
+| `5` | `BLE_CFG_STATUS_INVALID_STATE` | Staged outside tx, expired challenge, storage not usable, or invalid session |
 | `6` | `BLE_CFG_STATUS_STORAGE_ERROR` | Flash NVS write failed |
 | `7` | `BLE_CFG_STATUS_VERSION_MISMATCH`| Protocol version mismatch |
 | `8` | `BLE_CFG_STATUS_VALIDATION_FAILED`| Configuration validation failed |
@@ -201,32 +247,40 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 
 ### 4.6 Configuration Snapshot (`0xd217`, NOTIFY, 20-Byte Chunks)
 
-Streamed with 20 ms pacing between chunks to prevent Bluetooth buffer congestion.
+Streamed with 20 ms pacing between chunks to prevent Bluetooth buffer congestion. The same characteristic carries diagnostics blobs (schema byte `1`) and configuration snapshots (schema byte `3`); clients dispatch on the reassembled schema byte.
 
 | Byte Offset | Field Name | Data Type | Description |
 |---|---|---|---|
 | 0 | `version` | `uint8_t` | Protocol version = `2` |
-| 1..2 | `snapshotId` | `uint16_t` | Snapshot identifier (little-endian) |
+| 1..2 | `snapshotId` | `uint16_t` | Snapshot identifier (little-endian; the request sequence) |
 | 3 | `chunkIndex` | `uint8_t` | 0-based chunk sequence index |
-| 4 | `chunkCount` | `uint8_t` | Total chunks comprising the snapshot |
+| 4 | `chunkCount` | `uint8_t` | Total chunks comprising the blob |
 | 5 | `payloadLength` | `uint8_t` | Number of valid bytes in this chunk (1..14) |
-| 6..19 | `payload[14]` | `uint8_t[14]` | Serialized snapshot TLV fragment |
+| 6..19 | `payload[14]` | `uint8_t[14]` | Serialized TLV fragment |
 
-#### Reassembled Snapshot Binary Layout
+#### Reassembled Configuration Snapshot Binary Layout (schema 3)
 ```text
-[Byte 0]     : schemaVersion (uint8_t = 2)
+[Byte 0]     : schemaVersion (uint8_t = 3)
 [Bytes 1..4] : activeRevision (uint32_t LE)
 [Bytes 5..N-4]: TLV Records (see Section 4.7)
 [Bytes N-3..N]: CRC32 (uint32_t LE, IEEE 802.3 over Bytes 0..N-4)
 ```
 
+#### Reassembled Diagnostics Blob Binary Layout (schema 1)
+```text
+[Byte 0]     : schemaVersion (uint8_t = 1)
+[Bytes 1..4] : revision (uint32_t LE, always 0)
+[Bytes 5..N-4]: Diagnostics TLV Records (see Section 4.8)
+[Bytes N-3..N]: CRC32 (uint32_t LE)
+```
+
 ---
 
-### 4.7 Snapshot TLV Format
+### 4.7 Configuration Snapshot TLVs (schema 3)
 
 Every TLV record is formatted as `[Tag: uint8_t, Length: uint8_t, Value: uint8_t[Length]]`.
 
-All 12 mandatory tags (`0x10` through `0x1B`) are emitted:
+All 12 mandatory tags (`0x10` through `0x1B`) are always emitted; schema-3 tags `0x1C`..`0x1E` accompany them. Unknown tags must be tolerated (skipped) by clients for forward compatibility.
 
 | Tag | Name | Length | Value Format | Description |
 |---|---|---|---|---|
@@ -237,17 +291,37 @@ All 12 mandatory tags (`0x10` through `0x1B`) are emitted:
 | `0x14` | Effect & Speed | 2 | `[effectId: u8, speed: u8]` | Effect (0..4), Speed (0..100) |
 | `0x15` | Startup Animation | 3 | `[animId: u8, durationMs: u16 LE]` | Startup anim (0..3), duration in ms |
 | `0x16` | RPM Thresholds | 12 | `[6 * u16 LE]` | Monotonic thresholds for LEDs 0..5 |
-| `0x17` | Shift Warning | 3 | `[warningRpm: u16 LE, patternId: u8]`| Warning threshold and pattern |
+| `0x17` | Shift Warning | 3 | `[warningRpm: u16 LE, patternId: u8]`| Warning threshold and pattern (0..3, 3 = Off) |
 | `0x18` | RPM Multiplier | 4 | `[multX1000: u32 LE]` | Multiplier * 1000 (e.g. 40.0 -> 40000) |
 | `0x19` | CAN Candidate | 6 | `[canId: u32 LE, byteIdx: u8, ext: u8]`| Target candidate CAN source |
 | `0x1A` | LED Direction | 1 | `[direction: u8]` | `0` = Forward (0->5), `1` = Reverse (5->0) |
 | `0x1B` | Warning Color | 3 | `[R, G, B]` | Alert over-rev flash color |
+| `0x1C` | Decoder Extension | 8 | `[width: u8, endian: u8, offsetX1000: s32 LE, maxValid: u16 LE]` | Byte width/order, RPM offset, validity clamp |
+| `0x1D` | Calibration Record | 11 | `[verified: u8, fingerprint: u32 LE, pointsUsed: u8, maxResidualRpm: u8, timestampMs: u32 LE]` | Bound verification record |
+| `0x1E` | Hysteresis | 2 | `[hysteresisRpm: u16 LE]` | Threshold dead band |
+
+---
+
+### 4.8 Diagnostics Blob TLVs (GET_DIAGNOSTICS, schema 1)
+
+| Tag | Name | Length | Value Format |
+|---|---|---|---|
+| `0x40` | Uptime | 4 | `uptimeMs: u32 LE` |
+| `0x41` | Firmware Version | 3 | `[major, minor, patch]` |
+| `0x42` | Reset Reason | 1 | `esp_reset_reason` of the last boot |
+| `0x43` | CAN Status | 26 | `[bitrate: u32, totalRx: u32, accepted: u32, missed: u32, overrun: u32, busErrors: u32, healthy: u8, traffic: u8]` |
+| `0x44` | RPM Decoder State | 34 | `[canId: u32, byteIndex: u8, byteWidth: u8, extended: u8, multX1000: s32, offsetX1000: s32, maxValid: u16, raw: u16, estimatedRpm: u16, fresh: u8, valid: u8, calVerified: u8, ageMs: u16, received: u32, rejected: u32]` |
+| `0x45` | Storage State | 29 | `[total: u32, used: u32, free: u32, mounted: u8, storageFull: u8, capturePreserved: u8, damaged: u8, recording: u8, records: u32, captureSize: u32, diagLogSize: u32]` |
+| `0x46` | BLE State | 5 | `[connected: u8, advertising: u8, securityMode: u8, ownerEnrolled: u8, sessionAuthorized: u8]` |
+| `0x47` | Capture Info | 9 | `[stage: u8, sessionId: u32, bootCount: u32]` |
+| `0x48` | Last Error | <= 96 | UTF-8 text of the last Error/Critical event this session (absent when none) |
+| `0x49` | Calibration State | 13 | `[sessionActive: u8, points: u8, captureActive: u8, samples: u16, calVerified: u8, pointsUsed: u8, maxResidualRpm: u8, fingerprint: u32]` |
 
 ---
 
 ## 5. Owner Enrollment and Challenge-Response Authentication
 
-The PulseShift hardware is a dedicated headless embedded unit without a screen or keyboard. To defend against unauthorized vehicle tuning or drive-by configuration tampering, PulseShift enforces defensible physical owner presence and cryptographic authentication:
+The PulseShift hardware is a dedicated headless embedded unit. To defend against unauthorized vehicle tuning or drive-by configuration tampering, PulseShift enforces physical owner presence and cryptographic authentication:
 
 ```text
 [Phone Application]                                        [PulseShift ESP32]
@@ -279,36 +353,37 @@ The PulseShift hardware is a dedicated headless embedded unit without a screen o
          |--------------------------------------------------------->|
 ```
 
-### 5.1 Owner Enrollment Flow
+### 5.1 Owner Enrollment Flow (and Credential Recovery)
 1. The user presses the physical **BOOT** button (GPIO0) on the ESP32.
 2. The controller opens a **60-second authorization window** and pulses the LED strip in cyan.
-3. The phone sends opcode `0x24` (`BLE_CFG_OP_ENROLL_OWNER`) containing a randomly generated 12-byte cryptographic secret.
-4. The ESP32 validates the open BOOT window, verifies the secret is non-trivial, and stores it in encrypted/dedicated NVS namespace `"ps_sec"`.
-5. The session is immediately marked authorized, allowing immediate configuration changes.
+3. The phone sends opcode `0x24` (`ENROLL_OWNER`) containing a randomly generated 12-byte cryptographic secret.
+4. The ESP32 validates the open BOOT window, verifies the secret is non-trivial, and stores it in a dedicated CRC-protected NVS namespace `"ps_sec"`.
+5. The session is immediately marked authorized, bound to this connection.
+6. **Credential recovery** is the same flow: pressing BOOT and re-enrolling overwrites the previous credential. Credential recovery and configuration reset are deliberately distinct operations.
 
 ### 5.2 Subsequent Authenticated Phone Sessions
-1. In future rides, the phone connects via BLE without pressing the BOOT button.
-2. The phone sends opcode `0x26` (`BLE_CFG_OP_REQUEST_CHALLENGE`).
-3. The ESP32 returns a 4-byte pseudo-random challenge nonce (`esp_random()`) with a 30-second time-to-live (TTL).
-4. The phone computes the 8-byte authentication proof:
-   $$\text{Proof} = \text{SHA-256}(\text{ownerSecret}[12] \mathbin{\Vert} \text{challenge}[4 \text{ LE}] \mathbin{\Vert} \text{sequence}[2 \text{ LE}])[\text{first 8 bytes}]$$
-5. The phone sends opcode `0x25` (`BLE_CFG_OP_AUTHENTICATE`) with the 8-byte proof.
-6. The ESP32 consumes the challenge immediately (preventing replay attacks), computes the matching SHA-256 proof, and verifies in constant time.
-7. Upon verification, the session is authorized for 5 minutes of continuous activity (refreshed on each command).
+1. In future rides, the phone connects via BLE without pressing the BOOT button and automatically performs the challenge-response exchange using its stored credential.
+2. The phone sends opcode `0x26` (`REQUEST_CHALLENGE`).
+3. The ESP32 returns a 4-byte pseudo-random challenge nonce (`esp_random()`) with a 30-second TTL.
+4. The phone computes the 8-byte authentication proof: `SHA-256(secret[12] || challenge[4 LE] || sequence[2 LE])[:8]`.
+5. The phone sends opcode `0x25` (`AUTHENTICATE`) with the 8-byte proof.
+6. The ESP32 consumes the challenge immediately (defeating replay), computes the matching proof, and verifies in constant time.
+7. Upon verification, the session is authorized for 5 minutes of activity (refreshed per command) and is bound to that specific connection handle: another concurrent connection cannot ride the session.
 
 ### 5.3 Negative Security Defenses
-- **Arbitrary Token Rejection:** Opcode `0x25` with arbitrary tokens is rejected outside the physical BOOT window (`BLE_CFG_STATUS_UNAUTHORIZED = 4`).
+- **Proof-Less Session Rejection:** Physical presence alone never grants a session; opcode `0x25` requires a valid proof (`BLE_CFG_STATUS_UNAUTHORIZED = 4`).
 - **Replay Attack Defense:** Every challenge is strictly single-use. Re-submitting the same proof without requesting a fresh challenge fails with `BLE_CFG_STATUS_INVALID_STATE = 5`.
 - **Challenge Expiration:** Challenges expire after 30 seconds (`BLE_CFG_STATUS_INVALID_STATE = 5`).
 - **Brute-Force Rate Limiting:** After 5 consecutive failed authentications, challenge requests are locked out for 3 seconds (`BLE_CFG_STATUS_BUSY = 3`).
-- **Disconnect Invalidation:** Client disconnection immediately terminates the authenticated session and invalidates pending challenges.
-- **Factory Reset Wiping:** Executing `RESTORE_DEFAULTS` (`0x21`) with magic bytes `[0xA5, 0x5A]` resets all parameters and erases the owner credential from `"ps_sec"`.
+- **Disconnect Invalidation:** Client disconnection immediately terminates the authenticated session, invalidates pending challenges and aborts staged transactions.
+- **Connection Binding:** Sessions are valid only for the authenticating connection handle (`isAuthorizedFor(connId)`).
+- **Configuration Reset vs Credentials:** `RESTORE_DEFAULTS` (`0x21`) resets lighting/decoder preferences but preserves owner credentials and stored captures. `CLEAR_DIAGNOSTICS` (`0x52`) clears only the event log.
 
 ---
 
 ## 6. Cross-Language Byte Test Vectors
 
-The following deterministic test vector is published to verify cross-language byte serialization between Python (`test_ble_config_v2.py`), Android Kotlin (`PulseShiftBleProtocolTest.kt`), and C++ ESP32 firmware:
+The following deterministic test vector is published to verify cross-language byte serialization between Python (`test_ble_config_v2.py`), Android Kotlin (`ProtocolV2CodecTest.kt`), and C++ ESP32 firmware:
 
 ### 6.1 Challenge-Response Vector
 ```text

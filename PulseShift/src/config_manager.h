@@ -224,7 +224,7 @@ class ConfigManager {
   void loadOwnerSecurity();
   // Shared NVS blob read path (schema-3 + schema-2 migration) used by
   // begin() and reloadFromNvs().
-  static bool loadConfigBlobLocked(PulseShiftConfig& out);
+  bool loadConfigBlobLocked(PulseShiftConfig& out);
   // Invalidate the verification record; if an RPM-driven effect is active,
   // revert it to a decorative effect so the config always stays valid.
   void invalidateCalibration(PulseShiftConfig& cfg);

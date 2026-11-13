@@ -34,8 +34,6 @@ The firmware targets the standard 30-pin DOIT ESP32 DevKit V1 board.
 | 3V3 | 3.3V Rail | Logic VCC & TXD Clamp | Breakout VCC (Pin 3) & Breakout CTX (Pin 1 / TXD) | Directly powers transceiver and clamps CTX recessive (NO resistor) |
 | VIN | 5V Rail | Power Input | Regulated 5V output from DC-DC converter | 5.0V input; do not exceed 5.5V |
 | GND | Ground | Common GND | Power GND, LED GND, Transceiver GND, Bike GND | All system grounds must be securely bonded |
-| D21 | GPIO21 | OLED SDA | Optional SSD1306 OLED SDA | 3.3V I2C data (disabled by default) |
-| D22 | GPIO22 | OLED SCL | Optional SSD1306 OLED SCL | 3.3V I2C clock (disabled by default) |
 
 ---
 

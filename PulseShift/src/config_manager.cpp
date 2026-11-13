@@ -2,6 +2,7 @@
 #include "config_manager.h"
 #include "rpm_candidate.h"
 #include <string.h>
+#include <stdio.h>
 #include <math.h>
 
 #if defined(ARDUINO)
