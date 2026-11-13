@@ -104,7 +104,7 @@ void ConfigManager::applySafeDefaults(PulseShiftConfig& cfg) {
   for (uint8_t i = 0; i < 6; ++i) {
     cfg.ledColors[i] = RgbColor{140, 43, 238};
   }
-  cfg.effect = 0; // Static
+  cfg.effect = 5; // Provisional RPM preview; explicitly UNVERIFIED and not a riding shift cue
   cfg.effectSpeed = 50;
   cfg.ledDirection = 0; // Normal
   cfg.startupAnimation = 1; // Sweep
@@ -151,7 +151,7 @@ uint32_t ConfigManager::computeCrc32(const uint8_t* data, size_t length) {
 
 bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
   if (cfg.schemaVersion != 3) return false;
-  if (cfg.effect > 4) return false;
+  if (cfg.effect > 5) return false; // 5 is the unverified, standalone RPM preview
   // Safety rule: RPM Bar (effect 4) requires a bound verification record with
   // enough operating points to be meaningful.
   if (cfg.effect == 4 &&
@@ -439,7 +439,7 @@ BleConfigStatusCode ConfigManager::setLedRgb(uint8_t index, RgbColor color, bool
 }
 
 BleConfigStatusCode ConfigManager::setEffect(uint8_t effectId, uint8_t speed, bool isStaged) {
-  if (effectId > 4 || speed > 100) return BLE_CFG_STATUS_INVALID_PARAM;
+  if (effectId > 5 || speed > 100) return BLE_CFG_STATUS_INVALID_PARAM;
   if (effectId == 4) {
     // RPM Bar is forbidden while calibration is unverified, regardless of the
     // target buffer (staged or live).
