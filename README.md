@@ -377,7 +377,7 @@ RPM TEST 4500
 **Expected result:** The firmware acknowledges the test and illuminates four LEDs (LEDs 1-4) in a progressive green-to-orange pattern. The Serial Monitor shows:
 
 ```text
-[TEST] 6-LED shift-light bench test active: 4500 RPM for 10s (Verified RPM mode remains gated; provisional CAN preview is separate)
+[TEST] 6-LED shift-light bench test active: 4500 RPM for 10s (Verified RPM mode requires calibration; provisional preview is separate)
 ```
 
 The test automatically ends after **10 seconds** and the LEDs return to their CAN capture status display. You can also end it immediately:
@@ -635,7 +635,7 @@ Multiplier       : 40.0
 Signal Fresh     : YES
 Last Update      : 42 ms ago
 Calibration      : UNVERIFIED
-LED Shift Mode   : DISABLED
+Verified LED Mode: CALIBRATION REQUIRED
 CAN TX           : SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)
 
 --- Candidate Diagnostics ---
