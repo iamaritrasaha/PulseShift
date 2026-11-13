@@ -392,7 +392,7 @@ private:
       if (parseUnsignedNumber(cmd + 9, 20000, val)) {
         ledController_.setTestRpm(static_cast<uint16_t>(val), true);
         rpmTestStartMs_ = millis();
-        Serial.printf("[TEST] 6-LED shift-light bench test active: %u RPM for 10s (Physical CAN shift lights remain DISABLED)\r\n", (unsigned)val);
+        Serial.printf("[TEST] 6-LED shift-light bench test active: %u RPM for 10s (Verified RPM mode requires calibration; provisional preview is separate)\r\n", (unsigned)val);
       } else {
         Serial.println("[ERROR] Test RPM must be a valid integer between 0 and 20000.");
       }
