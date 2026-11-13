@@ -13,6 +13,20 @@
 #include <string>
 #include <vector>
 
+// Minimal TWAI/GPIO stub definitions: this binary links can_transport.cpp but
+// never drives the transport, so the driver symbols only need to resolve.
+// test_transport.cpp supplies its own assertion-instrumented stubs for the
+// transport tests and is a separate binary.
+int gpio_reset_pin(gpio_num_t) { return ESP_OK; }
+int gpio_set_direction(gpio_num_t, int) { return ESP_OK; }
+int gpio_set_pull_mode(gpio_num_t, int) { return ESP_OK; }
+int twai_driver_install(const twai_general_config_t*, const twai_timing_config_t*, const twai_filter_config_t*) { return ESP_OK; }
+int twai_start() { return ESP_OK; }
+int twai_stop() { return ESP_OK; }
+int twai_read_alerts(uint32_t* alerts, uint32_t) { *alerts = 0; return ESP_OK; }
+int twai_get_status_info(twai_status_info_t* s) { s->state = TWAI_STATE_RUNNING; return ESP_OK; }
+int twai_receive(twai_message_t*, uint32_t) { return ESP_ERR_TIMEOUT; }
+
 #define CHECK(x) do {++checks;if(!(x)){std::fprintf(stderr,"BLE CMD FAIL %d: %s\n",__LINE__,#x);std::exit(1);}}while(0)
 static unsigned checks=0;
 
