@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <sdkconfig.h>
 #include <driver/gpio.h>
+#include <string.h>
 
 bool CanTransport::begin() {
   if (beginAttempted_) return healthy();

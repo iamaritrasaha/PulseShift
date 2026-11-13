@@ -3,6 +3,8 @@
 #include "config.h"
 #include <Arduino.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 void FrameLog::pump() {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
   while (count_ > 0) {
