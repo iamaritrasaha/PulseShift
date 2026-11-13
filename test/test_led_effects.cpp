@@ -301,6 +301,28 @@ static void bench_test_preview_is_explicit() {
   CHECK(countLit(e) == 4); // thresholds 1000..6000 -> 4500 lights 0..3
 }
 
+static void provisional_default_keeps_synthetic_bench_test() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 5;
+  cfg.calibrationVerified = false;
+  cfg.calFingerprint = 0;
+  cfg.calPointsUsed = 0;
+  LedFrameInput input;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+  // No CAN sample, but a user-issued bench test still works.
+  e.update(6000, cfg, LiveRpmSnapshot{}, input);
+  CHECK(e.activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(countLit(e) == 4);
+  input.testRpmActive = false;
+  e.update(6100, cfg, LiveRpmSnapshot{}, input);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(e));
+}
+
 static void master_power_off() {
   LedEffectEngine e;
   e.reset(0);
@@ -359,6 +381,7 @@ int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
   provisional_rpm_preview_tracks_throttle_without_calibration();
+  provisional_default_keeps_synthetic_bench_test();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
   rpm_bar_latches_and_hysteresis();
