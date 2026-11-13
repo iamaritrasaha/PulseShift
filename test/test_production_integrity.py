@@ -66,10 +66,12 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
                     self.assertNotIn(symbol, content,
                                      f"{f} must not reference OLED symbol {symbol}")
 
-        # CI must not build an OLED variant or install its libraries.
+        # CI must not build an OLED variant or install its libraries. (The
+        # removal-verification step itself mentions the symbols; only
+        # dependency-installation / variant commands are forbidden.)
         ci = self.read(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"))
-        self.assertNotIn("SSD1306", ci)
-        self.assertNotIn("Adafruit GFX", ci)
+        self.assertNotRegex(ci, r"lib install.*SSD1306")
+        self.assertNotRegex(ci, r"lib install.*(Adafruit GFX|BusIO)")
         self.assertNotIn("OLED enabled", ci)
 
     def test_simulation_and_mode_matrix_removed(self):
