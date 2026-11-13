@@ -167,6 +167,15 @@ public:
     // 5b. Service BLE GATT notifications, command queue and page streaming
     BleManager::instance().poll(now, candidateMonitor_, transport_, CanRecorder::instance());
 
+    // A terminal-style Android app can request the same 10-second LED bench
+    // test as Serial, but only through an authenticated BLE v2 command.
+    uint16_t requestedTestRpm = 0;
+    bool requestedTestActive = false;
+    if (BleManager::instance().takeBenchTestRequest(requestedTestRpm, requestedTestActive)) {
+      ledController_.setTestRpm(requestedTestRpm, requestedTestActive);
+      rpmTestStartMs_ = now;
+    }
+
     // 6. Refresh the unified LED controller from the authoritative RPM snapshot
     logger_.pump();
     const auto rpmSnap = candidateMonitor_.snapshot(now);
