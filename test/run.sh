@@ -38,6 +38,7 @@ for diagnostics in 0 1; do
       -Itest/stubs -IPulseShift -IPulseShift/src \
       PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
       PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp \
+      PulseShift/src/led_effects.cpp PulseShift/src/config_manager.cpp \
       PulseShift/src/dashboard.cpp PulseShift/src/frame_log.cpp \
       test/test_io.cpp -o "$BUILD_DIR/test_io_$diagnostics"
   "$BUILD_DIR/test_io_$diagnostics"
@@ -85,7 +86,8 @@ for mode in 1 4; do
         -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
         -Itest/stubs -IPulseShift -IPulseShift/src \
         PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
-        PulseShift/src/shift_light.cpp PulseShift/src/dashboard.cpp \
+        PulseShift/src/shift_light.cpp PulseShift/src/led_effects.cpp \
+        PulseShift/src/config_manager.cpp PulseShift/src/dashboard.cpp \
         test/test_dashboard_calibration.cpp \
         -Wl,--wrap=_Z22selectedVehicleProfilev \
         -o "$BUILD_DIR/test_dashboard-$mode-$diagnostics"

@@ -39,7 +39,7 @@ bool RpmCandidateMonitor::ingest(const CanFrame& frame, uint32_t nowMs) {
   // Reject invalid candidate frame envelopes:
   // Must match standard/extended expectation, not RTR, and DLC must be exactly 8 bytes
   // matching the Bajaj Pulsar NS125 broadcast specification.
-  const bool expectExtended = (candidateId_ > 0x7FFUL);
+  const bool expectExtended = isExtended_ || (candidateId_ > 0x7FFUL);
   if (frame.extended != expectExtended || frame.remote || frame.dlc != 8 || !validEnvelope(frame)) {
     ++rejectedCount_;
     return false;

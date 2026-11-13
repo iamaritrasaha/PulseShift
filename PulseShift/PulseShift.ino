@@ -50,6 +50,7 @@
 #include "src/serial_protocol.h"
 #include "src/rpm_candidate.h"
 #include "src/ble_manager.h"
+#include "src/config_manager.h"
 
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
 #include "src/simulated_ecu.h"
@@ -138,12 +139,23 @@ public:
 #endif
     }
 
+    // Initialize Persistent Configuration Manager
+    ConfigManager::instance().begin();
+    {
+      const auto& cfg = ConfigManager::instance().active();
+      candidateMonitor_.setCandidateSource(cfg.canCandidateId, cfg.candidateByteIndex, cfg.isExtendedFrame);
+      candidateMonitor_.setMultiplier(cfg.rpmMultiplier);
+    }
+
     // Initialize BLE GATT Server
     BleManager::instance().begin();
   }
 
   void tick() {
     const uint32_t now = millis();
+
+    // 0. Poll persistent configuration manager (auth window, staged transaction timeouts)
+    ConfigManager::instance().poll(now);
 
     // 1. Process physical BOOT button events
     handleButton(now);
@@ -370,6 +382,12 @@ private:
 
   void handleButton(uint32_t now) {
     const auto evt = button_.poll(now);
+    if (evt != ButtonHandler::Event::None) {
+      ConfigManager::instance().triggerAuthWindow(now);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+      Serial.println("[AUTH] Physical button pressed. Owner configuration window OPEN for 60s (cyan pulse).");
+#endif
+    }
     if (evt == ButtonHandler::Event::ShortPress) {
       CanRecorder::instance().nextStage();
       dashboard_.triggerButtonFeedback(now);
@@ -486,6 +504,39 @@ private:
       } else {
         Serial.println("[ERROR] Multiplier must be a valid positive number between 0.1 and 1000.0.");
       }
+    } else if (strcasecmp(cmd, "CONFIG STATUS") == 0) {
+      const auto& c = ConfigManager::instance().active();
+      Serial.println("=== PULSESHIFT CONFIGURATION (V2) ===");
+      Serial.printf("Revision: %lu | Power: %s | Master Brightness: %u\r\n",
+                    (unsigned long)c.activeRevision, c.isPowerOn ? "ON" : "OFF", c.brightness);
+      Serial.printf("Effect: %u | Speed: %u | Direction: %s\r\n",
+                    c.effect, c.effectSpeed, c.ledDirection ? "REVERSED" : "FORWARD");
+      Serial.printf("Global Color: R=%u G=%u B=%u\r\n", c.globalColor.r, c.globalColor.g, c.globalColor.b);
+      Serial.printf("Startup Anim: %u | Startup Duration: %u ms\r\n", c.startupAnimation, c.startupDurationMs);
+      Serial.printf("RPM Thresholds: [%u, %u, %u, %u, %u, %u]\r\n",
+                    c.rpmThresholds[0], c.rpmThresholds[1], c.rpmThresholds[2],
+                    c.rpmThresholds[3], c.rpmThresholds[4], c.rpmThresholds[5]);
+      Serial.printf("Shift Warning: Pattern=%u | Threshold=%u RPM | Color: R=%u G=%u B=%u\r\n",
+                    c.warningPatternId, c.warningRpm, c.warningColor.r, c.warningColor.g, c.warningColor.b);
+      Serial.printf("Candidate: ID=0x%lX (ext=%d) byte=%u | Multiplier=%.1f | Calibrated=%s\r\n",
+                    (unsigned long)c.canCandidateId, c.isExtendedFrame ? 1 : 0, c.candidateByteIndex,
+                    c.rpmMultiplier, c.calibrationVerified ? "YES" : "NO");
+      Serial.printf("Security Mode: %u | Auth Window: %s\r\n",
+                    ConfigManager::instance().securityMode(),
+                    ConfigManager::instance().isAuthWindowOpen(millis()) ? "OPEN (Active)" : "CLOSED");
+      Serial.printf("Transaction: %s\r\n",
+                    ConfigManager::instance().isStagedTransactionActive() ? "STAGED IN PROGRESS" : "IDLE");
+    } else if (strcasecmp(cmd, "CONFIG RESET") == 0) {
+      ConfigManager::instance().restoreDefaults(0xA5, 0x5A);
+      {
+        const auto& c = ConfigManager::instance().active();
+        candidateMonitor_.setCandidateSource(c.canCandidateId, c.candidateByteIndex, c.isExtendedFrame);
+        candidateMonitor_.setMultiplier(c.rpmMultiplier);
+      }
+      Serial.println("[CONFIG] Restored all configuration parameters to factory defaults and saved to NVS.");
+    } else if (strcasecmp(cmd, "AUTH") == 0 || strcasecmp(cmd, "AUTH ON") == 0) {
+      ConfigManager::instance().triggerAuthWindow(millis());
+      Serial.println("[AUTH] Owner configuration window OPEN for 60 seconds (cyan pulse).");
     } else if (strcmp(upper, "LOGS") == 0) {
       DiagLogger::instance().dumpToSerial();
     } else if (strcasecmp(cmd, "DUMP") == 0 || strcasecmp(cmd, "DUMP NEXT") == 0) {
@@ -590,6 +641,9 @@ private:
     Serial.println("  STATUS          : Comprehensive system status & intelligent troubleshooting");
     Serial.println("  LOGS            : Dump persistent diagnostic event log");
     Serial.println("  BLE STATUS      : Bluetooth Low Energy peripheral & connection status");
+    Serial.println("  CONFIG STATUS   : Display active BLE configuration, security & transaction state");
+    Serial.println("  CONFIG RESET    : Restore all configuration parameters to factory defaults");
+    Serial.println("  AUTH            : Open 60-second owner authorization window (cyan pulse)");
     Serial.println("  RPM STATUS      : Candidate 0x301 engine-speed monitor & calibration status");
     Serial.println("  RPM MONITOR ON  : Enable rate-limited (10 Hz) 0x301 candidate streaming");
     Serial.println("  RPM MONITOR OFF : Disable candidate streaming");

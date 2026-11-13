@@ -19,6 +19,12 @@
 #define PULSESHIFT_BLE_CHAR_LOGS_UUID         "fe12d213-3d4f-4b9d-a21c-92782ecb4000"
 #define PULSESHIFT_BLE_CHAR_CONTROL_UUID      "fe12d214-3d4f-4b9d-a21c-92782ecb4000"
 
+// Configuration V2 Characteristics (Protocol Version 2)
+#define PULSESHIFT_BLE_CHAR_CONFIG_CMD_UUID      "fe12d215-3d4f-4b9d-a21c-92782ecb4000"
+#define PULSESHIFT_BLE_CHAR_CONFIG_RESULT_UUID   "fe12d216-3d4f-4b9d-a21c-92782ecb4000"
+#define PULSESHIFT_BLE_CHAR_CONFIG_SNAPSHOT_UUID "fe12d217-3d4f-4b9d-a21c-92782ecb4000"
+#define PULSESHIFT_BLE_CHAR_CAPABILITIES_UUID    "fe12d218-3d4f-4b9d-a21c-92782ecb4000"
+
 // --- RPM Packet (UUID: ...d211) ---
 // Fixed 20-byte binary packet. Properties: READ, NOTIFY.
 // Rate: 5-10 Hz when connected and subscribed.
@@ -96,8 +102,141 @@ enum BleControlCommand : uint8_t {
   BLE_CTRL_CMD_CANCEL_LOGS  = 0x11  // [0x01, 0x11] (2 bytes)
 };
 
+// ============================================================================
+// PulseShift BLE Protocol v2 Definitions (Configuration & Control)
+// ============================================================================
+
+#define PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION 2
+
+// Configuration Opcodes
+enum BleConfigOpcode : uint8_t {
+  BLE_CFG_OP_GET_CAPABILITIES    = 0x01,
+  BLE_CFG_OP_GET_SNAPSHOT        = 0x02,
+  BLE_CFG_OP_SET_POWER           = 0x10,
+  BLE_CFG_OP_SET_BRIGHTNESS      = 0x11,
+  BLE_CFG_OP_SET_GLOBAL_RGB      = 0x12,
+  BLE_CFG_OP_SET_LED_RGB         = 0x13,
+  BLE_CFG_OP_SET_EFFECT          = 0x14,
+  BLE_CFG_OP_SET_STARTUP         = 0x15,
+  BLE_CFG_OP_SET_LED_THRESHOLD   = 0x16,
+  BLE_CFG_OP_SET_SHIFT_WARNING   = 0x17,
+  BLE_CFG_OP_SET_RPM_MULTIPLIER  = 0x18,
+  BLE_CFG_OP_SET_CANDIDATE_SOURCE= 0x19,
+  BLE_CFG_OP_SET_LED_DIRECTION   = 0x1A,
+  BLE_CFG_OP_SET_WARNING_RGB     = 0x1B,
+  BLE_CFG_OP_SAVE_CONFIG         = 0x20,
+  BLE_CFG_OP_RESTORE_DEFAULTS    = 0x21,
+  BLE_CFG_OP_AUTHENTICATE        = 0x25,
+  BLE_CFG_OP_BEGIN_TRANSACTION   = 0x30,
+  BLE_CFG_OP_COMMIT_TRANSACTION  = 0x31,
+  BLE_CFG_OP_ABORT_TRANSACTION   = 0x32
+};
+
+// Configuration Command Flags
+enum BleConfigCommandFlags : uint8_t {
+  BLE_CFG_FLAG_STAGED = 0x01 // Bit 0: Update applies to staged transaction copy
+};
+
+// Configuration Status Codes
+enum BleConfigStatusCode : uint8_t {
+  BLE_CFG_STATUS_OK                 = 0,
+  BLE_CFG_STATUS_INVALID_PARAM      = 1,
+  BLE_CFG_STATUS_UNSUPPORTED        = 2,
+  BLE_CFG_STATUS_BUSY               = 3,
+  BLE_CFG_STATUS_UNAUTHORIZED       = 4,
+  BLE_CFG_STATUS_INVALID_STATE      = 5,
+  BLE_CFG_STATUS_STORAGE_ERROR      = 6,
+  BLE_CFG_STATUS_VERSION_MISMATCH   = 7,
+  BLE_CFG_STATUS_VALIDATION_FAILED  = 8
+};
+
+// Configuration Result Flags
+enum BleConfigResultFlags : uint8_t {
+  BLE_CFG_RESULT_FLAG_PERSISTED     = 0x01, // Bit 0: Saved to persistent NVS storage
+  BLE_CFG_RESULT_FLAG_STAGED        = 0x02, // Bit 1: Staged only in transaction buffer
+  BLE_CFG_RESULT_FLAG_APPLIED       = 0x04, // Bit 2: Applied to active live state
+  BLE_CFG_RESULT_FLAG_AUTH_REQUIRED = 0x08  // Bit 3: Authentication required for write
+};
+
+// Feature Mask Bits (Capabilities)
+enum BleFeatureMaskBits : uint32_t {
+  BLE_FEAT_INDIVIDUAL_RGB   = (1u << 0),
+  BLE_FEAT_EFFECTS          = (1u << 1),
+  BLE_FEAT_STARTUP_ANIM     = (1u << 2),
+  BLE_FEAT_RPM_THRESHOLDS   = (1u << 3),
+  BLE_FEAT_SHIFT_WARNING    = (1u << 4),
+  BLE_FEAT_RPM_MULTIPLIER   = (1u << 5),
+  BLE_FEAT_CANDIDATE_SOURCE = (1u << 6),
+  BLE_FEAT_PHONE_PRESETS    = (1u << 7),
+  BLE_FEAT_NVS_PERSISTENCE  = (1u << 8),
+  BLE_FEAT_AUTH_WRITES      = (1u << 9)
+};
+
+// Provisioning / Security Modes
+enum BleSecurityMode : uint8_t {
+  BLE_SEC_MODE_OPEN          = 0,
+  BLE_SEC_MODE_BUTTON_WINDOW = 1,
+  BLE_SEC_MODE_TOKEN         = 2,
+  BLE_SEC_MODE_HYBRID        = 3 // Physical button presence OR device PIN/token
+};
+
+// Warning Pattern IDs
+enum BleWarningPattern : uint8_t {
+  BLE_WARN_PATTERN_FLASH     = 0, // Fast Flash (10 Hz)
+  BLE_WARN_PATTERN_STROBE    = 1, // Strobe Blink (20 Hz)
+  BLE_WARN_PATTERN_SOLID     = 2, // Solid Over-rev
+  BLE_WARN_PATTERN_OFF       = 3  // Shift alert off
+};
+
+// Binary Command Packet Header (UUID: ...d215, max 20 bytes)
+struct BleConfigCommandPacket {
+  uint8_t  version;          // Offset 0: Protocol version = 2
+  uint8_t  opcode;           // Offset 1: Opcode (BleConfigOpcode)
+  uint16_t sequence;         // Offset 2-3: Request sequence (little-endian)
+  uint8_t  payloadLength;    // Offset 4: Payload length (0..14)
+  uint8_t  flags;            // Offset 5: Flags (Bit 0 = staged)
+  uint8_t  payload[14];      // Offset 6-19: Command arguments
+};
+
+// Binary Command Result Packet (UUID: ...d216, exactly 20 bytes)
+struct BleConfigResultPacket {
+  uint8_t  version;          // Offset 0: Protocol version = 2
+  uint8_t  respondedOpcode;  // Offset 1: Responded opcode
+  uint16_t sequence;         // Offset 2-3: Request sequence reference (little-endian)
+  uint8_t  statusCode;       // Offset 4: Status code (BleConfigStatusCode)
+  uint8_t  resultFlags;      // Offset 5: Result flags (BleConfigResultFlags)
+  uint32_t activeRevision;   // Offset 6-9: Active configuration revision (little-endian)
+  uint8_t  payloadLength;    // Offset 10: Valid payload length (0..9)
+  uint8_t  payload[9];       // Offset 11-19: Optional result bytes
+};
+
+// Binary Config Snapshot Chunk Packet (UUID: ...d217, exactly 20 bytes)
+struct BleConfigSnapshotChunkPacket {
+  uint8_t  version;          // Offset 0: Protocol version = 2
+  uint16_t snapshotId;       // Offset 1-2: Snapshot ID (little-endian; request sequence or 0xFFFF)
+  uint8_t  chunkIndex;       // Offset 3: 0-based chunk index
+  uint8_t  chunkCount;       // Offset 4: Total chunks in snapshot
+  uint8_t  payloadLength;    // Offset 5: Valid payload length in chunk (0..14)
+  uint8_t  payload[14];      // Offset 6-19: Serialized TLV configuration chunk
+};
+
+// Binary Capabilities Packet (UUID: ...d218, exactly 20 bytes)
+struct BleCapabilitiesPacket {
+  uint8_t  version;                // Byte 0: Configuration protocol version = 2
+  uint8_t  physicalLedCount;       // Byte 1: Physical LED count (6)
+  uint32_t featureMask;            // Bytes 2-5: Feature capability mask (little-endian)
+  uint32_t currentRevision;        // Bytes 6-9: Current active configuration revision (little-endian)
+  uint8_t  hardwarePresetCapacity; // Byte 10: Hardware preset storage capacity (0 = phone-managed)
+  uint8_t  securityMode;           // Byte 11: Security / Provisioning mode
+  uint8_t  reserved[8];            // Bytes 12-19: Reserved (0)
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(BleRpmPacket) == 20, "BleRpmPacket must be exactly 20 bytes");
 static_assert(sizeof(BleHealthPacket) == 20, "BleHealthPacket must be exactly 20 bytes");
 static_assert(sizeof(BleLogChunkPacket) == 20, "BleLogChunkPacket must be exactly 20 bytes");
+static_assert(sizeof(BleConfigCommandPacket) == 20, "BleConfigCommandPacket must be exactly 20 bytes");
+static_assert(sizeof(BleConfigResultPacket) == 20, "BleConfigResultPacket must be exactly 20 bytes");
+static_assert(sizeof(BleConfigSnapshotChunkPacket) == 20, "BleConfigSnapshotChunkPacket must be exactly 20 bytes");
+static_assert(sizeof(BleCapabilitiesPacket) == 20, "BleCapabilitiesPacket must be exactly 20 bytes");

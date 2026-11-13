@@ -30,12 +30,31 @@ class RpmCandidateMonitor {
 
   // Status accessors
   uint32_t candidateId() const { return candidateId_; }
+  bool isExtended() const { return isExtended_; }
   uint8_t byteIndex() const { return byteIndex_; }
-  void setByteIndex(uint8_t idx) { if (idx < 8) byteIndex_ = idx; }
+  void setByteIndex(uint8_t idx) {
+    if (idx < 8) {
+      byteIndex_ = idx;
+      calibrationVerified_ = false;
+      rawValue_ = 0;
+      lastUpdateMs_ = 0;
+    }
+  }
+  void setCandidateSource(uint32_t id, uint8_t byteIdx, bool extended) {
+    if (byteIdx < 8) {
+      candidateId_ = id;
+      byteIndex_ = byteIdx;
+      isExtended_ = extended;
+      calibrationVerified_ = false;
+      rawValue_ = 0;
+      lastUpdateMs_ = 0;
+    }
+  }
   float multiplier() const { return multiplier_; }
   void setMultiplier(float m) {
     if (!isnan(m) && !isinf(m) && m > 0.0f && m <= 1000.0f) {
       multiplier_ = m;
+      calibrationVerified_ = false;
     }
   }
 
@@ -55,8 +74,9 @@ class RpmCandidateMonitor {
   bool hasReceivedFrame() const { return receivedCount_ > 0; }
 
   // Explicit safety constraints
-  bool isCalibrated() const { return false; }          // Calibration is UNVERIFIED
-  bool isShiftLightEnabled() const { return false; }   // Shift lights DISABLED
+  bool isCalibrated() const { return calibrationVerified_; }
+  void setCalibrationVerified(bool v) { calibrationVerified_ = v; }
+  bool isShiftLightEnabled() const { return calibrationVerified_; }
   bool isTxIsolated() const { return true; }           // Compatibility alias: software mutes TX
   bool isTxDisabledInSoftware() const { return true; } // CAN TX software muted; physical isolation must be verified manually
 
@@ -69,8 +89,10 @@ class RpmCandidateMonitor {
  private:
   uint32_t candidateId_;
   uint8_t byteIndex_;
+  bool isExtended_ = false;
   float multiplier_;
   uint32_t freshnessTimeoutMs_;
+  bool calibrationVerified_ = false;
 
   uint8_t rawValue_ = 0;
   uint32_t lastUpdateMs_ = 0;

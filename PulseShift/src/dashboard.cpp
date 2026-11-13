@@ -39,6 +39,7 @@ bool Dashboard::begin() {
   leds_.show();
   // Start the boot animation clock after peripheral setup, not at reset time.
   shiftLight_.reset(millis());
+  ledEffects_.reset(millis());
 #if PULSESHIFT_OLED_ENABLED
   return ready_;
 #else
@@ -152,6 +153,24 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
   const uint16_t shownRpm = live ? s.rpm() : 0;
 
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE
+  // Button press visual feedback takes top priority across all LEDs
+  if (feedbackActive_) {
+    if (uint32_t(now - feedbackStartMs_) < 200) {
+      const uint8_t br = ConfigManager::instance().active().brightness;
+      const RgbColor white = scaleColor(RgbColor{255, 255, 255}, br);
+      for (uint8_t i = 0; i < 6; ++i) {
+        leds_.setPixelColor(i, leds_.Color(white.r, white.g, white.b));
+      }
+      leds_.show();
+      return;
+    } else {
+      feedbackActive_ = false;
+    }
+  }
+
+  // Check if physical security authorization window is active
+  const bool authOpen = ConfigManager::instance().isAuthWindowOpen(now);
+
   // Test override allows bench testing shift-light LED patterns without physical CAN
   if (testRpmActive_) {
     const bool ledsChanged = shiftLight_.update(now, testRpm_, ViewStatus::Live);
@@ -163,7 +182,7 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
       }
       leds_.show();
     }
-  } else if (!shiftLight_.isStartupComplete()) {
+  } else if (ConfigManager::instance().active().effect == 4 && ConfigManager::instance().active().calibrationVerified && live) {
     const bool ledsChanged = shiftLight_.update(now, shownRpm, ViewStatus::Live);
     if (ledsChanged) {
       const uint8_t count = shiftLight_.ledCount();
@@ -174,7 +193,15 @@ void Dashboard::update(const RpmState& s, uint32_t now, bool healthy, bool confi
       leds_.show();
     }
   } else {
-    renderFieldStatus(now, healthy, configured);
+    // Smartphone configurable lighting engine (Static, Breathing, Rainbow, Chase, Startup Animations)
+    const bool ledsChanged = ledEffects_.update(now, ConfigManager::instance().active(), authOpen);
+    if (ledsChanged) {
+      for (uint8_t i = 0; i < 6; ++i) {
+        const RgbColor c = ledEffects_.getPixel(i);
+        leds_.setPixelColor(i, leds_.Color(c.r, c.g, c.b));
+      }
+      leds_.show();
+    }
   }
 #else
   // Standard Shift-Light Operation for DEMO and VEHICLE modes
