@@ -55,9 +55,11 @@ static void config_validate() {
   PulseShiftConfig cfg; // default member initializers == documented safe defaults
   CHECK(ConfigManager::validateConfig(cfg));
 
-  // RPM bar without a bound verification record is invalid (safety rule).
+  // Calibrated RPM mode still requires proof; standalone preview is separate.
   cfg.effect = 4;
   CHECK(!ConfigManager::validateConfig(cfg));
+  cfg.effect = 5;
+  CHECK(ConfigManager::validateConfig(cfg));
   cfg.effect = 0;
 
   cfg.rpmThresholds[3] = 500; // breaks ascending order
@@ -261,6 +263,9 @@ static void restore_defaults_preserves_shape() {
   CHECK(cfg.rpmMultiplier == 40.0f);
   CHECK(cfg.canCandidateId == 0x301);
   CHECK(!cfg.calibrationVerified); // fresh defaults are strictly unverified
+  CHECK(cfg.effect == 5); // standalone provisional RPM preview on clean boot
+  CHECK(cm.setEffect(5, 50, false) == BLE_CFG_STATUS_OK);
+  CHECK(cm.setEffect(4, 50, false) == BLE_CFG_STATUS_INVALID_STATE);
 }
 
 static void candidate_monitor_staleness() {

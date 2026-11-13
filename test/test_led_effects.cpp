@@ -111,6 +111,61 @@ static void unverified_rpm_bar_renders_nothing() {
   CHECK(allBlack(e));
 }
 
+// An explicitly provisional preview follows the real incoming CAN estimate
+// without claiming independent calibration or imposing a throttle lock.
+static void provisional_rpm_preview_tracks_throttle_without_calibration() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 5; // UNVERIFIED standalone diagnostic preview
+  cfg.calibrationVerified = false;
+  cfg.calFingerprint = 0;
+  cfg.calPointsUsed = 0;
+  cfg.warningPatternId = 3;
+  LedFrameInput input;
+
+  LiveRpmSnapshot signal = freshVerifiedSnapshot(900);
+  signal.calibrationVerified = false;
+  signal.calibrationMatchesSettings = false;
+  e.update(10000, cfg, signal, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 0);
+
+  signal = freshVerifiedSnapshot(4500);
+  signal.calibrationVerified = false;
+  signal.calibrationMatchesSettings = false;
+  e.update(10100, cfg, signal, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 4);
+
+  signal.fresh = false;
+  signal.valid = false;
+  signal.rpm = 0;
+  e.update(10500, cfg, signal, input);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(e));
+
+  signal = freshVerifiedSnapshot(3000);
+  signal.calibrationVerified = false;
+  signal.calibrationMatchesSettings = false;
+  e.update(10600, cfg, signal, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 3); // stale signal reset previous latches
+
+  cfg.warningPatternId = 2;
+  signal = freshVerifiedSnapshot(7200);
+  signal.calibrationVerified = false;
+  signal.calibrationMatchesSettings = false;
+  e.update(10700, cfg, signal, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(e.getPixel(0) == cfg.warningColor);
+
+  input.canHealthy = false;
+  e.update(10800, cfg, signal, input);
+  CHECK(e.activeLayer() == LedActiveLayer::Fault);
+}
+
 static void feedback_overrides_decorative_not_fault() {
   LedEffectEngine e;
   e.reset(0);
@@ -246,6 +301,28 @@ static void bench_test_preview_is_explicit() {
   CHECK(countLit(e) == 4); // thresholds 1000..6000 -> 4500 lights 0..3
 }
 
+static void provisional_default_keeps_synthetic_bench_test() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 5;
+  cfg.calibrationVerified = false;
+  cfg.calFingerprint = 0;
+  cfg.calPointsUsed = 0;
+  LedFrameInput input;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+  // No CAN sample, but a user-issued bench test still works.
+  e.update(6000, cfg, LiveRpmSnapshot{}, input);
+  CHECK(e.activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(countLit(e) == 4);
+  input.testRpmActive = false;
+  e.update(6100, cfg, LiveRpmSnapshot{}, input);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(e));
+}
+
 static void master_power_off() {
   LedEffectEngine e;
   e.reset(0);
@@ -303,6 +380,8 @@ static void change_detection_flags() {
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
+  provisional_rpm_preview_tracks_throttle_without_calibration();
+  provisional_default_keeps_synthetic_bench_test();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
   rpm_bar_latches_and_hysteresis();

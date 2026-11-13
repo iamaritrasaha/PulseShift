@@ -6,7 +6,7 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 
 > [!IMPORTANT]
 > **Real motorcycle CAN communication has already been successfully captured.**
-> Session 2 on a **2025 Bajaj Pulsar NS125 ABS** produced **22,542 exported records** across three capture stages, 18 distinct CAN IDs, and approximately 82.5 seconds of data at 500 kbps - with zero corrupt records. A candidate engine-speed signal has been identified but its RPM conversion formula is not yet independently verified. Physical RPM-driven shift lights remain disabled until calibration is confirmed against an independent reference tachometer.
+> Session 2 on a **2025 Bajaj Pulsar NS125 ABS** produced **22,542 exported records** across three capture stages, 18 distinct CAN IDs, and approximately 82.5 seconds of data at 500 kbps - with zero corrupt records. A candidate engine-speed signal has been identified but its RPM conversion formula is not yet independently verified. A standalone **provisional RPM LED preview** now follows this estimated value on fresh CAN data (default multiplier 40.0); the fully verified shift-light mode still requires independent tachometer calibration. Preview output must not be mistaken for an accurate riding shift cue.
 
 ---
 
@@ -51,7 +51,8 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 | Unified LED controller (six WS2812B, no display dependency) | ✅ Implemented - host-tested layer priorities |
 | RPM candidate identification (CAN ID `0x301`) | ✅ Observed in real capture data |
 | RPM conversion formula (multiplier 40.0) | ⚠️ Provisional - not independently verified |
-| Real engine RPM-driven shift lights | 🔒 Disabled - requires calibration verification (firmware-enforced) |
+| Standalone provisional RPM LED preview (effect 5) | 🧪 Implemented - unverified estimate, physical LED test pending |
+| Verified RPM shift-light mode (effect 4) | 🔒 Disabled until independent calibration verification |
 | Android app | 🔗 Separate workspace (`D:\Development\PulseShift\android`) - compiles and passes unit tests with the 2.2.0 protocol |
 
 **Verified capture details:**
@@ -95,8 +96,8 @@ ESP32 GPIO16  →  TWAI Controller  (extracts complete CAN frames, listen-only)
       |
       ├── Persistent Config Manager  →  NVS-backed decoder + LED configuration
       |
-      └── Unified LED Controller  →  shift light (RPM bar, safeguard blanked
-             until calibration verified) / decorative effects / status LEDs
+      └── Unified LED Controller  →  provisional RPM preview (unverified) /
+             verified shift light (requires calibration) / decorative and status LEDs
              →  WS2812B LEDs
 ```
 
@@ -106,7 +107,7 @@ ESP32 GPIO16  →  TWAI Controller  (extracts complete CAN frames, listen-only)
 
 **Each CAN frame** has an identifier (CAN ID) and up to 8 payload bytes. The identifier indicates the type of message; the payload carries the actual data. The firmware records every frame with a millisecond timestamp, stage label, and CRC checksum.
 
-**The shift-light engine** receives a decoded RPM value and illuminates LEDs progressively. It is currently gated by `RPM_MAPPED=NO` and will only control LEDs in vehicle mode once the RPM formula is independently calibrated.
+**The LED engine** can render a clearly unverified, provisional RPM preview by default, using incoming CAN ID 0x301 byte 0 multiplied by 40.0. The separately selectable verified RPM shift-light mode remains gated by an independent calibration record.
 
 ---
 
@@ -326,6 +327,36 @@ If the Serial Monitor is blank, check that the baud rate is set to 115200 and th
 
 ## 6. Quick Start - LED Bench Test
 
+### Standalone provisional RPM preview (no phone or PC after flashing)
+
+On a fresh configuration, firmware starts in **effect 5: provisional RPM preview**.
+The ESP32 directly decodes motorcycle CAN ID `0x301`, byte 0, with the
+unverified formula `RPM ~= raw * 40.0`, and renders the six saved thresholds
+(default 3000, 4000, 5000, 6000, 7000, 8000 RPM; warning at 8500).
+At estimated idle 1400-1600 RPM, **zero RPM LEDs** are expected. As the
+raw value increases, the bar advances. The independent calibrated RPM mode
+(effect 4) still needs reference measurement and an explicit calibration record.
+
+Neither Android nor USB is needed at runtime once firmware is flashed and
+ESP32/LEDs receive **proper regulated 5V power**. Connecting CAN-H/CAN-L/GND
+alone does not supply power.
+
+This mode uses real incoming CAN data; it is not a simulator and does not
+transmit onto the motorcycle CAN bus. It has no stationary-only or arbitrary
+throttle lock. It **does** blank on missing, stale or invalid candidate
+samples, and maintains CAN receive-only protections and fault indication.
+**Do not use the provisional values as a trusted riding shift cue until
+cross-checked with an independent tachometer.**
+
+**Existing NVS configuration:** A saved decorative effect from an older
+firmware remains selected on upgrade. A one-time `CONFIG RESET` over Serial,
+or setting effect 5 via a compatible authenticated BLE client and saving,
+selects the new default. `CONFIG RESET` restores lighting and decoder
+defaults, leaves previously captured CAN data untouched, and preserves
+enrolled owner credentials.
+
+
+
 You can test the LED shift-light display on your desk without connecting to any motorcycle. This verifies that the LEDs, wiring, and firmware are all working correctly.
 
 ### What you need
@@ -346,7 +377,7 @@ RPM TEST 4500
 **Expected result:** The firmware acknowledges the test and illuminates four LEDs (LEDs 1-4) in a progressive green-to-orange pattern. The Serial Monitor shows:
 
 ```text
-[TEST] 6-LED shift-light bench test active: 4500 RPM for 10s (Physical CAN shift lights remain DISABLED)
+[TEST] 6-LED shift-light bench test active: 4500 RPM for 10s (Verified RPM mode remains gated; provisional CAN preview is separate)
 ```
 
 The test automatically ends after **10 seconds** and the LEDs return to their CAN capture status display. You can also end it immediately:
@@ -370,7 +401,7 @@ Try different values to see the full LED progression:
 | `RPM TEST 6000` | All 6 | Flashing red shift alert |
 
 > [!NOTE]
-> `RPM TEST` only controls the LEDs - it does not inject fake CAN frames or affect the recording. CAN recording continues normally in the background. The notice "Physical CAN shift lights remain DISABLED" confirms that RPM-based LED control from real CAN data is still gated pending calibration.
+> `RPM TEST` only controls the LEDs - it does not inject fake CAN frames or affect the recording. CAN recording continues normally in the background. The notice indicates that the **verified RPM mode** remains gated; the separate provisional CAN preview is allowed to show a live unverified estimate.
 
 The production firmware does not include a Demo or synthetic ECU mode. Do not attempt to enable it.
 
@@ -670,7 +701,7 @@ Updates the provisional multiplier used for estimation. The range is 0.01 to 100
 
 ## 11. RPM Calibration
 
-Before the shift-light LEDs can respond to real engine speed, the RPM conversion formula must be verified against an independent reference measurement.
+Before the **verified RPM shift-light mode** can be enabled, the RPM conversion formula must be checked against an independent reference measurement. The optional provisional preview works without that verification, but remains explicitly UNVERIFIED.
 
 > [!IMPORTANT]
 > Using only the owner manual idle speed specification as the reference is insufficient. Owner manual values are nominal targets, not measurements from your specific motorcycle. Calibration requires simultaneous readings from both the ESP32 and an independent instrument at multiple, distinctly different RPM values.
@@ -730,14 +761,14 @@ The firmware runs a BLE GATT server (NimBLE stack) alongside the USB serial inte
 
 - BLE operates only as a peripheral advertising to the paired owner; it never gates CAN recording. Capture continues with or without a phone connected.
 - All BLE-facing RPM values still carry the `UNVERIFIED` calibration marker until the calibration workflow binds a verification record.
-- RPM-driven LED output remains firmware-blocked for any unverified configuration, regardless of what a phone requests.
+- Verified RPM shift-light mode (effect 4) remains firmware-blocked for any unverified configuration. Provisional preview (effect 5) is separate and follows live candidate data without marking calibration verified.
 
 > [!NOTE]
 > BLE behavior described here is software-tested (unit tests plus scripted live-BLE verification harnesses in `scratch/`). It has not been validated against a production Android build on a motorcycle.
 
 ### Mobile-assisted calibration
 
-The v2 protocol implements the [RPM Calibration](#11-rpm-calibration) workflow end to end: the phone reads live raw candidate samples over BLE, captures synchronized reference-tachometer points, fits `RPM = raw × multiplier + offset`, and commits the verified decoder. Physical shift lights unlock only after that commit. Until then the LED controller renders a safeguard blank instead of any RPM-derived pattern.
+The v2 protocol implements the [RPM Calibration](#11-rpm-calibration) workflow end to end: the phone reads live raw candidate samples over BLE, captures synchronized reference-tachometer points, fits `RPM = raw × multiplier + offset`, and commits the verified decoder. Verified RPM mode (effect 4) unlocks only after that commit. Before verification, effect 5 can display a provisional RPM preview, while effect 4 remains safeguarded and blank on invalid or unverified data.
 
 ---
 

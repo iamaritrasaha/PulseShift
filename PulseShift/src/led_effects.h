@@ -15,12 +15,12 @@
 //
 //   1. Hardware fault / safety state      (CAN halted: red blink)
 //   2. Button feedback flash              (physical interaction acknowledgment)
-//   3. Calibration & RPM validity safeguard (RPM bar requested but the live
-//      RPM sample is stale, invalid or unverified: blank - never fake RPM)
+//   3. RPM validity safeguard (stale/invalid signal: blank; verified bar also
+//      requires bound calibration; provisional preview stays UNVERIFIED)
 //   4. Owner commissioning indication     (physical auth window: cyan pulse)
 //   5. Startup indication                 (configured boot animation)
-//   6. Verified RPM-based lighting        (six-stage bar + shift warning) and
-//                                         owner-initiated bench test preview
+//   6. RPM-based lighting                 (verified bar or explicitly provisional
+//      diagnostic preview) and owner-initiated bench-test preview
 //   7. Manual decorative lighting         (static/breathing/rainbow/chase)
 //
 // A cosmetic effect can never bypass a safety condition: layers 1-4 always
@@ -41,7 +41,8 @@ enum class LedActiveLayer : uint8_t {
   RpmBar = 6,        // P6 verified RPM bar
   BenchTest = 7,     // P6 owner bench-test preview (explicit provenance)
   Decorative = 8,    // P7 manual effect
-  Warning = 9        // shift warning overlay (reported as its own layer)
+  Warning = 9,       // shift warning overlay (reported as its own layer)
+  ProvisionalRpm = 10 // P6 unverified diagnostic preview; NOT a calibrated shift cue
 };
 
 // Per-frame inputs that do not belong to the persisted configuration.

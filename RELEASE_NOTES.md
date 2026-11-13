@@ -1,5 +1,12 @@
 # PulseShift Firmware Release Notes
 
+## Unreleased - Standalone provisional RPM preview
+
+- Fresh configurations select effect 5, a live unverified RPM preview using the existing CAN 0x301 byte 0 and provisional multiplier 40.0. Estimated RPM now drives the full six-stage bar and configured warning without a phone or PC after flashing.
+- Independent calibration is **not** asserted or bypassed. Verified effect 4 retains its bound-fingerprint requirements. Preview has no stationary-only/RPM software lock and is not a validated riding shift cue.
+- Missing, stale or invalid candidate data blanks the preview and clears hysteresis latches; a CAN fault retains precedence. CAN remains physically and logically receive-only.
+- Previously saved NVS effect choice is preserved during upgrade. Reset defaults or select effect 5 explicitly to activate on existing hardware. Bench and vehicle verification pending.
+
 ## Release 2.2.0 - Production Cleanup
 
 - **Single production operating path**: passive listen-only CAN monitoring, unified RPM decoder, six-LED rendering and BLE run always; flash capture is a runtime-toggleable subsystem. The compile-time mode matrix (CAN_CAPTURE / VEHICLE_RPM / DEMO / TWAI_TEST), the legacy ShiftLightEngine, the profile-based RpmState pipeline and the TWAI self-test transmit path were removed entirely.
