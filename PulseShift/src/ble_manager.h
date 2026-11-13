@@ -38,6 +38,17 @@ class BleManager {
   bool isEnabled() const { return initialized_; }
   bool isAdvertising() const;
 
+  // Called by Application::tick() on the same loop task after poll(). A BLE
+  // command may request a 10s LED bench test without granting the BLE layer
+  // hardware ownership or bypassing the unified LED controller.
+  bool takeBenchTestRequest(uint16_t& rpm, bool& active) {
+    if (!benchTestPending_) return false;
+    rpm = benchTestRpm_;
+    active = benchTestActive_;
+    benchTestPending_ = false;
+    return true;
+  }
+
   // Called when client disconnects to cleanly reset log retrieval state
   void onClientDisconnected();
 
@@ -102,6 +113,9 @@ class BleManager {
 
   // Internal state
   bool initialized_ = false;
+  bool benchTestPending_ = false;
+  bool benchTestActive_ = false;
+  uint16_t benchTestRpm_ = 0;
   uint16_t rpmSeq_ = 0;
   uint16_t healthSeq_ = 0;
   uint16_t logMsgId_ = 0;
