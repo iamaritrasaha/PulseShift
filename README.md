@@ -23,12 +23,13 @@ PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network)
 9. [Exporting and Preserving Recordings](#9-exporting-and-preserving-recordings)
 10. [Monitoring Engine RPM](#10-monitoring-engine-rpm)
 11. [RPM Calibration](#11-rpm-calibration)
-12. [Serial Monitor Command Reference](#12-serial-monitor-command-reference)
-13. [Configuration](#13-configuration)
-14. [Troubleshooting](#14-troubleshooting)
-15. [Firmware Project Structure](#15-firmware-project-structure)
-16. [Tests and Verification](#16-tests-and-verification)
-17. [Safety and Technical References](#17-safety-and-technical-references)
+12. [BLE Monitoring and Configuration](#12-ble-monitoring-and-configuration)
+13. [Serial Monitor Command Reference](#13-serial-monitor-command-reference)
+14. [Configuration](#14-configuration)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Firmware Project Structure](#16-firmware-project-structure)
+17. [Tests and Verification](#17-tests-and-verification)
+18. [Safety and Technical References](#18-safety-and-technical-references)
 
 ---
 
@@ -41,11 +42,14 @@ PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network)
 | Physical CAN reception on motorcycle | ✅ **Verified** - 2025 Bajaj Pulsar NS125 ABS |
 | CAN recording to internal flash | ✅ Verified - 22,542 records, 0 corrupt |
 | CAN export via Serial Monitor | ✅ Demonstrated - paginated DUMP workflow |
+| BLE monitoring and streaming (protocol v1) | ✅ Implemented and software-tested - bench BLE only, not vehicle-validated |
+| BLE configuration protocol v2 (NVS, LED effects, mobile calibration) | ✅ Implemented and software-tested - bench BLE only, not vehicle-validated |
+| BLE owner enrollment and challenge-response security | ✅ Implemented and software-tested - physical BOOT window required |
 | LED bench test (`RPM TEST`) | ✅ Implemented and software-tested |
 | LED status display in CAN capture mode | ✅ Implemented |
 | RPM candidate identification (CAN ID `0x301`) | ✅ Observed in real capture data |
 | RPM conversion formula (multiplier 40.0) | ⚠️ Provisional - not independently verified |
-| Real engine RPM-driven shift lights | 🔒 Disabled - requires calibration verification |
+| Real engine RPM-driven shift lights | 🔒 Disabled - requires calibration verification (firmware-enforced) |
 | Android integration | 🔗 Separate project, not part of this firmware |
 
 **Verified capture details:**
@@ -80,10 +84,18 @@ ESP32 GPIO16  →  TWAI Controller  (extracts complete CAN frames, listen-only)
       |
       ├── Live USB stream  →  Serial Monitor  (optional, STREAM ON)
       |
-      ├── RPM Candidate Monitor  →  CAN ID 0x301, byte 0  (provisional)
+      ├── Unified RPM Candidate Monitor  →  phone-configurable CAN ID/byte/
+      |      byte-width/multiplier (default 0x301, byte 0, x40.0 - provisional)
       |
-      └── Verified RPM Decoder  →  Shift Light Engine  →  WS2812B LEDs
-                                       (currently disabled until calibration verified)
+      ├── BLE GATT Server  →  phone monitoring (v1 telemetry) and
+      |      configuration (v2: decoder, LED effects, NVS persistence,
+      |      owner enrollment + challenge-response security)
+      |
+      ├── Persistent Config Manager  →  NVS-backed decoder + LED configuration
+      |
+      └── Unified LED Controller  →  shift light (RPM bar, safeguard blanked
+             until calibration verified) / decorative effects / status LEDs
+             →  WS2812B LEDs
 ```
 
 **CAN - Controller Area Network** is the communication protocol used by the motorcycle's ECU (Engine Control Unit) to broadcast sensor data to the instrument cluster and other modules. All messages travel on two wires: CAN-H (high) and CAN-L (low), which carry complementary voltages.
@@ -227,6 +239,7 @@ Go to **Tools → Manage Libraries** and install each of the following by search
 | Library | Minimum version |
 |---|---|
 | **Adafruit NeoPixel** | 1.12.3 |
+| **NimBLE-Arduino** | 2.3.8 |
 | **Adafruit SSD1306** | 2.5.13 *(only if OLED is enabled)* |
 | **Adafruit GFX Library** | 1.11.11 *(only if OLED is enabled)* |
 | **Adafruit BusIO** | 1.17.0 *(only if OLED is enabled)* |
@@ -700,7 +713,37 @@ Do not enable shift lights based on a single RPM reference point or a theoretica
 
 ---
 
-## 12. Serial Monitor Command Reference
+## 12. BLE Monitoring and Configuration
+
+The firmware runs a BLE GATT server (NimBLE stack) alongside the USB serial interface. It provides two versioned phone-facing protocols; both are documented in detail in [docs/BLE-PROTOCOL.md](docs/BLE-PROTOCOL.md).
+
+| Protocol | Purpose | Compatibility |
+|---|---|---|
+| **v1 telemetry** | Live RPM notifications, health/diagnostic notifications, historical log retrieval, CAN capture page streaming | Retained unchanged; v2 clients and the original Android v1 client both work against current firmware |
+| **v2 configuration** | Decoder reconfiguration (CAN ID, byte offset/width/order, multiplier, offset, validity clamp), LED effects and thresholds, mobile-assisted calibration, NVS persistence | Version-checked per command; mismatched versions are rejected with `BLE_CFG_STATUS_VERSION_MISMATCH` |
+
+### Security model
+
+- **Owner enrollment** requires a physically opened authorization window: press the BOOT button (or send `AUTH` over USB) and complete enrollment within the window. Arbitrary token submissions outside the window are rejected with `BLE_CFG_STATUS_UNAUTHORIZED`.
+- **Challenge-response authentication**: the phone requests a nonce, then proves possession of the owner secret. Sessions are bound to the BLE connection id and expire on inactivity.
+- **Calibration commit is a privileged operation**: writing a verified RPM conversion (which enables RPM-driven shift lights) requires an authorized session.
+
+### Safety notes
+
+- BLE operates only as a peripheral advertising to the paired owner; it never gates CAN recording. Capture continues with or without a phone connected.
+- All BLE-facing RPM values still carry the `UNVERIFIED` calibration marker until the calibration workflow binds a verification record.
+- RPM-driven LED output remains firmware-blocked for any unverified configuration, regardless of what a phone requests.
+
+> [!NOTE]
+> BLE behavior described here is software-tested (unit tests plus scripted live-BLE verification harnesses in `scratch/`). It has not been validated against a production Android build on a motorcycle.
+
+### Mobile-assisted calibration
+
+The v2 protocol implements the [RPM Calibration](#11-rpm-calibration) workflow end to end: the phone reads live raw candidate samples over BLE, captures synchronized reference-tachometer points, fits `RPM = raw × multiplier + offset`, and commits the verified decoder. Physical shift lights unlock only after that commit. Until then the LED controller renders a safeguard blank instead of any RPM-derived pattern.
+
+---
+
+## 13. Serial Monitor Command Reference
 
 All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. Commands are case-insensitive. Set line ending to **Both NL & CR**.
 
@@ -716,6 +759,11 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 | `RPM MULTIPLIER <value>` | Update provisional multiplier (range 0.01-1000.0) |
 | `RPM TEST <value>` | Bench-test LEDs with simulated RPM for 10 seconds (0-20000) |
 | `RPM TEST OFF` | Immediately end shift-light bench test |
+| `BLE STATUS` | BLE GATT server status: connection, subscriptions, notify counters |
+| `CONFIG STATUS` | Active decoder/LED configuration: revision, fingerprint, calibration status |
+| `CONFIG RESET` | Reset configuration to safe defaults (invalidates calibration) |
+| `AUTH` / `AUTH ON` | Open the physical BOOT authorization window (owner commissioning) |
+| `AUTH OFF` | Close the authorization window early |
 | `STAGE 1` | Set recording stage to 1 - Key ON, Engine OFF |
 | `STAGE 2` | Set recording stage to 2 - Engine Idling |
 | `STAGE 3` | Set recording stage to 3 - Gentle RPM Sweeps |
@@ -741,7 +789,7 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 
 ---
 
-## 13. Configuration
+## 14. Configuration
 
 Edit `PulseShift/UserConfig.h` before uploading to customize the firmware for your hardware.
 
@@ -802,7 +850,7 @@ If OLED is enabled without the hardware, the firmware continues normally and pri
 
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 | Problem | Likely cause | Action |
 |---|---|---|
@@ -829,7 +877,7 @@ If OLED is enabled without the hardware, the firmware continues normally and pri
 
 ---
 
-## 15. Firmware Project Structure
+## 16. Firmware Project Structure
 
 ```text
 PulseShift-Firmware/
@@ -839,9 +887,13 @@ PulseShift-Firmware/
 │   └── src/
 │       ├── can_transport.*       ← TWAI driver wrapper (listen-only hardware interface)
 │       ├── can_recorder.*        ← CAN capture to LittleFS flash with CRC16 and paging
-│       ├── rpm_candidate.*       ← Live CAN ID 0x301 candidate engine-speed monitor
-│       ├── rpm_decoder.*         ← RPM decoding framework (active in VEHICLE_RPM mode)
-│       ├── shift_light.*         ← WS2812B LED control and shift-light logic
+│       ├── rpm_candidate.*       ← Unified phone-configurable candidate RPM decoder/state holder
+│       ├── rpm_decoder.*         ← Legacy profile-based decoding framework (VEHICLE_RPM mode)
+│       ├── ble_manager.*         ← BLE GATT server: v1 telemetry + v2 configuration
+│       ├── ble_protocol.h        ← Versioned BLE packet layouts
+│       ├── config_manager.*      ← NVS-backed configuration, security and calibration
+│       ├── led_effects.*         ← Unified priority LED controller (safeguard, effects, RPM bar)
+│       ├── shift_light.*         ← Legacy WS2812B shift-light engine (test harness path)
 │       ├── dashboard.*           ← OLED display and LED status coordination
 │       ├── storage_manager.*     ← LittleFS mount, session tracking, safe formatting
 │       ├── diag_logger.*         ← Persistent diagnostic event log to flash
@@ -856,9 +908,11 @@ PulseShift-Firmware/
 │   ├── ws2812b-circuit.svg
 │   ├── sn65hvd230-circuit.svg
 │   └── ...
+├── scratch/                      ← Physical flash extraction backups and live BLE verification scripts
 ├── test/                         ← Host-side C++ and Python regression tests
 ├── tools/                        ← Optional capture utilities (pulseshift_capture.py)
 ├── docs/                         ← Extended reference documentation
+│   ├── BLE-PROTOCOL.md           ← BLE v1 telemetry + v2 configuration protocol reference
 │   ├── HARDWARE.md               ← Detailed electrical specs and automotive protection
 │   ├── TESTING.md                ← Test suite and verification procedure
 │   ├── VERIFICATION.md           ← Historical development snapshot
@@ -868,7 +922,7 @@ PulseShift-Firmware/
 
 ---
 
-## 16. Tests and Verification
+## 17. Tests and Verification
 
 ### GitHub Actions CI
 
@@ -891,12 +945,15 @@ A passing CI build confirms that the sketch compiles correctly on a clean machin
 bash test/run.sh
 ```
 
-The host-side C++ test suite (run on Ubuntu in CI) validates:
+The host-side test suite (run on Ubuntu in CI) validates:
 - CAN frame envelope validation, RTR rejection, extended frame handling
 - Binary record format (76-byte header, 20-byte records) and CRC16-CCITT integrity
 - Power-loss-safe LittleFS capture, EOF truncation, and rollback safety
 - Shift-light progression, RGB scaling, and alert modes
-- Candidate 0x301 monitor bounds, NaN/Inf rejection, 32-bit timer rollover
+- Unified RPM candidate monitor bounds, NaN/Inf rejection, 32-bit timer rollover
+- RPM serial diagnostics output regression (present when enabled, silent when disabled)
+- OLED dashboard calibration bar, blanking and recovery behavior
+- BLE v1 protocol framing and BLE v2 configuration command handling (Python, 88 tests)
 
 ### Physical verification
 
@@ -906,11 +963,12 @@ The host-side C++ test suite (run on Ubuntu in CI) validates:
 | CAN recording to LittleFS | ✅ Verified - 22,542 records, 0 corrupt |
 | Paginated DUMP export | ✅ Demonstrated - full session export completed |
 | LED bench test (`RPM TEST`) | ✅ Implemented and software-tested |
+| BLE v1/v2 protocol | ⚠️ Software-tested only - not yet validated with a production Android client on the bench or motorcycle |
 | RPM formula calibration | ⚠️ Not yet verified against independent reference |
 
 ---
 
-## 17. Safety and Technical References
+## 18. Safety and Technical References
 
 ### Critical electrical rules - summary
 
