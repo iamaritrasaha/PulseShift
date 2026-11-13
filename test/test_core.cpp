@@ -206,6 +206,7 @@ static void calibration_session_fit_and_bind() {
 
 static void calibration_rejects_bad_evidence() {
   ConfigManager& cm = ConfigManager::instance();
+  CHECK(cm.restoreDefaults(0xA5, 0x5A)); // clear the record bound by the previous case
   const uint32_t t0 = 500000;
   CHECK(cm.beginCalibrationSession(t0));
 

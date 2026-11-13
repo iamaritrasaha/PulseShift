@@ -82,8 +82,8 @@ jobs:
 
       - name: Verify OLED dependencies removed
         run: |
-          if grep -rn "SSD1306\|Adafruit_GFX\|Adafruit_SSD1306" PulseShift/ .github/workflows/ci.yml; then
-            echo "OLED dependencies must not be referenced anywhere" >&2
+          if grep -rEn "SSD1306|Adafruit_GFX" PulseShift/; then
+            echo "OLED dependencies must not be referenced in firmware sources" >&2
             exit 1
           fi
 
