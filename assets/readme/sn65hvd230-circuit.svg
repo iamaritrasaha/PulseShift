@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="760" height="960" viewBox="0 0 760 960" role="img" aria-labelledby="title desc">
 <title id="title">PulseShift: ESP32 to SN65HVD230 CAN Transceiver Circuit</title>
-<desc id="desc">Passive receive-only bus tap: 8-pin connections, RS to GND, TXD pull-up, GPIO17 air gap, and 120 ohm removal.</desc>
+<desc id="desc">Passive receive-only bus tap: 8-pin connections, RS to GND, CTX to 3V3 direct, GPIO17 air gap, and 120 ohm verification.</desc>
 <style>
 text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 path,line,rect,circle{stroke-linecap:round;stroke-linejoin:round}

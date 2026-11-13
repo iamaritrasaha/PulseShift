@@ -491,7 +491,7 @@ def make_sn65hvd230_circuit():
     s = Svg(
         'sn65hvd230-circuit.svg', 760, 960,
         'ESP32 to SN65HVD230 CAN Transceiver Circuit',
-        'Passive receive-only bus tap: 8-pin connections, RS to GND, TXD pull-up, GPIO17 air gap, and 120 ohm removal.'
+        'Passive receive-only bus tap: 8-pin connections, RS to GND, CTX to 3V3 direct, GPIO17 air gap, and 120 ohm verification.'
     )
     s.text(28, 80, 'Passive receive-only bus tap: electrical connections and safety requirements', 20, MUTED)
 
@@ -690,8 +690,8 @@ def make_pulseshift_complete():
     s.rect(35, 560, 315, 108, fill='#fef2f2', stroke=RED, r=6)
     s.text(45, 582, 'PASSIVE SAFETY REQUIREMENTS:', 12, RED, bold=True)
     s.text(45, 600, '1. GPIO17 Physically Disconnected (Air Gap)', 11, INK, bold=True)
-    s.text(45, 618, '2. Transceiver TXD pulled up to 3.3V (Recessive)', 11, INK)
-    s.text(45, 636, '3. Onboard 120Ω resistor REMOVED from module', 11, ORANGE, bold=True)
+    s.text(45, 618, '2. Transceiver CTX tied directly to 3.3V (Recessive)', 11, INK)
+    s.text(45, 636, '3. Onboard 120Ω verified (desolder only if ~120Ω)', 11, ORANGE, bold=True)
     s.text(45, 654, '4. Transceiver VCC powered from ESP32 3V3 rail', 11, INK)
 
     # 3. ESP32 DevKit V1 (Center-Right)
@@ -804,7 +804,7 @@ def make_hardware_overview():
         ('330-470Ω resistor', 'Series data resistor for DIN'),
         ('1000µF 10V capacitor', 'Bulk cap across LED power'),
         ('Regulated 5V supply', 'At least 1A capacity (or DC-DC)'),
-        ('SN65HVD230 module', '3.3V CAN transceiver (remove 120Ω)'),
+        ('SN65HVD230 module', '3.3V CAN transceiver (verify 120Ω)'),
         ('Secure wires & breadboard', 'Short data lead + common GND'),
         ('Digital multimeter', 'Verify voltages and bus resistance')
     ]

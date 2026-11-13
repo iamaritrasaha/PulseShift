@@ -570,6 +570,8 @@ private:
     Serial.println("  RPM STATUS      : Candidate 0x301 engine-speed monitor & calibration status");
     Serial.println("  RPM MONITOR ON  : Enable rate-limited (10 Hz) 0x301 candidate streaming");
     Serial.println("  RPM MONITOR OFF : Disable candidate streaming");
+    Serial.println("  RPM MONITOR     : Print instantaneous candidate stream line");
+    Serial.println("  RPM MULTIPLIER <m>: Update candidate provisional multiplier (0.1..1000.0)");
     Serial.println("  RPM TEST <val>  : Bench test 6-LED shift lights with simulated RPM (0..20000)");
     Serial.println("  RPM TEST OFF    : Turn off shift-light bench test");
     Serial.println("  DUMP            : Export recorded CAN frames in 500-record pages");

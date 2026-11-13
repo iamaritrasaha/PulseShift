@@ -26,7 +26,7 @@ Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware.
 | 330-470 ohm resistor | In series with LED data line (close to DIN) |
 | 1000 uF 10V electrolytic capacitor | Across LED power rails at the strip (+ to 5V, - to GND) |
 | Regulated 5V supply, >= 1A (or DC-DC buck) | Powers LEDs (and ESP32 VIN when on motorcycle) |
-| SN65HVD230 3.3V CAN transceiver breakout | Breakout pins labeled `CTX` (Pin 1 / TXD) and `CRX` (Pin 4 / RXD). Check termination with multimeter; desolder R2 if ~120 ohms |
+| SN65HVD230 3.3V CAN transceiver breakout | Breakout pins labeled `CTX` (Pin 1 / TXD) and `CRX` (Pin 4 / RXD). Verify termination with multimeter; desolder R2 only if ~120 ohms is measured (do not alter if unpopulated) |
 | Direct wire (CTX to 3V3) | Breakout CTX connects directly to ESP32 3V3 (no 10k resistor). Keeps transmit driver permanently recessive |
 | Physical air gap (GPIO17) | ESP32 GPIO17 has no wire inserted; completely disconnected from transceiver |
 | Optional: 74AHCT125 level shifter | For reliable 5V logic signaling over longer harness runs |
@@ -36,7 +36,7 @@ Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware.
 
 ## Hardware Wiring
 
-PulseShift is designed for quick bench verification using the built-in Demo mode, followed by clean, passive in-vehicle installation for CAN capture and shift-light operation.
+PulseShift is designed for quick bench verification using interactive serial test commands (`RPM TEST <val>`), followed by clean, passive in-vehicle installation for CAN capture and shift-light operation. Production builds strictly exclude synthetic demo modes to prevent unverified traffic on the motorcycle.
 
 ### Complete System Circuit
 
@@ -63,7 +63,7 @@ PulseShift is designed for quick bench verification using the built-in Demo mode
 | **SN65HVD230 Breakout** | Vref (Pin 5) | *Unconnected* | Leave open (NC) | Nominal VCC/2 reference output |
 | **SN65HVD230 Breakout** | CANH (Pin 7) | Motorcycle CAN-H | ISO 11898-2 differential high | High-speed differential bus tap |
 | **SN65HVD230 Breakout** | CANL (Pin 6) | Motorcycle CAN-L | ISO 11898-2 differential low | High-speed differential bus tap |
-| **SN65HVD230 Breakout** | 120 ohm Resistor | *Verified / Removed* | Multimeter test across unpowered CANH-CANL | If ~120 ohms, desolder R2 to prevent loading vehicle bus down to 40 ohms |
+| **SN65HVD230 Breakout** | 120 ohm Resistor | *Verification Required* | Multimeter test across unpowered CANH-CANL | Desolder R2 only if ~120 ohms is measured; leave unmodified if open circuit |
 | **OLED (Optional)**| SDA | ESP32 GPIO21 | 3.3V I2C Data | Optional diagnostic screen (disabled by default) |
 | **OLED (Optional)**| SCL | ESP32 GPIO22 | 3.3V I2C Clock | Optional diagnostic screen (disabled by default) |
 | **OLED (Optional)**| VCC / GND | ESP32 3V3 / GND | 3.3V DC / Ground | Optional screen power |
@@ -389,22 +389,31 @@ PulseShift features an interactive serial console operating at **115200 baud** (
 #### 1. Checking Live Candidate RPM (`RPM STATUS` and `RPM MONITOR ON`)
 ```text
 > RPM STATUS
-========================================
-PULSESHIFT CANDIDATE RPM MONITOR
-========================================
-Candidate CAN ID  : 0x301 (Standard 11-bit)
-Payload Byte Index: 0
-Current Raw Value : 38 (0x26)
-Provisional Mult  : 40.00
-Estimated RPM     : 1520 RPM
-Signal Freshness  : FRESH (last seen 42 ms ago)
-Signal Range      : Min=0, Max=240, Count=1840 frames
-Calibration Status: UNVERIFIED (Provisional scaling only)
-Vehicle Shift Light: DISABLED (RPM_MAPPED=NO)
-========================================
+=== PulseShift Candidate RPM Monitor ===
+Candidate CAN ID : 0x301
+Byte Index       : 0
+Raw Value        : 38
+Estimated RPM    : 1520
+Multiplier       : 40.0
+Signal Fresh     : YES
+Last Update      : 42 ms ago
+Calibration      : UNVERIFIED
+LED Shift Mode   : DISABLED
+CAN TX           : SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)
+
+--- Candidate Diagnostics ---
+Frames Received  : 1840
+Frames Rejected  : 0
+Observed Range   : Min: 0 | Max: 240
+Freshness Window : 250 ms (~10-12 frames at 45 Hz)
+
+--- CAN Controller & Bus ---
+Controller State : HEALTHY (RUNNING)
+CAN Bitrate      : 500000 bps
+Bus Traffic      : ACTIVE
 
 > RPM MONITOR ON
-[RPM] Monitor stream enabled (10 Hz). Type 'RPM MONITOR OFF' to stop.
+[RPM] Rate-limited live candidate streaming ENABLED (10 Hz). Type 'RPM MONITOR OFF' to stop.
 CAND,15420,0x301,38,1520,1
 CAND,15520,0x301,37,1480,1
 CAND,15620,0x301,39,1560,1
@@ -413,9 +422,7 @@ CAND,15620,0x301,39,1560,1
 #### 2. Bench-Testing the 6-LED Shift Lights (`RPM TEST 5500`)
 ```text
 > RPM TEST 5500
-[TEST] Simulating 5500 RPM on 6-LED shift lights for 10s...
-[TEST] LEDs 1 to 5 illuminated (Progression: 5/6).
-[TEST] Shift alert threshold: 8000 RPM.
+[TEST] 6-LED shift-light bench test active: 5500 RPM for 10s (Physical CAN shift lights remain DISABLED)
 ```
 
 #### 3. Paginated CAN Capture Export (`DUMP`)
@@ -531,7 +538,7 @@ To independently calibrate the candidate signal without risky road tests:
 - **GPIO17 Physical Air Gap**: ESP32 GPIO17 (TWAI TX) must remain physically isolated (air gap with no wire inserted) from the transceiver at all times during motorcycle use. Software listen-only mode alone cannot guarantee electrical isolation against bootloader glitches or firmware misconfiguration, and microcontroller software cannot detect whether a physical wire is inserted.
 - **Forced Recessive Clamping**: The SN65HVD230 transceiver breakout's `CTX` pin (Pin 1 / TXD) connects directly to the ESP32 3V3 rail (NO 10k resistor in the verified working configuration). This clamps the driver permanently into the recessive (idle) state.
 - **Listen-Only TWAI Operation**: PulseShift never transmits CAN frames or ACK bits. The TWAI controller is initialized strictly with `TWAI_MODE_LISTEN_ONLY`.
-- **Termination Resistor Verification**: Check resistance across unpowered transceiver CANH-CANL terminals with a multimeter. If ~120 ohms, desolder SMD resistor R2 to avoid loading down the motorcycle's factory 60 ohm bus to 40 ohms.
+- **Termination Resistor Verification**: Check resistance across unpowered transceiver CANH-CANL terminals with a multimeter. Desolder SMD resistor R2 only if ~120 ohms is measured, avoiding loading down the motorcycle's factory 60 ohm bus to 40 ohms. If the module measures open circuit, leave it unmodified.
 - **Safe Power Sequencing**: Do not change wiring while powered. Switch on the external 5V power supply before connecting USB.
 - **Prevent Ground Loops on Vehicle**: When connecting via USB to a motorcycle, always use a laptop running on its internal battery (unplugged from AC mains) to prevent dangerous ground loops between building mains and vehicle chassis.
 - **Optional Level Shifter**: Some 5V WS2812B strips require a 74AHCT125 level shifter for reliable 3.3V signal recognition over longer automotive wiring harness runs.
