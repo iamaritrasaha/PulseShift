@@ -64,7 +64,11 @@ class BleManager {
   // result packets captured by the host (non-NimBLE) sendResult path.
   void testEnqueueCommand(const BleConfigCommandPacket& pkt, uint16_t connId);
   void testDrainCommands(uint32_t nowMs, RpmCandidateMonitor& candidate,
-                         const CanTransport& transport, const CanRecorder& recorder);
+                         const CanTransport& transport, const CanRecorder& recorder) {
+    while (configQueueTail_.load(std::memory_order_acquire) != configQueueHead_.load(std::memory_order_acquire)) {
+      processConfigCommand(nowMs, candidate, transport, recorder);
+    }
+  }
   size_t testResultCount() const { return testResultCount_; }
   const BleConfigResultPacket& testResult(size_t index) const { return testResults_[index]; }
   size_t testPendingSnapshotLen() const { return snapshotLen_; }
@@ -86,7 +90,8 @@ class BleManager {
   void processLogQueue();
   void processHistoricalPageRead();
   void processCapturePage();
-  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate);
+  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate,
+                            const CanTransport& transport, const CanRecorder& recorder);
   void processSnapshotStream();
   void updateCapabilitiesChar();
   void sendResult(BleConfigResultPacket& res);

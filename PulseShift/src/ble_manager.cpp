@@ -526,7 +526,7 @@ void BleManager::poll(uint32_t nowMs,
   }
 
   // 0b. Process one incoming Configuration V2 command per loop pass.
-  processConfigCommand(nowMs, candidate);
+  processConfigCommand(nowMs, candidate, transport, recorder);
 
   // 1. Live RPM telemetry: send at ~10 Hz (every 100 ms) when subscribed
   if (isRpmSubscribed() && uint32_t(nowMs - lastRpmNotifyMs_) >= 100) {
@@ -771,7 +771,7 @@ void BleManager::processCapturePage() {
   if (!captureLineStaged_) {
     CanLogRecord record{};
     uint32_t recordIndex = 0;
-    if (recorder.bleExportNext(record, recordIndex)) {
+    if (rec.bleExportNext(record, recordIndex)) {
       char line[96];
       formatCaptureRecordLine(record, line, sizeof(line));
       captureNextRecord_ = recordIndex + 1;
@@ -802,12 +802,14 @@ void BleManager::processCapturePage() {
       captureLineStaged_ = false;
     }
   }
+  (void)rec;
 #else
   (void)captureCancelRequested_;
 #endif
 }
 
-void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate) {
+void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate,
+                                      const CanTransport& transport, const CanRecorder& recorder) {
   // Pop exactly one queued command per pass (bounded work per loop iteration).
   if (configQueueTail_.load(std::memory_order_acquire) == configQueueHead_.load(std::memory_order_acquire)) {
     return;
@@ -1398,13 +1400,6 @@ void BleManager::testEnqueueCommand(const BleConfigCommandPacket& pkt, uint16_t 
     configQueue_[head].packet = pkt;
     configQueue_[head].connId = connId;
     configQueueHead_.store(next, std::memory_order_release);
-  }
-}
-
-void BleManager::testDrainCommands(uint32_t nowMs, RpmCandidateMonitor& candidate,
-                                   const CanTransport& transport, const CanRecorder& recorder) {
-  while (configQueueTail_.load(std::memory_order_acquire) != configQueueHead_.load(std::memory_order_acquire)) {
-    processConfigCommand(nowMs, candidate);
   }
 }
 #endif

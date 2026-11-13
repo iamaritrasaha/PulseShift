@@ -14,8 +14,10 @@ mkdir -p "$BUILD_DIR"
 CXXFLAGS="-std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer"
 
 # Core logic tests: config state machine, calibration binding, snapshot TLV
-# serialization, event pacing and serial parsing (pure C++, no Arduino stubs).
+# serialization, event pacing and serial parsing (pure C++, no Arduino stubs;
+# serial diagnostics are compiled out so no Serial symbol is referenced).
 g++ $CXXFLAGS \
+    -DPULSESHIFT_SERIAL_DIAGNOSTICS=0 \
     -IPulseShift -IPulseShift/src \
     PulseShift/src/rpm_candidate.cpp PulseShift/src/config_manager.cpp \
     test/test_core.cpp -o "$BUILD_DIR/test_core"
@@ -24,6 +26,7 @@ g++ $CXXFLAGS \
 # Unified LED engine tests: layer priorities, RPM validity safeguard,
 # hysteresis, warning patterns, direction/brightness.
 g++ $CXXFLAGS \
+    -DPULSESHIFT_SERIAL_DIAGNOSTICS=0 \
     -IPulseShift -IPulseShift/src \
     PulseShift/src/rpm_candidate.cpp PulseShift/src/config_manager.cpp \
     PulseShift/src/led_effects.cpp \
