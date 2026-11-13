@@ -151,6 +151,8 @@ These lines are reassembled as multi-chunk messages and routed to the capture fl
 - `Bit 12` (`0x1000`): `BLE_FEAT_CAL_WORKFLOW`
 - `Bit 13` (`0x2000`): `BLE_FEAT_DIAGNOSTICS_TLV`
 - `Bit 14` (`0x4000`): `BLE_FEAT_CAPTURE_EXPORT`
+- `Bit 15` (`0x8000`): `BLE_FEAT_CAPTURE_STAGE` (authenticated stage-label command)
+- `Bit 16` (`0x10000`): `BLE_FEAT_LED_BENCH_TEST` (authenticated 10-second synthetic test)
 
 ---
 
@@ -205,7 +207,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x1A` | `SET_LED_DIRECTION`| `[direction: u8 (0=Forward, 1=Reverse)]`| Shift light display direction |
 | `0x1B` | `SET_WARNING_RGB`| `[R: u8, G: u8, B: u8]` | Warning color for over-rev alert |
 | `0x1C` | `SET_RPM_HYSTERESIS` | `[hysteresisRpm: u16 LE (0..2000)]` | Falling-RPM dead band for bar/warning latching |
-| `0x1D` | `SET_RPM_DECODER_EXT` | `[width: u8 (1|2), endian: u8, offsetX1000: s32 LE, maxValid: u16 LE]` (9 bytes) | Byte width/order, RPM offset, validity clamp. **Invalidates calibration!** |
+| `0x1D` | `SET_RPM_DECODER_EXT` | `[width: u8 (1|2), endian: u8, offsetX1000: s32 LE, maxValid: u16 LE]` (8 bytes) | Byte width/order, RPM offset, validity clamp. **Invalidates calibration!** |
 | `0x20` | `SAVE_CONFIG` | None | Commit active configuration to flash NVS (`"ps_cfg"`) |
 | `0x21` | `RESTORE_DEFAULTS` | `[0xA5, 0x5A]` | Restore safe lighting/decoder defaults and save to NVS. **Owner credentials and captures are preserved.** |
 | `0x22` | `RELOAD_CONFIG` | None | Re-read the persisted NVS blob and apply it to the active state |
