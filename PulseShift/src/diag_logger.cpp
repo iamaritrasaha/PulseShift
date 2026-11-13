@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "diag_logger.h"
+#include "ble_manager.h"
 #include <Arduino.h>
 #include <esp_system.h>
 #include <driver/twai.h>
@@ -73,6 +74,7 @@ void DiagLogger::logEvent(DiagLevel level, const char* tag, const char* format, 
                          (unsigned long)sessionId_, levelToName(level), tag, msg);
   if (n > 0) {
     writeBuffered(line, size_t(n));
+    BleManager::instance().queueLiveLog(line);
   }
 
 #if PULSESHIFT_SERIAL_DIAGNOSTICS

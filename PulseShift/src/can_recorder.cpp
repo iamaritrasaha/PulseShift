@@ -471,8 +471,8 @@ bool CanRecorder::push(const CanFrame& frame) {
 void CanRecorder::pump(uint32_t now) {
   if (!initialized_) return;
 
-  // Flush when batch reaches 16 records (320 bytes) OR time elapsed >= 200ms
-  if (count_ >= 16 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 200)) {
+  // Flush when batch reaches 64 records (1280 bytes) OR time elapsed >= 250ms
+  if (count_ >= 64 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 250)) {
     flush();
   }
 }

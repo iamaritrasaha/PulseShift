@@ -1,14 +1,7 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
-#include "rpm_candidate.h"
-// UserConfig.h defines PULSESHIFT_SERIAL_DIAGNOSTICS for this translation unit.
-// Without it, the preprocessor silently compiles out all RPM serial output.
-#include "../UserConfig.h"
-#ifndef PULSESHIFT_SERIAL_DIAGNOSTICS
-#error "RPM diagnostics setting is missing from UserConfig.h"
-#endif
-#include <stdio.h>
-#include <math.h>
-
+// config.h pulls in UserConfig.h, so PULSESHIFT_SERIAL_DIAGNOSTICS is defined
+// for this translation unit. Without it, the preprocessor silently compiles
+// out all RPM serial output; fail loudly if the setting is unavailable.
 #if defined(ARDUINO)
   #include <Arduino.h>
   #define RPM_PRINTF(...) Serial.printf(__VA_ARGS__)
@@ -26,6 +19,14 @@
   #define RPM_PRINTF(...) printf(__VA_ARGS__)
   #define RPM_PRINTLN(x) printf("%s\r\n", (x))
 #endif
+
+#include "rpm_candidate.h"
+#include "config.h"
+#ifndef PULSESHIFT_SERIAL_DIAGNOSTICS
+#error "RPM diagnostics setting is missing from UserConfig.h"
+#endif
+#include <stdio.h>
+#include <math.h>
 
 RpmCandidateMonitor::RpmCandidateMonitor(uint32_t candidateId,
                                          uint8_t byteIndex,
