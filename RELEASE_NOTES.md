@@ -6,6 +6,7 @@
 - The Serial `RPM MULTIPLIER` command now updates the authoritative NVS-backed active config and synchronizes the same decoder used by BLE and LEDs. Use `CONFIG SAVE` to persist; the firmware reports save failure rather than falsely claiming success.
 - `CONFIG RESET` now reports when NVS persistence fails, instead of claiming successful saving.
 - Host regression tests cover preview boot, owner enrollment indicator, stale-data blanking and CAN fault priority.
+- Added authenticated BLE v2 opcodes `SET_CAPTURE_STAGE` (`0x54`) and `SET_LED_TEST_RPM` (`0x55`, 10s timer) to support the planned Android terminal; existing clients remain compatible and capability flags advertise the additions. App-side implementation is still pending in its separate local project.
 
 ## Unreleased - Standalone provisional RPM preview
 
