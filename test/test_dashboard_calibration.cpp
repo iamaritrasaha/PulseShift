@@ -36,7 +36,9 @@ static RpmState state() {
   return RpmState(RpmMapping{true,0x612,false,2,0,true,1,1,12000});
 #endif
 }
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
 static Dashboard* blankDashboard=nullptr;
+#endif
 static void blank() {
   CHECK(testOledBarFills==0 && testOledBarWidth==0);
   CHECK(testOledText.find("-- RPM")!=std::string::npos);
