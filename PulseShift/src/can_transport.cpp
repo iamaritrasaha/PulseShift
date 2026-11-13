@@ -30,7 +30,7 @@ bool CanTransport::begin() {
 #else
   general.tx_queue_len = 0;
 #endif
-  general.rx_queue_len = 128;
+  general.rx_queue_len = 256;
   general.alerts_enabled = TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF |
                            TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN |
                            TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN;

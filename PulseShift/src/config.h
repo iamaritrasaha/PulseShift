@@ -71,6 +71,7 @@ constexpr ShiftAlertMode shiftAlertMode = static_cast<ShiftAlertMode>(PULSESHIFT
 
 constexpr bool oledEnabled = PULSESHIFT_OLED_ENABLED != 0;
 constexpr bool serialDiagnostics = PULSESHIFT_SERIAL_DIAGNOSTICS != 0;
+constexpr bool bleEnabled = PULSESHIFT_BLE_ENABLED != 0;
 constexpr uint32_t serialBaud = PULSESHIFT_SERIAL_BAUD;
 constexpr uint32_t staleMs = 1000, txTimeoutMs = 1500, framePeriodMs = 100;
 constexpr const char* modeName = PULSESHIFT_MODE == PULSESHIFT_REPLAY ? "DEMO_SIMULATED" :

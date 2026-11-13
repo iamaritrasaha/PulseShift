@@ -34,7 +34,7 @@ jobs:
           path: |
             ~/.arduino15
             ~/.cache/arduino
-          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-3.3.12-neopixel-1.12.3-oled-2.5.13-gfx-1.11.11-busio-1.17.0
+          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-3.3.12-neopixel-1.12.3-oled-2.5.13-gfx-1.11.11-busio-1.17.0-nimble-2.3.8
 
       - name: Install ESP32 core and libraries
         run: |
@@ -47,6 +47,7 @@ jobs:
           arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"
           arduino-cli lib install --no-deps "Adafruit GFX Library@1.11.11"
           arduino-cli lib install --no-deps "Adafruit BusIO@1.17.0"
+          arduino-cli lib install --no-deps "NimBLE-Arduino@2.3.8"
 
       - name: Compile - CAN Capture mode (default)
         run: |

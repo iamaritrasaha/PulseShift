@@ -49,6 +49,7 @@
 #include "src/button_handler.h"
 #include "src/serial_protocol.h"
 #include "src/rpm_candidate.h"
+#include "src/ble_manager.h"
 
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY || PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
 #include "src/simulated_ecu.h"
@@ -136,6 +137,9 @@ public:
       Serial.println("OLED INIT FAILED (CAN processing continues)");
 #endif
     }
+
+    // Initialize BLE GATT Server
+    BleManager::instance().begin();
   }
 
   void tick() {
@@ -156,7 +160,7 @@ public:
 
     // 4. Ingest incoming CAN frames
     CanFrame f;
-    for (unsigned i = 0; i < 128; ++i) {
+    for (unsigned i = 0; i < 256; ++i) {
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
       const bool got = transport_.receive(now, f);
 #else
@@ -206,6 +210,15 @@ public:
     // 5. Service storage queues and periodic diagnostic flushes
     CanRecorder::instance().pump(now);
     DiagLogger::instance().pump(now);
+
+    // 5b. Service BLE GATT notifications and read-only requests
+#if !defined(PULSESHIFT_TEST_BUILD) || (PULSESHIFT_MODE != PULSESHIFT_REPLAY)
+    BleManager::instance().poll(now, candidateMonitor_, transport_, CanRecorder::instance(), rpm_);
+#else
+    // In synthetic replay test build, CanTransport dummy reference
+    CanTransport dummyTransport(0);
+    BleManager::instance().poll(now, candidateMonitor_, dummyTransport, CanRecorder::instance(), rpm_);
+#endif
 
     // 6. Evaluate stale timeouts and refresh UI
     rpm_.expire(now, rpm_.timeoutMs(config::staleMs), config::staleMs);
@@ -413,12 +426,19 @@ private:
   }
 
   void processCommand(const char* rawCmd) {
-    while (*rawCmd == ' ') ++rawCmd;
+    while (*rawCmd == ' ' || *rawCmd == '\t' || *rawCmd == '\r' || *rawCmd == '\n') ++rawCmd;
     if (*rawCmd == '\0') return;
 
     char cmd[SerialProtocol::MAX_CMD_LEN];
     strncpy(cmd, rawCmd, sizeof(cmd) - 1);
     cmd[sizeof(cmd) - 1] = '\0';
+
+    // Strip trailing whitespace and line endings
+    size_t cmdLen = strlen(cmd);
+    while (cmdLen > 0 && (cmd[cmdLen - 1] == ' ' || cmd[cmdLen - 1] == '\t' || cmd[cmdLen - 1] == '\r' || cmd[cmdLen - 1] == '\n')) {
+      cmd[--cmdLen] = '\0';
+    }
+    if (cmdLen == 0) return;
 
     // Normalize command keyword to uppercase for common commands
     char upper[16] = "";
@@ -430,6 +450,8 @@ private:
       printHelp();
     } else if (strcmp(upper, "STATUS") == 0) {
       printStatus();
+    } else if (strcasecmp(cmd, "BLE STATUS") == 0) {
+      BleManager::instance().printStatus();
     } else if (strcasecmp(cmd, "RPM STATUS") == 0) {
       candidateMonitor_.printStatus(millis(), transport_.healthy(), transport_.bitrate(), transport_.hasTraffic(millis()));
     } else if (strcasecmp(cmd, "RPM MONITOR ON") == 0) {
@@ -567,6 +589,7 @@ private:
     Serial.println("=== PulseShift Command Interface ===");
     Serial.println("  STATUS          : Comprehensive system status & intelligent troubleshooting");
     Serial.println("  LOGS            : Dump persistent diagnostic event log");
+    Serial.println("  BLE STATUS      : Bluetooth Low Energy peripheral & connection status");
     Serial.println("  RPM STATUS      : Candidate 0x301 engine-speed monitor & calibration status");
     Serial.println("  RPM MONITOR ON  : Enable rate-limited (10 Hz) 0x301 candidate streaming");
     Serial.println("  RPM MONITOR OFF : Disable candidate streaming");
@@ -706,6 +729,21 @@ private:
     Serial.println("Calibration: UNVERIFIED (Keep RPM_MAPPED=NO until physical tachometer verified)");
     Serial.printf("Physical Shift Lights: %s | CAN TX: SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)\r\n",
                   dashboard_.isTestRpmActive() ? "BENCH TEST OVERRIDE" : "DISABLED");
+
+    Serial.println("\n--- Bluetooth Low Energy (PulseShift BLE v1) ---");
+    Serial.printf("Enabled: %s | Advertising: %s | Device Name: PulseShift\r\n",
+                  BleManager::instance().isEnabled() ? "YES" : "NO",
+                  BleManager::instance().isAdvertising() ? "YES" : "NO");
+    Serial.printf("Connected: %s | Subscribed (RPM=%s, Health=%s, Logs=%s)\r\n",
+                  BleManager::instance().isClientConnected() ? "YES" : "NO",
+                  BleManager::instance().isRpmSubscribed() ? "YES" : "NO",
+                  BleManager::instance().isHealthSubscribed() ? "YES" : "NO",
+                  BleManager::instance().isLogsSubscribed() ? "YES" : "NO");
+    Serial.printf("Notifications Sent: RPM=%lu, Health=%lu, Logs=%lu | Drops=%lu\r\n",
+                  (unsigned long)BleManager::instance().rpmNotifyCount(),
+                  (unsigned long)BleManager::instance().healthNotifyCount(),
+                  (unsigned long)BleManager::instance().logNotifyCount(),
+                  (unsigned long)BleManager::instance().dropCount());
 
     Serial.println("\n--- Intelligent Diagnostics & Troubleshooting ---");
     if (!sm.isMounted() || sm.mountFailed()) {
