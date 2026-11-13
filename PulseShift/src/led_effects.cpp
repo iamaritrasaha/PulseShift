@@ -212,7 +212,17 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
   }
 
-  // ---- Priority 2: calibration / RPM validity safeguard ----------------
+  // ---- Priority 2: button feedback acknowledgment ----------------------
+  // Cosmetic acknowledgment of a physical interaction. It wins over all
+  // lighting layers but never over the fault indication above.
+  if (input.feedbackActive) {
+    activeLayer_ = LedActiveLayer::Feedback;
+    setAllPixels(RgbColor{255, 255, 255});
+    finishFrame(nowMs, cfg);
+    return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+  }
+
+  // ---- Priority 3: calibration / RPM validity safeguard ----------------
   // RPM-driven lighting is requested but the live sample does not qualify:
   // render nothing rather than imply engine RPM.
   if (cfg.effect == 4) {
@@ -228,7 +238,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // ---- Priority 3: owner commissioning indication ----------------------
+  // ---- Priority 4: owner commissioning indication ----------------------
   if (input.authWindowOpen) {
     activeLayer_ = LedActiveLayer::Commissioning;
     const uint32_t phase = nowMs % 1000;
@@ -249,7 +259,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
   }
 
-  // ---- Priority 4: startup indication ----------------------------------
+  // ---- Priority 5: startup indication ----------------------------------
   if (!startupComplete_) {
     renderStartup(nowMs, cfg);
     if (!startupComplete_) {
@@ -259,7 +269,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // ---- Priority 5: verified RPM bar / bench-test preview ---------------
+  // ---- Priority 6: verified RPM bar / bench-test preview ---------------
   if (cfg.effect == 4) {
     activeLayer_ = LedActiveLayer::RpmBar;
     renderRpmBar(nowMs, cfg, rpm.rpm);
@@ -273,7 +283,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
   }
 
-  // ---- Priority 6: manual decorative lighting --------------------------
+  // ---- Priority 7: manual decorative lighting --------------------------
   activeLayer_ = LedActiveLayer::Decorative;
   renderEffect(nowMs, cfg);
   finishFrame(nowMs, cfg);

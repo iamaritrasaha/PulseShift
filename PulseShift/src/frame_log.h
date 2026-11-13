@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #pragma once
-#include "rpm_decoder.h"
-// Bounded UART capture queue. Loss is counted, never silently sampled away.
+#include <stdint.h>
+#include <stddef.h>
+// Bounded UART status queue. Loss is counted, never silently sampled away.
 class FrameLog {
  public:
-  void push(const CanFrame&, DecodeResult);
   void pump();
   void status(const char* format, ...); // Bounded priority record; never waits for UART.
   uint32_t dropped() const { return dropped_; }

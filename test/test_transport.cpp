@@ -2,9 +2,9 @@
 // A driver double checks application safety choices, not physical CAN behavior.
 #include <Arduino.h>
 #include "can_transport.h"
-#include "dashboard_model.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 #define CHECK(x) do {++checks;if(!(x)){std::fprintf(stderr,"TRANSPORT FAIL %d: %s\n",__LINE__,#x);std::exit(1);}}while(0)
 unsigned checks=0,starts=0,stops=0,installs=0;
@@ -33,18 +33,17 @@ int main() {
   reset();FrameLog disabledLog;CanTransport disabled(0,&disabledLog);
   CHECK(!disabled.configured() && !disabled.begin());CHECK(installs==0);
   reset();CanTransport unknown(333333);CHECK(!unknown.begin() && !unknown.healthy());CHECK(installs==0);
-  for(uint32_t terminal:{TWAI_ALERT_BUS_OFF}) {
+  {
     reset();FrameLog log;CanTransport can(500000,&log);CHECK(can.begin());CHECK(can.healthy());const auto began=starts;CHECK(can.begin() && starts==began);
     next.identifier=0x123;next.data_length_code=2;next.data[0]=0xAA;next.data[1]=0xBB;available=true;
     CanFrame frame;CHECK(can.receive(frame,0xFFFFFFF0));CHECK(frame.payloadSize==2 && frame.timestampMs==0xFFFFFFF0 && frame.data[1]==0xBB);
     CHECK(can.acceptedFrames()==1);
-    log.push(frame,DecodeResult::Disabled);
     next.data_length_code=8;next.rtr=true;available=true;
     CHECK(can.receive(frame,20));CHECK(frame.remote && frame.payloadSize==0 && validEnvelope(frame));
     alerts=TWAI_ALERT_BUS_ERROR;can.poll(1000);CHECK(can.healthy()); // Report-only isolated error.
     alerts=TWAI_ALERT_RX_QUEUE_FULL;can.poll(1005);CHECK(can.healthy()); // Non-fatal RX overflow continues receiving
     alerts=TWAI_ALERT_RX_FIFO_OVERRUN;can.poll(1008);CHECK(can.healthy()); // Non-fatal FIFO overrun continues receiving
-    const auto before=stops;alerts=terminal;can.poll(1010);CHECK(!can.healthy() && stops==before+1);
+    const auto before=stops;alerts=TWAI_ALERT_BUS_OFF;can.poll(1010);CHECK(!can.healthy() && stops==before+1);
     for(unsigned i=0;i<1000;++i) { can.poll(2000+i); }
     CHECK(stops==before+1);
     CHECK(!can.receive(frame,3000));CHECK(!can.begin() && stops==before+1);
@@ -62,9 +61,9 @@ int main() {
   reset();CanTransport missed(500000,&log);CHECK(missed.begin());status.rx_missed_count=1;missed.poll(20);CHECK(missed.healthy()); // Missed frames are non-fatal!
   reset();CanTransport alertFailure(500000,&log);CHECK(alertFailure.begin());alertResult=ESP_FAIL;alertFailure.poll(20);CHECK(!alertFailure.healthy());
   reset();installResult=ESP_FAIL;const auto startCount=starts;CanTransport failed(500000,&log);CHECK(!failed.begin() && starts==startCount);
-  // A priority fault record survives a full frame queue with explicit loss count.
+  // A priority fault record survives a full status queue with explicit loss count.
   Serial.output.clear();Serial.capacity=0;FrameLog full;
-  for(unsigned i=0;i<64;++i)full.push(frame,DecodeResult::Disabled);
+  for(unsigned i=0;i<64;++i)full.status("filler %u",i);
   full.status("CAN HALTED: test");CHECK(full.dropped()==1);CHECK(Serial.output.empty());
   Serial.capacity=4096;for(unsigned i=0;i<64;++i)full.pump();
   CHECK(Serial.output.find("CAN HALTED: test\r\n")!=std::string::npos);

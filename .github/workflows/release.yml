@@ -38,9 +38,7 @@ jobs:
           arduino-cli core install esp32:esp32@3.3.12
           arduino-cli lib update-index
           arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
-          arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"
-          arduino-cli lib install --no-deps "Adafruit GFX Library@1.11.11"
-          arduino-cli lib install --no-deps "Adafruit BusIO@1.17.0"
+          arduino-cli lib install --no-deps "NimBLE-Arduino@2.3.8"
 
       - name: Compile and verify sketch
         run: |

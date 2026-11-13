@@ -34,7 +34,7 @@ jobs:
           path: |
             ~/.arduino15
             ~/.cache/arduino
-          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-3.3.12-neopixel-1.12.3-oled-2.5.13-gfx-1.11.11-busio-1.17.0-nimble-2.3.8
+          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-3.3.12-neopixel-1.12.3-nimble-2.3.8-v2
 
       - name: Install ESP32 core and libraries
         run: |
@@ -44,55 +44,25 @@ jobs:
           arduino-cli core install esp32:esp32@3.3.12
           arduino-cli lib update-index
           arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
-          arduino-cli lib install --no-deps "Adafruit SSD1306@2.5.13"
-          arduino-cli lib install --no-deps "Adafruit GFX Library@1.11.11"
-          arduino-cli lib install --no-deps "Adafruit BusIO@1.17.0"
           arduino-cli lib install --no-deps "NimBLE-Arduino@2.3.8"
 
-      - name: Compile - CAN Capture mode (default)
+      - name: Compile - production firmware (default)
         run: |
           arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
-            --build-path "$RUNNER_TEMP/build-capture" \
+            --build-path "$RUNNER_TEMP/build-production" \
             PulseShift
 
-      - name: Compile - Vehicle RPM mode
+      - name: Compile - fully headless variant (serial diagnostics off)
         run: |
-          mkdir -p "$RUNNER_TEMP/variants/vehicle"
-          cp -r PulseShift "$RUNNER_TEMP/variants/vehicle/PulseShift"
-          sed -i 's/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_CAN_CAPTURE/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_VEHICLE_RPM/' \
-            "$RUNNER_TEMP/variants/vehicle/PulseShift/UserConfig.h"
+          mkdir -p "$RUNNER_TEMP/variants/headless"
+          cp -r PulseShift "$RUNNER_TEMP/variants/headless/PulseShift"
+          sed -i 's/#define PULSESHIFT_SERIAL_DIAGNOSTICS 1/#define PULSESHIFT_SERIAL_DIAGNOSTICS 0/' \
+            "$RUNNER_TEMP/variants/headless/PulseShift/UserConfig.h"
           arduino-cli compile \
             --fqbn "$ESP32_FQBN" \
-            --build-path "$RUNNER_TEMP/build-vehicle" \
-            "$RUNNER_TEMP/variants/vehicle/PulseShift"
-
-      - name: Compile - OLED enabled
-        run: |
-          mkdir -p "$RUNNER_TEMP/variants/oled"
-          cp -r PulseShift "$RUNNER_TEMP/variants/oled/PulseShift"
-          sed -i 's/#define PULSESHIFT_OLED_ENABLED 0/#define PULSESHIFT_OLED_ENABLED 1/' \
-            "$RUNNER_TEMP/variants/oled/PulseShift/UserConfig.h"
-          arduino-cli compile \
-            --fqbn "$ESP32_FQBN" \
-            --build-path "$RUNNER_TEMP/build-oled" \
-            "$RUNNER_TEMP/variants/oled/PulseShift"
-
-      - name: Reject DEMO mode in production builds
-        run: |
-          mkdir -p "$RUNNER_TEMP/variants/demo"
-          cp -r PulseShift "$RUNNER_TEMP/variants/demo/PulseShift"
-          sed -i 's/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_CAN_CAPTURE/#define PULSESHIFT_OPERATING_MODE PULSESHIFT_USER_MODE_DEMO/' \
-            "$RUNNER_TEMP/variants/demo/PulseShift/UserConfig.h"
-          log="$RUNNER_TEMP/demo-rejected.log"
-          if arduino-cli compile \
-            --fqbn "$ESP32_FQBN" \
-            --build-path "$RUNNER_TEMP/build-demo" \
-            "$RUNNER_TEMP/variants/demo/PulseShift" > "$log" 2>&1; then
-            echo "DEMO mode unexpectedly compiled in production build" >&2
-            exit 1
-          fi
-          grep -F "DEMO mode is excluded from production firmware" "$log"
+            --build-path "$RUNNER_TEMP/build-headless" \
+            "$RUNNER_TEMP/variants/headless/PulseShift"
 
       - name: Reject invalid user configuration
         run: |
@@ -108,7 +78,14 @@ jobs:
             echo "Invalid config unexpectedly compiled" >&2
             exit 1
           fi
-          grep -F "PULSESHIFT_LED_COUNT must be between 1 and 32" "$log"
+          grep -F "PULSESHIFT_LED_COUNT must be between 1 and 6" "$log"
+
+      - name: Verify OLED dependencies removed
+        run: |
+          if grep -rn "SSD1306\|Adafruit_GFX\|Adafruit_SSD1306" PulseShift/ .github/workflows/ci.yml; then
+            echo "OLED dependencies must not be referenced anywhere" >&2
+            exit 1
+          fi
 
   host-tests:
     name: Host C++ unit tests

@@ -3,17 +3,19 @@ Production Firmware Integrity and CAN Acquisition Test Suite
 Copyright (c) 2026 Aritra Saha. All rights reserved.
 
 Verifies:
-1. Production firmware defaults (CAN_CAPTURE mode, 500000 bps, 255 LED brightness).
-2. Elimination of simulation/demo code from production firmware builds.
-3. Machine-readable serial streaming format (FRAME, STAGE, DIAG, STAT, META).
-4. Stop-on-full and session preservation guarantees (no circular overwrite).
-5. Capture tool functionality and disk-full safety limits.
-6. Zero em-dashes and en-dashes across all code and documentation.
+1. Production firmware defaults (500000 bps, six LEDs, BLE enabled).
+2. Complete removal of OLED support and of simulation/demo/mode-matrix code.
+3. Single passive CAN path (listen-only, zero TX queue, no transmit API).
+4. Machine-readable serial streaming format (FRAME, STAGE, DIAG, STAT, META).
+5. Stop-on-full and session preservation guarantees (no circular overwrite).
+6. Capture tool functionality and disk-full safety limits.
+7. BLE protocol completeness: all required v2 opcodes dispatched, capture
+   pages streamed, diagnostics TLV blob, explicit-confirm device commands.
+8. Zero em-dashes and en-dashes across all code and documentation.
 """
 
 import unittest
 import os
-import re
 import sys
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -25,52 +27,131 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
         self.user_config_path = os.path.join(REPO_ROOT, "PulseShift", "UserConfig.h")
         self.config_h_path = os.path.join(REPO_ROOT, "PulseShift", "src", "config.h")
         self.main_ino_path = os.path.join(REPO_ROOT, "PulseShift", "PulseShift.ino")
+        self.ble_protocol_path = os.path.join(REPO_ROOT, "PulseShift", "src", "ble_protocol.h")
+        self.ble_manager_path = os.path.join(REPO_ROOT, "PulseShift", "src", "ble_manager.cpp")
+        self.transport_path = os.path.join(REPO_ROOT, "PulseShift", "src", "can_transport.cpp")
+
+    def read(self, path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
 
     def test_production_default_configuration(self):
         """Verify production defaults in UserConfig.h."""
-        with open(self.user_config_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self.read(self.user_config_path)
 
-        # Operating mode must default to CAN_CAPTURE
-        self.assertRegex(
-            content,
-            r"#define\s+PULSESHIFT_OPERATING_MODE\s+PULSESHIFT_USER_MODE_CAN_CAPTURE",
-            "Production firmware must default to PULSESHIFT_USER_MODE_CAN_CAPTURE."
-        )
-
-        # Default CAN bitrate must be 500000 bps
+        # Default CAN bitrate must be 500000 bps (previously observed on the NS125)
         self.assertRegex(
             content,
             r"#define\s+PULSESHIFT_CAN_BITRATE\s+500000",
             "Production firmware must default to 500000 bps CAN bitrate."
         )
-
-        # Master LED brightness must default to 255
+        # BLE must be enabled by default (Android is the command interface)
         self.assertRegex(
             content,
-            r"#define\s+PULSESHIFT_LED_BRIGHTNESS\s+255",
-            "LED master brightness must default to full scale 255."
+            r"#define\s+PULSESHIFT_BLE_ENABLED\s+1",
+            "BLE must be enabled by default."
         )
 
-    def test_simulation_excluded_from_production(self):
-        """Verify that DEMO mode is rejected unless PULSESHIFT_TEST_BUILD is defined."""
-        with open(self.config_h_path, "r", encoding="utf-8") as f:
-            content = f.read()
+    def test_oled_support_completely_removed(self):
+        """No OLED symbols, dependencies or build variants may remain."""
+        src_dir = os.path.join(REPO_ROOT, "PulseShift")
+        for root, dirs, files in os.walk(src_dir):
+            for f in files:
+                if not f.endswith((".h", ".cpp", ".ino")):
+                    continue
+                content = self.read(os.path.join(root, f))
+                for symbol in ("SSD1306", "Adafruit_GFX", "Adafruit_SSD1306",
+                               "PULSESHIFT_OLED_ENABLED", "OLED_SDA", "OLED_SCL",
+                               "Wire.begin", "display_."):
+                    self.assertNotIn(symbol, content,
+                                     f"{f} must not reference OLED symbol {symbol}")
 
-        self.assertIn("PULSESHIFT_TEST_BUILD", content)
-        self.assertIn('DEMO mode is excluded from production firmware', content)
+        # CI must not build an OLED variant or install its libraries.
+        ci = self.read(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"))
+        self.assertNotIn("SSD1306", ci)
+        self.assertNotIn("Adafruit GFX", ci)
+        self.assertNotIn("OLED enabled", ci)
 
-    def test_simulated_ecu_guarded(self):
-        """Verify simulated_ecu.h and simulated_ecu.cpp are guarded with PULSESHIFT_TEST_BUILD."""
-        for filename in ("simulated_ecu.h", "simulated_ecu.cpp"):
-            path = os.path.join(REPO_ROOT, "PulseShift", "src", filename)
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-            self.assertIn(
-                "defined(PULSESHIFT_TEST_BUILD)",
-                content,
-                f"{filename} must be guarded with PULSESHIFT_TEST_BUILD."
-            )
+    def test_simulation_and_mode_matrix_removed(self):
+        """DEMO/REPLAY/TWAI_TEST paths and the compile-time mode matrix are gone."""
+        src_dir = os.path.join(REPO_ROOT, "PulseShift", "src")
+        for filename in ("simulated_ecu.h", "simulated_ecu.cpp", "demo_commands.h",
+                         "tx_tracker.h", "rpm_decoder.h", "vehicle_profile.h"):
+            self.assertFalse(os.path.exists(os.path.join(src_dir, filename)),
+                             f"{filename} must be removed from the firmware sources")
+
+        config_h = self.read(self.config_h_path)
+        for symbol in ("PULSESHIFT_REPLAY", "PULSESHIFT_TWAI_TEST", "PULSESHIFT_VEHICLE",
+                       "PULSESHIFT_OPERATING_MODE", "ShiftLightEngine", "VehicleDecoder"):
+            self.assertNotIn(symbol, config_h)
+
+        ino = self.read(self.main_ino_path)
+        for symbol in ("demo start", "demo stop", "ReplayTransport", "sendTest"):
+            self.assertNotIn(symbol, ino)
+
+    def test_single_passive_can_path(self):
+        """TWAI must stay listen-only with a zero TX queue and no transmit API."""
+        content = self.read(self.transport_path)
+        self.assertIn("TWAI_MODE_LISTEN_ONLY", content)
+        self.assertIn("tx_queue_len = 0", content)
+        self.assertNotIn("twai_transmit", content)
+        self.assertIn("gpio_reset_pin", content)  # TX pin isolated after install
+        self.assertIn("GPIO_MODE_INPUT", content)
+
+        transport_h = self.read(os.path.join(REPO_ROOT, "PulseShift", "src", "can_transport.h"))
+        self.assertNotIn("sendTest", transport_h)
+        self.assertNotIn("canSend", transport_h)
+
+    def test_ble_protocol_complete_dispatch(self):
+        """Every declared v2 opcode must have a dispatch case in BleManager."""
+        protocol = self.read(self.ble_protocol_path)
+        dispatch = self.read(self.ble_manager_path)
+
+        required_opcodes = [
+            "BLE_CFG_OP_GET_CAPABILITIES", "BLE_CFG_OP_GET_SNAPSHOT",
+            "BLE_CFG_OP_SET_POWER", "BLE_CFG_OP_SET_BRIGHTNESS",
+            "BLE_CFG_OP_SET_GLOBAL_RGB", "BLE_CFG_OP_SET_LED_RGB",
+            "BLE_CFG_OP_SET_EFFECT", "BLE_CFG_OP_SET_STARTUP",
+            "BLE_CFG_OP_SET_LED_THRESHOLD", "BLE_CFG_OP_SET_SHIFT_WARNING",
+            "BLE_CFG_OP_SET_RPM_MULTIPLIER", "BLE_CFG_OP_SET_CANDIDATE_SOURCE",
+            "BLE_CFG_OP_SET_LED_DIRECTION", "BLE_CFG_OP_SET_WARNING_RGB",
+            "BLE_CFG_OP_SET_RPM_HYSTERESIS", "BLE_CFG_OP_SET_RPM_DECODER_EXT",
+            "BLE_CFG_OP_SAVE_CONFIG", "BLE_CFG_OP_RESTORE_DEFAULTS",
+            "BLE_CFG_OP_RELOAD_CONFIG",
+            "BLE_CFG_OP_ENROLL_OWNER", "BLE_CFG_OP_AUTHENTICATE", "BLE_CFG_OP_REQUEST_CHALLENGE",
+            "BLE_CFG_OP_BEGIN_TRANSACTION", "BLE_CFG_OP_COMMIT_TRANSACTION", "BLE_CFG_OP_ABORT_TRANSACTION",
+            "BLE_CFG_OP_CAL_BEGIN", "BLE_CFG_OP_CAL_ABORT", "BLE_CFG_OP_CAL_CAPTURE_START",
+            "BLE_CFG_OP_CAL_CAPTURE_STATUS", "BLE_CFG_OP_CAL_POINT_COMMIT",
+            "BLE_CFG_OP_CAL_COMPUTE", "BLE_CFG_OP_CAL_STATUS",
+            "BLE_CFG_OP_GET_DIAGNOSTICS", "BLE_CFG_OP_RESTART_DEVICE",
+            "BLE_CFG_OP_CLEAR_DIAGNOSTICS", "BLE_CFG_OP_SET_CAPTURE_RECORDING",
+        ]
+        for opcode in required_opcodes:
+            self.assertIn(opcode, protocol, f"{opcode} must be declared in ble_protocol.h")
+            self.assertIn(f"case {opcode}:", dispatch,
+                          f"{opcode} must have a dispatch case in ble_manager.cpp")
+
+        # Firmware version must be 2.2.0 (this release).
+        self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MAJOR 2")
+        self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MINOR 2")
+
+    def test_bounded_command_queues_and_auth_binding(self):
+        """Commands queue through a bounded ring; writes check the session's connection."""
+        dispatch = self.read(self.ble_manager_path)
+        self.assertIn("CONFIG_QUEUE_CAPACITY", dispatch)
+        self.assertIn("CTRL_QUEUE_CAPACITY", dispatch)
+        self.assertIn("isAuthorizedFor(connId", dispatch)
+        # Capability packet must carry the schema-3 feature bits and fw version.
+        self.assertIn("BLE_FEAT_DIAGNOSTICS_TLV", dispatch)
+        self.assertIn("BLE_FEAT_CAPTURE_EXPORT", dispatch)
+        self.assertIn("caps.firmwareMajor", dispatch)
+
+    def test_capture_pages_streamed_over_ble(self):
+        """The v1 control capture-page commands must be consumed, not orphaned."""
+        dispatch = self.read(self.ble_manager_path)
+        self.assertIn("processCapturePage", dispatch)
+        self.assertIn("bleExportNext", dispatch)
+        self.assertIn("BLE_LOG_FLAG_CAPTURE_LINE", dispatch)
 
     def test_frame_streaming_format_and_parsing(self):
         """Verify frame serialization matches FRAME,timestamp,stage,id,ext,rtr,dlc,data."""
@@ -87,9 +168,7 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
 
     def test_no_circular_log_wipe(self):
         """Verify diag_logger does not circularly wipe /diag.log when capacity is reached."""
-        diag_cpp = os.path.join(REPO_ROOT, "PulseShift", "src", "diag_logger.cpp")
-        with open(diag_cpp, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self.read(os.path.join(REPO_ROOT, "PulseShift", "src", "diag_logger.cpp"))
 
         # checkRotate must set logFull_ and not remove LOG_PATH
         self.assertNotIn(
@@ -108,8 +187,7 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
 
     def test_arduino_ide_commands_present(self):
         """Verify all required Arduino IDE Serial Monitor commands are implemented in PulseShift.ino."""
-        with open(self.main_ino_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self.read(self.main_ino_path)
 
         expected_commands = [
             'STATUS', 'LOGS', 'DUMP', 'DUMP NEXT', 'DUMP ALL',
@@ -124,9 +202,7 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
 
     def test_dump_pagination_and_storage_states(self):
         """Verify pagination constants and distinct recorder states in can_recorder.h."""
-        rec_h = os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.h")
-        with open(rec_h, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self.read(os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.h"))
 
         self.assertIn("DUMP_PAGE_SIZE = 500", content)
         self.assertIn("PreservedPriorSession", content)
@@ -137,9 +213,7 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
 
     def test_safe_truncation_and_preservation(self):
         """Verify truncateToSize validates replacement file, uses backup, and supports rollback."""
-        rec_cpp = os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.cpp")
-        with open(rec_cpp, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self.read(os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.cpp"))
 
         # Must check free space before attempting truncate
         self.assertIn("StorageManager::MIN_FREE_BYTES", content)
@@ -159,22 +233,32 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
 
     def test_dump_integrity_and_page_accounting(self):
         """Verify paginated DUMP includes expected/exported record counts and cumulative totals."""
-        rec_cpp = os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.cpp")
-        with open(rec_cpp, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self.read(os.path.join(REPO_ROOT, "PulseShift", "src", "can_recorder.cpp"))
 
         self.assertIn("expected=%lu exported=%lu valid=%lu corrupt=%lu", content)
         self.assertIn("page_valid=%lu page_corrupt=%lu cum_valid=%lu cum_corrupt=%lu expected_total=%lu", content)
 
     def test_live_streaming_default_disabled(self):
         """Verify raw frame streaming is disabled by default to avoid flooding Serial Monitor."""
-        with open(self.main_ino_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self.read(self.main_ino_path)
 
         self.assertIn("bool liveStreamEnabled_ = false;", content)
 
+    def test_watchdog_subscribed(self):
+        """The main loop must be subscribed to the task watchdog."""
+        content = self.read(self.main_ino_path)
+        self.assertIn("esp_task_wdt_add", content)
+        self.assertIn("esp_task_wdt_reset", content)
+
+    def test_restore_defaults_preserve_credentials(self):
+        """Configuration reset must be distinct from credential recovery."""
+        content = self.read(os.path.join(REPO_ROOT, "PulseShift", "src", "config_manager.cpp"))
+        restore = content.split("bool ConfigManager::restoreDefaults")[1].split("\n}")[0]
+        self.assertNotIn("clearOwnerEnrollment", restore,
+                         "restoreDefaults must not erase owner enrollment")
+
     def test_zero_em_and_en_dashes_in_active_project(self):
-        """Strict verification: 0 em-dashes (\u2014) and 0 en-dashes (\u2013) across code and documentation."""
+        """Strict verification: 0 em-dashes and 0 en-dashes across code and documentation."""
         bad_chars = {'\u2014': 'EM DASH', '\u2013': 'EN DASH'}
         check_targets = ['PulseShift', 'README.md', 'docs', 'tools', 'test', '.github']
 

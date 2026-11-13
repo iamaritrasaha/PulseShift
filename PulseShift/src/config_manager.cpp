@@ -195,27 +195,32 @@ bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
   return true;
 }
 
-bool ConfigManager::begin() {
+bool ConfigManager::loadConfigBlobLocked(PulseShiftConfig& out) {
+  // Shared NVS read path for begin() and reloadFromNvs(). Returns true when a
+  // valid schema-3 (or migrated schema-2) blob was applied to `out`.
 #if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
   Preferences prefs;
-  if (prefs.begin(NVS_NAMESPACE, true)) { // Read-only mount
-    NvsConfigBlob blob{};
-    const size_t len = prefs.getBytes(NVS_KEY_BLOB, &blob, sizeof(blob));
+  if (!prefs.begin(NVS_NAMESPACE, true)) { // Read-only mount
+    return false;
+  }
 
-    if (len == sizeof(blob) && blob.magic == NVS_MAGIC && blob.version == NVS_SCHEMA_V3) {
-      const uint32_t calcCrc = computeCrc32(reinterpret_cast<const uint8_t*>(&blob),
-                                            sizeof(blob) - sizeof(uint32_t));
-      if (calcCrc == blob.crc32 && validateConfig(blob.cfg)) {
-        active_ = blob.cfg;
+  bool loaded = false;
+  NvsConfigBlob blob{};
+  const size_t len = prefs.getBytes(NVS_KEY_BLOB, &blob, sizeof(blob));
+  if (len == sizeof(blob) && blob.magic == NVS_MAGIC && blob.version == NVS_SCHEMA_V3) {
+    const uint32_t calcCrc = computeCrc32(reinterpret_cast<const uint8_t*>(&blob),
+                                          sizeof(blob) - sizeof(uint32_t));
+    if (calcCrc == blob.crc32 && validateConfig(blob.cfg)) {
+      out = blob.cfg;
+      loaded = true;
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-        Serial.printf("[CONFIG] Loaded persistent settings from NVS (revision=%lu)\r\n",
-                      (unsigned long)active_.activeRevision);
+      Serial.printf("[CONFIG] Loaded persistent settings from NVS (revision=%lu)\r\n",
+                    (unsigned long)out.activeRevision);
 #endif
-        loadOwnerSecurity();
-        return true;
-      }
     }
+  }
 
+  if (!loaded) {
     // Legacy schema-2 blob: migrate fields, default the new ones.
     NvsConfigBlobV2 legacy{};
     const size_t legacyLen = prefs.getBytes(NVS_KEY_BLOB, &legacy, sizeof(legacy));
@@ -223,51 +228,75 @@ bool ConfigManager::begin() {
       const uint32_t calcCrc = computeCrc32(reinterpret_cast<const uint8_t*>(&legacy),
                                             sizeof(legacy) - sizeof(uint32_t));
       if (calcCrc == legacy.crc32) {
-        applySafeDefaults(active_);
-        active_.schemaVersion = 3;
-        active_.activeRevision = legacy.cfg.activeRevision;
-        active_.isPowerOn = legacy.cfg.isPowerOn;
-        active_.brightness = legacy.cfg.brightness;
-        active_.globalColor = legacy.cfg.globalColor;
-        for (uint8_t i = 0; i < 6; ++i) active_.ledColors[i] = legacy.cfg.ledColors[i];
-        active_.effect = legacy.cfg.effect;
-        active_.effectSpeed = legacy.cfg.effectSpeed;
-        active_.ledDirection = legacy.cfg.ledDirection;
-        active_.startupAnimation = legacy.cfg.startupAnimation;
-        active_.startupDurationMs = legacy.cfg.startupDurationMs;
-        for (uint8_t i = 0; i < 6; ++i) active_.rpmThresholds[i] = legacy.cfg.rpmThresholds[i];
-        active_.warningRpm = legacy.cfg.warningRpm;
-        active_.warningPatternId = legacy.cfg.warningPatternId;
-        active_.warningColor = legacy.cfg.warningColor;
-        active_.rpmMultiplier = legacy.cfg.rpmMultiplier;
-        active_.canCandidateId = legacy.cfg.canCandidateId;
-        active_.candidateByteIndex = legacy.cfg.candidateByteIndex;
-        active_.isExtendedFrame = legacy.cfg.isExtendedFrame;
+        applySafeDefaults(out);
+        out.schemaVersion = 3;
+        out.activeRevision = legacy.cfg.activeRevision;
+        out.isPowerOn = legacy.cfg.isPowerOn;
+        out.brightness = legacy.cfg.brightness;
+        out.globalColor = legacy.cfg.globalColor;
+        for (uint8_t i = 0; i < 6; ++i) out.ledColors[i] = legacy.cfg.ledColors[i];
+        out.effect = legacy.cfg.effect;
+        out.effectSpeed = legacy.cfg.effectSpeed;
+        out.ledDirection = legacy.cfg.ledDirection;
+        out.startupAnimation = legacy.cfg.startupAnimation;
+        out.startupDurationMs = legacy.cfg.startupDurationMs;
+        for (uint8_t i = 0; i < 6; ++i) out.rpmThresholds[i] = legacy.cfg.rpmThresholds[i];
+        out.warningRpm = legacy.cfg.warningRpm;
+        out.warningPatternId = legacy.cfg.warningPatternId;
+        out.warningColor = legacy.cfg.warningColor;
+        out.rpmMultiplier = legacy.cfg.rpmMultiplier;
+        out.canCandidateId = legacy.cfg.canCandidateId;
+        out.candidateByteIndex = legacy.cfg.candidateByteIndex;
+        out.isExtendedFrame = legacy.cfg.isExtendedFrame;
         // A legacy configuration carries no fingerprint binding, so any
         // claimed verification becomes UNVERIFIED until recalibrated.
-        active_.calibrationVerified = false;
-        if (!validateConfig(active_)) applySafeDefaults(active_);
+        out.calibrationVerified = false;
+        if (!validateConfig(out)) {
+          applySafeDefaults(out);
+        } else {
+          loaded = true;
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-        Serial.println("[CONFIG] Migrated legacy schema-2 settings; calibration reset to UNVERIFIED.");
+          Serial.println("[CONFIG] Migrated legacy schema-2 settings; calibration reset to UNVERIFIED.");
 #endif
+        }
       }
     }
-    prefs.end();
   }
 
-  if (!validateConfig(active_)) {
+  prefs.end();
+  return loaded;
+#else
+  (void)out;
+  return false;
+#endif
+}
+
+bool ConfigManager::begin() {
+#if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
+  if (!loadConfigBlobLocked(active_)) {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.println("[CONFIG] NVS settings missing or corrupt; applied documented safe defaults.");
 #endif
     applySafeDefaults(active_);
   }
-
   loadOwnerSecurity();
   return true;
 #else
   applySafeDefaults(active_);
   return true;
 #endif
+}
+
+bool ConfigManager::reloadFromNvs() {
+  PulseShiftConfig reloaded;
+  if (!loadConfigBlobLocked(reloaded)) {
+    return false;
+  }
+  // Owner credentials, calibration-independent fields and the live session
+  // are untouched; only the persisted configuration is re-applied.
+  if (!validateConfig(reloaded)) return false;
+  active_ = reloaded;
+  return true;
 }
 
 void ConfigManager::loadOwnerSecurity() {
@@ -609,11 +638,14 @@ bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved
     if (nvsSaved) *nvsSaved = false;
     return false;
   }
+  // Restoring default LIGHTING preferences is a configuration operation, not
+  // a credential recovery path: owner enrollment and stored captures are
+  // intentionally preserved. Credential recovery is the distinct physical
+  // BOOT-window re-enrollment flow.
   applySafeDefaults(active_);
   active_.activeRevision++;
   const bool saved = saveToNvs();
   if (nvsSaved) *nvsSaved = saved;
-  clearOwnerEnrollment();
   return true;
 }
 
@@ -1178,25 +1210,6 @@ BleConfigStatusCode ConfigManager::authenticateChallenge(const uint8_t* proof, s
   Serial.println("[SECURITY] Session authorized via challenge-response cryptographic proof.");
 #endif
   return BLE_CFG_STATUS_OK;
-}
-
-void ConfigManager::clearOwnerEnrollment() {
-  ownerEnrolled_ = false;
-  memset(ownerSecret_, 0, sizeof(ownerSecret_));
-  sessionAuthorized_ = false;
-  challengeValid_ = false;
-  activeChallenge_ = 0;
-
-#if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
-  Preferences secPrefs;
-  if (secPrefs.begin(NVS_SEC_NAMESPACE, false)) {
-    secPrefs.clear();
-    secPrefs.end();
-  }
-#if PULSESHIFT_SERIAL_DIAGNOSTICS
-  Serial.println("[SECURITY] Owner enrollment erased from NVS.");
-#endif
-#endif
 }
 
 void ConfigManager::onClientDisconnected() {

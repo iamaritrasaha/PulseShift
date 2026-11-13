@@ -67,7 +67,3 @@ inline bool parseUnsignedNumber(const char* text, uint32_t maximum, uint32_t& ou
   output = value;
   return true;
 }
-
-inline bool parseDemoUnsigned(const char* text, uint32_t maximum, uint32_t& output) {
-  return parseUnsignedNumber(text, maximum, output);
-}

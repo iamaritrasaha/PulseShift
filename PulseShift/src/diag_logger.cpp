@@ -3,7 +3,6 @@
 #include "ble_manager.h"
 #include <Arduino.h>
 #include <esp_system.h>
-#include <driver/twai.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -50,11 +49,11 @@ void DiagLogger::begin(uint32_t bootCount, uint32_t sessionId) {
   resetReasonStr_[sizeof(resetReasonStr_) - 1] = '\0';
 }
 
-void DiagLogger::logBoot(const char* modeName, bool rpmMapped) {
+void DiagLogger::logBoot(const char* modeName) {
   logEvent(DiagLevel::Info, "BOOT",
-           "reason=%s boot=%lu sess=%lu mode=%s sdk=%s rpmMapped=%d uptime=%lu",
+           "reason=%s boot=%lu sess=%lu mode=%s sdk=%s uptime=%lu",
            resetReasonStr_, (unsigned long)bootCount_, (unsigned long)sessionId_,
-           modeName, ESP.getSdkVersion(), rpmMapped ? 1 : 0, (unsigned long)millis());
+           modeName, ESP.getSdkVersion(), (unsigned long)millis());
   flush(); // Ensure boot header is flushed immediately to flash
 }
 
@@ -67,6 +66,11 @@ void DiagLogger::logEvent(DiagLevel level, const char* tag, const char* format, 
   va_start(args, format);
   vsnprintf(msg, sizeof(msg), format, args);
   va_end(args);
+
+  // Keep the most recent failure for status reporting (BLE diagnostics blob).
+  if (level == DiagLevel::Error || level == DiagLevel::Critical) {
+    snprintf(lastError_, sizeof(lastError_), "%s: %s", tag, msg);
+  }
 
   char line[320];
   const int n = snprintf(line, sizeof(line), "[t=%lu,boot=%lu,sess=%lu] %s %s: %s\r\n",
@@ -85,21 +89,6 @@ void DiagLogger::logEvent(DiagLevel level, const char* tag, const char* format, 
   if (level == DiagLevel::Critical || level == DiagLevel::Error) {
     flush();
   }
-}
-
-void DiagLogger::logCanAlert(uint32_t alerts, uint32_t tec, uint32_t rec, uint32_t busErrors, uint32_t missed, uint32_t overrun) {
-  char desc[128] = "";
-  if (alerts & TWAI_ALERT_BUS_ERROR) strcat(desc, "BUS_ERR ");
-  if (alerts & TWAI_ALERT_BUS_OFF) strcat(desc, "BUS_OFF ");
-  if (alerts & TWAI_ALERT_RX_QUEUE_FULL) strcat(desc, "QUEUE_FULL ");
-  if (alerts & TWAI_ALERT_RX_FIFO_OVERRUN) strcat(desc, "FIFO_OVERRUN ");
-  if (alerts & TWAI_ALERT_ERR_PASS) strcat(desc, "ERR_PASS ");
-  if (alerts & TWAI_ALERT_ABOVE_ERR_WARN) strcat(desc, "ERR_WARN ");
-
-  DiagLevel lvl = (alerts & (TWAI_ALERT_BUS_OFF)) ? DiagLevel::Error : DiagLevel::Warn;
-  logEvent(lvl, "CAN_ALERT", "alerts=0x%04lX (%s) TEC=%lu REC=%lu busErrors=%lu missed=%lu overrun=%lu",
-           (unsigned long)alerts, desc, (unsigned long)tec, (unsigned long)rec,
-           (unsigned long)busErrors, (unsigned long)missed, (unsigned long)overrun);
 }
 
 void DiagLogger::logCanInit(uint32_t bitrate, int errCode, const char* errName) {

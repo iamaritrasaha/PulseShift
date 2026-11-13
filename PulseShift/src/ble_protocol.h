@@ -109,7 +109,7 @@ struct BleLogChunkPacket {
 
 // Firmware version reported in the Capabilities packet (schema 3)
 #define PULSESHIFT_FW_VERSION_MAJOR 2
-#define PULSESHIFT_FW_VERSION_MINOR 1
+#define PULSESHIFT_FW_VERSION_MINOR 2
 #define PULSESHIFT_FW_VERSION_PATCH 0
 
 // Configuration Opcodes
@@ -132,6 +132,7 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_SET_RPM_DECODER_EXT = 0x1D, // [width, endian, offset_s32LE(×1000), maxValid_u16LE] (9 bytes)
   BLE_CFG_OP_SAVE_CONFIG         = 0x20,
   BLE_CFG_OP_RESTORE_DEFAULTS    = 0x21,
+  BLE_CFG_OP_RELOAD_CONFIG       = 0x22, // re-read NVS blob and apply (auth required)
   BLE_CFG_OP_ENROLL_OWNER        = 0x24,
   BLE_CFG_OP_AUTHENTICATE        = 0x25,
   BLE_CFG_OP_REQUEST_CHALLENGE   = 0x26,
@@ -146,7 +147,11 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_CAL_POINT_COMMIT    = 0x44, // [refRpm u16LE] close window + store point
   BLE_CFG_OP_CAL_COMPUTE         = 0x45, // [apply u8] fit + validate; payload returns fit
   BLE_CFG_OP_CAL_STATUS          = 0x46, // query session: [active, points, captureActive, samples u16LE]
-  BLE_CFG_OP_GET_DIAGNOSTICS     = 0x50  // stream diagnostic TLV blob via snapshot char
+  // --- Device control & diagnostics (protocol 2.2.0) ---
+  BLE_CFG_OP_GET_DIAGNOSTICS     = 0x50, // stream diagnostic TLV blob via snapshot char (read-only)
+  BLE_CFG_OP_RESTART_DEVICE      = 0x51, // [0xA5, 0x5A] explicit confirmation; ESP32 soft restart
+  BLE_CFG_OP_CLEAR_DIAGNOSTICS   = 0x52, // [0xA5, 0x5A] explicit confirmation; clears diag log ONLY (captures untouched)
+  BLE_CFG_OP_SET_CAPTURE_RECORDING = 0x53 // [enable u8] start/stop flash recording (auth required)
 };
 
 // v1 Control extensions (CAN capture browsing, bounded + cancellable)
@@ -253,6 +258,36 @@ struct BleConfigSnapshotChunkPacket {
   uint8_t  chunkCount;       // Offset 4: Total chunks in snapshot
   uint8_t  payloadLength;    // Offset 5: Valid payload length in chunk (0..14)
   uint8_t  payload[14];      // Offset 6-19: Serialized TLV configuration chunk
+};
+
+// Diagnostics blob TLV IDs (streamed via the snapshot characteristic by
+// BLE_CFG_OP_GET_DIAGNOSTICS). Body layout: TLV stream + trailing CRC32
+// (identical framing to the configuration snapshot; first byte is a schema
+// version tag = 1 for diagnostics blobs, followed by revision u32 = 0).
+enum BleDiagnosticsTlvId : uint8_t {
+  BLE_DIAG_TLV_UPTIME        = 0x40, // u32 LE: uptime ms
+  BLE_DIAG_TLV_FIRMWARE      = 0x41, // [major, minor, patch]
+  BLE_DIAG_TLV_RESET_REASON  = 0x42, // u8: esp_reset_reason of the last boot
+  BLE_DIAG_TLV_CAN_STATUS    = 0x43, // bitrate u32, totalRx u32, accepted u32,
+                                     // missed u32, overrun u32, busErrors u32,
+                                     // healthy u8, traffic u8 (26 bytes)
+  BLE_DIAG_TLV_CANDIDATE     = 0x44, // canId u32, byteIndex u8, byteWidth u8,
+                                     // extended u8, multiplier x1000 s32 LE,
+                                     // offset x1000 s32 LE, maxValid u16 LE,
+                                     // raw u16, estimatedRpm u16, fresh u8,
+                                     // valid u8, calVerified u8, ageMs u16,
+                                     // received u32, rejected u32 (34 bytes)
+  BLE_DIAG_TLV_STORAGE       = 0x45, // total u32, used u32, free u32, mounted u8,
+                                     // storageFull u8, capturePreserved u8,
+                                     // damaged u8, recording u8, records u32,
+                                     // captureSize u32, diagLogSize u32 (29 bytes)
+  BLE_DIAG_TLV_BLE_STATE     = 0x46, // connected u8, advertising u8, securityMode u8,
+                                     // ownerEnrolled u8, sessionAuthorized u8 (5 bytes)
+  BLE_DIAG_TLV_CAPTURE_INFO  = 0x47, // stage u8, sessionId u32, bootCount u32 (9 bytes)
+  BLE_DIAG_TLV_LAST_ERROR    = 0x48, // UTF-8 string (<= 96 bytes)
+  BLE_DIAG_TLV_CALIBRATION   = 0x49  // sessionActive u8, points u8, captureActive u8,
+                                     // samples u16 LE, calVerified u8, pointsUsed u8,
+                                     // maxResidual u8, fingerprint u32 LE (13 bytes)
 };
 
 // Binary Capabilities Packet (UUID: ...d218, exactly 20 bytes)
