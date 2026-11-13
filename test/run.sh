@@ -60,6 +60,26 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
     -o "$BUILD_DIR/test_candidate_monitor"
 "$BUILD_DIR/test_candidate_monitor"
 
+# Regression: RPM serial output must be present when enabled, and silent when disabled.
+# Compile candidate monitor as its own translation unit (same as Arduino), not
+# by including its source inside the sketch, to catch missing configuration headers.
+for diagnostics in 0 1; do
+  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
+      -fsanitize=address,undefined -fno-omit-frame-pointer \
+      -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
+      -IPulseShift -IPulseShift/src \
+      PulseShift/src/rpm_candidate.cpp test/test_rpm_serial_output.cpp \
+      -o "$BUILD_DIR/test_rpm_serial_output_$diagnostics"
+  output="$("$BUILD_DIR/test_rpm_serial_output_$diagnostics")"
+  if [[ "$diagnostics" == "1" ]]; then
+    [[ "$output" == *"PULSESHIFT RPM MONITOR"* ]] || { echo "Missing RPM STATUS output" >&2; exit 1; }
+    [[ "$output" == *"[RPM] Waiting for CAN ID"* ]] || { echo "Missing waiting-state RPM output" >&2; exit 1; }
+    [[ "$output" == *"[RPM] Raw:"* ]] || { echo "Missing live RPM stream output" >&2; exit 1; }
+  else
+    [[ -z "$output" ]] || { echo "RPM diagnostics unexpectedly printed with diagnostics disabled" >&2; exit 1; }
+  fi
+done
+
 # Python integration tests
 python3 -m unittest discover -s test -p 'test_*.py'
 
