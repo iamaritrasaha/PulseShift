@@ -20,7 +20,7 @@ struct PulseShiftConfig {
     {140, 43, 238}, {140, 43, 238}, {140, 43, 238},
     {140, 43, 238}, {140, 43, 238}, {140, 43, 238}
   };
-  uint8_t  effect = 0;              // 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=RpmBar
+  uint8_t  effect = 0;              // 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=Verified RPM, 5=Provisional preview (factory boot default)
   uint8_t  effectSpeed = 50;        // 0..100
   uint8_t  ledDirection = 0;       // 0=Normal, 1=Reversed
   uint8_t  startupAnimation = 1;   // 0=None, 1=Sweep, 2=Wave, 3=Pulse
