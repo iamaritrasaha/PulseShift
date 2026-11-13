@@ -1,5 +1,12 @@
 # PulseShift Firmware Release Notes
 
+## Unreleased - Preview diagnostics and config synchronization fixes
+
+- Fixed the provisional RPM preview's missing-CAN safeguard hiding the boot sweep and physical BOOT owner enrollment pulse. Only non-RPM indicators bypass the unverified candidate gate; live RPM bars still blank when stale/invalid.
+- The Serial `RPM MULTIPLIER` command now updates the authoritative NVS-backed active config and synchronizes the same decoder used by BLE and LEDs. Use `CONFIG SAVE` to persist; the firmware reports save failure rather than falsely claiming success.
+- `CONFIG RESET` now reports when NVS persistence fails, instead of claiming successful saving.
+- Host regression tests cover preview boot, owner enrollment indicator, stale-data blanking and CAN fault priority.
+
 ## Unreleased - Standalone provisional RPM preview
 
 - Fresh configurations select effect 5, a live unverified RPM preview using the existing CAN 0x301 byte 0 and provisional multiplier 40.0. Estimated RPM now drives the full six-stage bar and configured warning without a phone or PC after flashing.
