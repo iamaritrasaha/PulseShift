@@ -44,6 +44,11 @@ class BleManager {
   uint32_t logNotifyCount() const { return logNotifyCount_; }
   void printStatus() const;
 
+  // Rebuild the authoritative live decoder from the active configuration and
+  // refresh the calibration mirror (single source of truth: ConfigManager).
+  // Called by the application on boot, after config commits and serial overrides.
+  static void syncDecoderToMonitor(RpmCandidateMonitor& candidate);
+
  private:
   BleManager();
   ~BleManager() = default;
@@ -64,9 +69,6 @@ class BleManager {
   void processSnapshotStream();
   void updateCapabilitiesChar();
   void sendResult(BleConfigResultPacket& res);
-  // Rebuild the authoritative live decoder from the active configuration and
-  // refresh the calibration mirror (single source of truth: ConfigManager).
-  static void syncDecoderToMonitor(RpmCandidateMonitor& candidate);
   size_t buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen,
                               const RpmCandidateMonitor& candidate,
                               const CanTransport& transport,

@@ -779,7 +779,9 @@ bool ConfigManager::beginCalibrationSession(uint32_t nowMs) {
   calCaptureSamples_ = 0;
   calCaptureSum_ = 0.0;
   calCaptureSumSq_ = 0.0;
-  memset(calPoints_, 0, sizeof(calPoints_));
+  for (auto& point : calPoints_) {
+    point = CalibrationPoint{}; // CalibrationPoint is non-trivial; never memset it.
+  }
   return true;
 }
 

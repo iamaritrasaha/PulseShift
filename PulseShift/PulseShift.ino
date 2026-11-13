@@ -181,7 +181,7 @@ public:
       const bool candMatched = candidateMonitor_.ingest(f, now);
       if (candMatched && candidateMonitor_.hasRawUpdate()) {
         const auto snap = candidateMonitor_.snapshot(now);
-        ConfigManager::instance().feedCalibrationSample(snap.rawCandidate16, snap.estimatedRpm, now);
+        ConfigManager::instance().feedCalibrationSample(snap.raw, now);
       }
 
       if (!firstFrameSeen_) {

@@ -182,6 +182,8 @@ class RpmCandidateMonitor {
   uint16_t minObservedRaw() const { return minObservedRaw_; }
   uint16_t maxObservedRaw() const { return maxObservedRaw_; }
   bool hasReceivedFrame() const { return receivedCount_ > 0; }
+  // True once at least one frame was accepted since (re)configuration/reset.
+  bool hasRawUpdate() const { return hasUpdate_; }
 
   // Explicit safety constraints
   bool isCalibrated() const { return calibrationVerified_; }
