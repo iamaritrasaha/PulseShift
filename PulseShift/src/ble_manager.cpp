@@ -1219,7 +1219,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_SET_RPM_DECODER_EXT: {
-      if (pkt.payloadLength < 9) {
+      if (pkt.payloadLength < 8) {
         status = BLE_CFG_STATUS_INVALID_PARAM;
       } else {
         const uint8_t width = pkt.payload[0];

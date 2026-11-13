@@ -129,7 +129,7 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_SET_LED_DIRECTION   = 0x1A,
   BLE_CFG_OP_SET_WARNING_RGB     = 0x1B,
   BLE_CFG_OP_SET_RPM_HYSTERESIS  = 0x1C, // [hyst_u16_LE] (schema 3)
-  BLE_CFG_OP_SET_RPM_DECODER_EXT = 0x1D, // [width, endian, offset_s32LE(×1000), maxValid_u16LE] (9 bytes)
+  BLE_CFG_OP_SET_RPM_DECODER_EXT = 0x1D, // [width, endian, offset_s32LE(×1000), maxValid_u16LE] (8 bytes)
   BLE_CFG_OP_SAVE_CONFIG         = 0x20,
   BLE_CFG_OP_RESTORE_DEFAULTS    = 0x21,
   BLE_CFG_OP_RELOAD_CONFIG       = 0x22, // re-read NVS blob and apply (auth required)
