@@ -347,9 +347,6 @@ When testing on an operating motorcycle with a PC connected via USB:
    - **DO NOT connect the vehicle 5V buck converter output to the ESP32 VIN pin while USB is connected to a PC.**
    - All ground lines (ESP32 GND, PC USB ground, LED strip GND, buck converter GND, motorcycle chassis GND) must be securely bonded together.
 
----
-
-## Serial Communication & Commands (115200 baud)
 
 ## Serial Communication & Commands (115200 baud)
 
