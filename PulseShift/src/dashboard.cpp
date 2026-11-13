@@ -285,13 +285,10 @@ void Dashboard::update(const LiveRpmSnapshot& rpm, const RpmState& s, uint32_t n
   }
 
   display_.drawRect(0, 58, 128, 6, SSD1306_WHITE);
-#if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
+  // Scale the progress bar against the LED shift-light scale so the OLED bar
+  // always matches the actual LED progression (test_dashboard_calibration
+  // asserts this equivalence in every build mode).
   const uint16_t maximum = shiftLight_.config().rpmMax;
-#else
-  const uint16_t maximum = (ConfigManager::instance().active().warningRpm > 0)
-                               ? ConfigManager::instance().active().warningRpm
-                               : shiftLight_.config().rpmMax;
-#endif
   if (live && maximum > 0) {
     uint32_t barWidth = uint32_t(shownRpm) * 126 / maximum;
     if (barWidth > 126) barWidth = 126;

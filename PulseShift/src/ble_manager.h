@@ -65,7 +65,7 @@ class BleManager {
   void processLogQueue();
   void processHistoricalPageRead();
   void processCapturePage();
-  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate, uint16_t connId);
+  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate);
   void processSnapshotStream();
   void updateCapabilitiesChar();
   void sendResult(BleConfigResultPacket& res);
