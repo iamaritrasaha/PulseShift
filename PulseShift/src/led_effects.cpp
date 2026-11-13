@@ -220,19 +220,22 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     return finishFrame(nowMs, cfg);
   }
 
-  // ---- Priority 3: calibration / RPM validity safeguard ----------------
-  // RPM-driven lighting is requested but the live sample does not qualify:
-  // render nothing rather than imply engine RPM.
-  if (cfg.effect == 4) {
-    const bool sampleQualified =
-        cfg.calibrationVerified &&
-        rpm.fresh && rpm.valid &&
-        rpm.calibrationVerified && rpm.calibrationMatchesSettings;
+  // ---- Priority 3: RPM validity safeguard ------------------------------
+  // Effect 4 is the protected, calibrated shift light. Effect 5 is a
+  // separate, explicitly UNVERIFIED diagnostic preview for stationary tests.
+  // Neither mode is allowed to display stale, unavailable or invalid RPM.
+  if (cfg.effect == 4 || cfg.effect == 5) {
+    const bool verifiedBar = cfg.effect == 4;
+    const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
+        (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
+                          rpm.calibrationMatchesSettings));
     if (!sampleQualified) {
+      // Reset threshold latches so a recovered signal starts from fresh data.
+      for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
+      warningLatched_ = false;
       activeLayer_ = LedActiveLayer::SafeguardBlank;
       setAllPixels(RgbColor{0, 0, 0});
-      finishFrame(nowMs, cfg);
-      return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+      return finishFrame(nowMs, cfg);
     }
   }
 
@@ -264,9 +267,10 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // ---- Priority 6: verified RPM bar / bench-test preview ---------------
-  if (cfg.effect == 4) {
-    activeLayer_ = LedActiveLayer::RpmBar;
+  // ---- Priority 6: verified RPM bar / provisional diagnostic preview ---
+  if (cfg.effect == 4 || cfg.effect == 5) {
+    activeLayer_ = (cfg.effect == 4) ? LedActiveLayer::RpmBar
+                                     : LedActiveLayer::ProvisionalRpm;
     renderRpmBar(nowMs, cfg, rpm.rpm);
     return finishFrame(nowMs, cfg);
   }
