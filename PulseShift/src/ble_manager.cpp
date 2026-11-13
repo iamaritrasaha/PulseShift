@@ -1136,6 +1136,26 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   updateCapabilitiesChar();
 }
 
+void BleManager::syncDecoderToMonitor(RpmCandidateMonitor& candidate) {
+  // Rebuild the authoritative live decoder from the active ConfigManager
+  // record (single source of truth) and refresh the calibration verification
+  // mirror. The verification mirror is only kept when the stored calibration
+  // fingerprint still matches the exact decoder configuration being applied.
+  const PulseShiftConfig& cfg = ConfigManager::instance().active();
+  RpmDecoderSettings s;
+  s.canId = cfg.canCandidateId;
+  s.extended = cfg.isExtendedFrame;
+  s.byteIndex = cfg.candidateByteIndex;
+  s.byteWidth = cfg.candidateByteWidth;
+  s.littleEndian = cfg.candidateLittleEndian;
+  s.multiplier = cfg.rpmMultiplier;
+  s.offset = cfg.rpmOffset;
+  s.maxRpm = cfg.rpmMaxValid;
+  candidate.applyDecoderSettings(s, millis());
+  candidate.setCalibrationVerified(cfg.calibrationVerified &&
+                                   cfg.calFingerprint == computeDecoderFingerprint(s));
+}
+
 void BleManager::processSnapshotStream() {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   if (!snapshotActive_ || !s_pConfigSnapshotChar) return;

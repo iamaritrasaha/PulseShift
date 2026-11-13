@@ -36,16 +36,29 @@ static RpmState state() {
   return RpmState(RpmMapping{true,0x612,false,2,0,true,1,1,12000});
 #endif
 }
+static Dashboard* blankDashboard=nullptr;
 static void blank() {
   CHECK(testOledBarFills==0 && testOledBarWidth==0);
   CHECK(testOledText.find("-- RPM")!=std::string::npos);
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
+  // Non-REPLAY vehicle builds drive the unified LED engine. With the default
+  // decorative configuration the accent colors stay lit; the fail-safe
+  // contract is that no RPM-driven layer may be active while the sample is
+  // stale/invalid or calibration is unverified.
+  CHECK(blankDashboard!=nullptr);
+  CHECK(blankDashboard->ledEffects().activeLayer()!=LedActiveLayer::RpmBar);
+#else
   for(auto pixel:testPixels) CHECK(pixel==0);
+#endif
 }
 int main() {
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
   CHECK(vehicleProfileReady(selected));
 #endif
   Dashboard dashboard; CHECK(dashboard.begin());
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
+  blankDashboard=&dashboard;
+#endif
   auto rpm=state();
   const uint16_t maximum=
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
