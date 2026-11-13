@@ -1,6 +1,8 @@
-> Historical snapshot. Current release evidence and remaining gates are in [research-2026-10-26/VERIFICATION.md](research-2026-10-26/VERIFICATION.md) and [FINDINGS.md](research-2026-10-26/FINDINGS.md). Use the current public README for run instructions.
+> [!NOTE]
+> **Historical Simulator Investigation (October 2026)**:
+> This document analyzes early Wokwi simulator TWAI driver stalls. For the production PulseShift firmware, physical CAN acquisition has been verified on actual hardware (ESP32 DevKit V1 + SN65HVD230 on 2025 Bajaj Pulsar NS125 ABS at 500 kbps).
 
-# TWAI investigation: 25 October 2026
+# TWAI investigation: 25 October 2026 (Historical)
 
 ## What is established
 

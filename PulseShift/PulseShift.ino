@@ -112,7 +112,7 @@ public:
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("TARGET: %s / %s / %u WS2812B LEDs\r\n",
                   config::vehicle, config::transceiver, config::ledCount);
-    Serial.println("RECEIVE ONLY: SN65HVD230 RS to GND (high-speed), TXD biased 3.3V, GPIO17 physically isolated");
+    Serial.println("RECEIVE ONLY: Breakout CTX tied to 3V3 directly, GPIO17 disconnected, software listen-only");
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
     Serial.printf("PROFILE id=%s status=%s ready=%d\r\n", selectedVehicleProfile().identifier,
                   profileStatusName(selectedVehicleProfile().status), rpm_.mapped());
@@ -156,7 +156,7 @@ public:
 
     // 4. Ingest incoming CAN frames
     CanFrame f;
-    for (unsigned i = 0; i < 64; ++i) {
+    for (unsigned i = 0; i < 128; ++i) {
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_REPLAY)
       const bool got = transport_.receive(now, f);
 #else
@@ -173,11 +173,6 @@ public:
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
         Serial.println("[CAN] First motorcycle CAN frame received! Traffic is active.");
 #endif
-      }
-
-      // Buffer into diagnostic logger only if live streaming is active
-      if (liveStreamEnabled_) {
-        logger_.push(f, result);
       }
 
 #if PULSESHIFT_MODE == PULSESHIFT_CAPTURE || PULSESHIFT_MODE == PULSESHIFT_VEHICLE
@@ -217,8 +212,8 @@ public:
     logger_.pump();
     dashboard_.update(rpm_, now, healthy, configured, rpm_.timeoutMs(config::staleMs));
 
-    // Handle shift-light bench test timeout
-    if (dashboard_.isTestRpmActive() && now >= rpmTestExpireMs_) {
+    // Handle shift-light bench test timeout (rollover-safe)
+    if (dashboard_.isTestRpmActive() && uint32_t(now - rpmTestStartMs_) >= 10000) {
       dashboard_.setTestRpm(0, false);
     }
 
@@ -449,21 +444,25 @@ private:
       dashboard_.setTestRpm(0, false);
       Serial.println("[TEST] Shift-light bench test disabled. Returned to field capture status LEDs.");
     } else if (strncasecmp(cmd, "RPM TEST ", 9) == 0) {
-      const int val = atoi(cmd + 9);
-      if (val >= 0 && val <= 20000) {
+      uint32_t val = 0;
+      if (parseUnsignedNumber(cmd + 9, 20000, val)) {
         dashboard_.setTestRpm(static_cast<uint16_t>(val), true);
-        rpmTestExpireMs_ = millis() + 10000;
+        rpmTestStartMs_ = millis();
         Serial.printf("[TEST] 6-LED shift-light bench test active: %u RPM for 10s (Physical CAN shift lights remain DISABLED)\r\n", (unsigned)val);
       } else {
-        Serial.println("[ERROR] Test RPM must be 0..20000.");
+        Serial.println("[ERROR] Test RPM must be a valid integer between 0 and 20000.");
       }
     } else if (strncasecmp(cmd, "RPM MULTIPLIER ", 15) == 0) {
-      const float m = static_cast<float>(atof(cmd + 15));
-      if (m > 0.0f && m < 1000.0f) {
+      char* endptr = nullptr;
+      const char* p = cmd + 15;
+      while (*p == ' ' || *p == '\t') ++p;
+      const float m = strtof(p, &endptr);
+      while (endptr && (*endptr == ' ' || *endptr == '\t')) ++endptr;
+      if (endptr && endptr != p && *endptr == '\0' && !isnan(m) && !isinf(m) && m > 0.0f && m <= 1000.0f) {
         candidateMonitor_.setMultiplier(m);
         Serial.printf("[RPM] Candidate multiplier updated to %.1f (Calibration remains UNVERIFIED)\r\n", m);
       } else {
-        Serial.println("[ERROR] Multiplier must be a positive number (e.g. 40.0).");
+        Serial.println("[ERROR] Multiplier must be a valid positive number between 0.1 and 1000.0.");
       }
     } else if (strcmp(upper, "LOGS") == 0) {
       DiagLogger::instance().dumpToSerial();
@@ -476,11 +475,11 @@ private:
     } else if (strcasecmp(cmd, "DUMP CANCEL") == 0 || strcasecmp(cmd, "DUMP RESET") == 0) {
       CanRecorder::instance().dumpCancel();
     } else if (strncasecmp(cmd, "DUMP PAGE ", 10) == 0) {
-      const int pg = atoi(cmd + 10);
-      if (pg > 0) {
-        CanRecorder::instance().dumpPageNumber(static_cast<uint32_t>(pg));
+      uint32_t pg = 0;
+      if (parseUnsignedNumber(cmd + 10, 1000000, pg) && pg > 0) {
+        CanRecorder::instance().dumpPageNumber(pg);
       } else {
-        Serial.println("[ERROR] Page must be 1 or higher.");
+        Serial.println("[ERROR] Page must be a valid integer 1 or higher.");
       }
     } else if (strcasecmp(cmd, "CAPTURE STOP") == 0 || strcasecmp(cmd, "CAPTURE PAUSE") == 0) {
       CanRecorder::instance().flush();
@@ -613,7 +612,7 @@ private:
 #endif
     Serial.printf("Operating Mode: %s\r\n", config::modeName);
     Serial.printf("Target Vehicle: %s\r\n", config::vehicle);
-    Serial.printf("Transceiver: %s (Passive listen-only; TX pin %d disconnected/pulled-up)\r\n",
+    Serial.printf("Transceiver: %s (Passive listen-only; GPIO%d disconnected, CTX to 3V3 directly)\r\n",
                   config::transceiver, config::txPin);
     Serial.printf("Uptime: %lu ms | Boot Count: %lu | Last Reset Reason: %s\r\n",
                   (unsigned long)now, (unsigned long)sm.bootCount(), diag.resetReasonString());
@@ -703,7 +702,7 @@ private:
                     (unsigned)candidateMonitor_.maxObservedRaw());
     }
     Serial.println("Calibration: UNVERIFIED (Keep RPM_MAPPED=NO until physical tachometer verified)");
-    Serial.printf("Physical Shift Lights: %s | CAN TX: PHYSICALLY ISOLATED\r\n",
+    Serial.printf("Physical Shift Lights: %s | CAN TX: SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)\r\n",
                   dashboard_.isTestRpmActive() ? "BENCH TEST OVERRIDE" : "DISABLED");
 
     Serial.println("\n--- Intelligent Diagnostics & Troubleshooting ---");
@@ -745,8 +744,9 @@ private:
       Serial.println("  Recommendations:");
       Serial.println("    1. Turn motorcycle ignition switch ON.");
       Serial.println("    2. Verify SN65HVD230 VCC connects to ESP32 3V3 and GND connects to GND.");
-      Serial.println("    3. Verify CAN-H and CAN-L connection to vehicle diagnostic port.");
-      Serial.println("    4. Verify transceiver RXD connects to ESP32 GPIO16 and RS connects to GND.");
+      Serial.println("    3. Verify breakout CTX connects directly to ESP32 3V3 (NO series resistor).");
+      Serial.println("    4. Verify breakout CRX connects to ESP32 GPIO16, and GPIO17 is disconnected.");
+      Serial.println("    5. Verify CAN-H and CAN-L connections to vehicle diagnostic port.");
     }
 
     if (transport_.busErrors() > 0) {
@@ -803,7 +803,7 @@ private:
   RpmCandidateMonitor candidateMonitor_;
   bool rpmMonitorStreaming_ = false;
   uint32_t lastRpmMonitorPrint_ = 0;
-  uint32_t rpmTestExpireMs_ = 0;
+  uint32_t rpmTestStartMs_ = 0;
 #if defined(PULSESHIFT_TEST_BUILD) && (PULSESHIFT_MODE == PULSESHIFT_TWAI_TEST)
   uint32_t lastSent_ = 0, sequence_ = 0;
 #endif

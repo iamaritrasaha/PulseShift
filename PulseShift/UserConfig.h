@@ -139,9 +139,9 @@
 #endif
 // DEFAULT: GPIO17, reserved for transceiver TXD; leave unconnected in LED demo.
 // DO NOT CHANGE WITHOUT VERIFICATION: reset/passivity protection. In listen-only modes,
-// firmware disconnects this pin from output. SN65HVD230 pin 8 (Rs) connects to GND
-// (high-speed mode) while pin 1 (TXD) must be held recessive (3.3V) to guarantee
-// zero bus transmission.
+// firmware isolates this pin in input mode. On the physical hardware, ESP32 GPIO17 must
+// remain physically disconnected, while breakout CTX/TXD connects directly to ESP32 3V3
+// (no resistor required) to guarantee zero bus transmission.
 #ifndef PULSESHIFT_CAN_TX_GPIO
 #define PULSESHIFT_CAN_TX_GPIO 17
 #endif

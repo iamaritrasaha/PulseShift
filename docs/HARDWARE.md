@@ -2,7 +2,7 @@
 
 Comprehensive hardware specification, circuit diagrams, and electrical guidelines for the PulseShift ESP32 shift-light and CAN diagnostic logger.
 
-Target vehicle context: **Bajaj Pulsar NS125 (2025 ABS model)**. The physical diagnostic connector cavity layout, CAN bus availability on the connector, bitrate, and RPM CAN ID remain unverified until physical packet capture is performed.
+Target vehicle context: **Bajaj Pulsar NS125 (2025 ABS model)**. Physical CAN bus acquisition was successfully verified on this vehicle at **500 kbps** (Session 2: 22,542 records across 3 stages, 18 distinct CAN IDs, 0 corrupt records, ~82.5s duration). Candidate engine-speed frames were identified at **arbitration ID 0x301, payload byte 0** (provisional multiplier 40.0). However, the **mathematical RPM calibration remains strictly UNVERIFIED** against an independent physical reference tachometer. Physical shift lights remain disabled until calibration is verified.
 
 ---
 
@@ -29,9 +29,9 @@ The firmware targets the standard 30-pin DOIT ESP32 DevKit V1 board.
 | Board Pin | ESP32 GPIO | Net / Function | Connection Destination | Electrical Rules |
 |---|---|---|---|---|
 | D27 | GPIO27 | WS2812B Data | LED strip DIN (via 330-470 ohm resistor) | 3.3V logic (800 kHz NRZ); keep lead short |
-| RX2 | GPIO16 | TWAI RX | SN65HVD230 Pin 4 (RXD / R) | 3.3V digital logic input from transceiver |
-| TX2 | GPIO17 | TWAI TX | **PHYSICALLY DISCONNECTED** | Air gap; DO NOT connect to transceiver TXD |
-| 3V3 | 3.3V Rail | Logic VCC | SN65HVD230 Pin 3 (VCC), OLED VCC | Regulated 3.3V output from onboard LDO |
+| RX2 | GPIO16 | TWAI RX | Breakout CRX (Pin 4 / RXD) | 3.3V digital logic input from transceiver |
+| TX2 | GPIO17 | TWAI TX | **PHYSICALLY DISCONNECTED** | Air gap; DO NOT connect to transceiver CTX (software cannot detect wiring) |
+| 3V3 | 3.3V Rail | Logic VCC & TXD Clamp | Breakout VCC (Pin 3) & Breakout CTX (Pin 1 / TXD) | Directly powers transceiver and clamps CTX recessive (NO resistor) |
 | VIN | 5V Rail | Power Input | Regulated 5V output from DC-DC converter | 5.0V input; do not exceed 5.5V |
 | GND | Ground | Common GND | Power GND, LED GND, Transceiver GND, Bike GND | All system grounds must be securely bonded |
 | D21 | GPIO21 | OLED SDA | Optional SSD1306 OLED SDA | 3.3V I2C data (disabled by default) |
@@ -77,42 +77,45 @@ PulseShift is strictly a passive CAN listener. It never transmits frames, acknow
 
 ### Connection Requirements
 
-| SN65HVD230 Pin | Label | Connection | Purpose & Safety Rule |
+| SN65HVD230 Breakout Pin | Chip Function | Connection Destination | Purpose & Safety Rule |
 |---|---|---|---|
-| Pin 1 | D / TXD | 3.3V (via 10k ohm pull-up) | **Forced recessive**. The transmitter cannot drive dominant bits onto the vehicle bus. |
-| Pin 2 | GND | Common GND | Logic ground and reference for differential signals. |
-| Pin 3 | VCC | ESP32 3V3 Pin | Powered strictly from 3.3V. **Never connect to 5V or 12V.** |
-| Pin 4 | R / RXD | ESP32 GPIO16 | Drives 3.3V digital logic (reconstructed CAN bits) into ESP32 TWAI RX. |
-| Pin 5 | Vref | Not Connected (NC) | Nominal VCC/2 reference output. Leave open. |
-| Pin 6 | CANL | Motorcycle CAN-L | Low-voltage differential bus line. |
-| Pin 7 | CANH | Motorcycle CAN-H | High-voltage differential bus line. |
-| Pin 8 | Rs | ESP32 GND (Ground) | **Normal high-speed receiver mode**. Enables full 1 Mbps bandwidth. |
+| Pin 1 / CTX | D / TXD | ESP32 3V3 Rail (Direct wire) | **Forced recessive**. Directly tied to 3.3V (NO resistor) so driver cannot transmit dominant bits. |
+| Pin 2 / GND | GND | Common GND | Logic ground and reference for differential signals. |
+| Pin 3 / 3V3 | VCC | ESP32 3V3 Pin | Powered strictly from regulated 3.3V. **Never connect to 5V or 12V.** |
+| Pin 4 / CRX | R / RXD | ESP32 GPIO16 | Drives 3.3V digital logic (reconstructed CAN bits) into ESP32 TWAI RX. |
+| Pin 5 / Vref | Vref | Not Connected (NC) | Nominal VCC/2 reference output. Leave open. |
+| Pin 6 / CANL | CANL | Motorcycle CAN-L | Low-voltage differential bus line. |
+| Pin 7 / CANH | CANH | Motorcycle CAN-H | High-voltage differential bus line. |
+| Pin 8 / Rs | Rs | ESP32 GND (Ground) | **Normal high-speed receiver mode**. Enables full 1 Mbps bandwidth. |
 
 ### Transceiver Mode: Why Rs Connects to GND
 
 The Texas Instruments SN65HVD230 datasheet specifies the behavior of Pin 8 (Rs):
-- **Rs to GND (< 0.33 * VCC)**: Normal high-speed mode. The receiver and driver operate with standard propagation delays, supporting data rates up to 1 Mbps.
+- **Rs to GND (< 0.33 * VCC)**: Normal high-speed mode. The receiver and driver operate with standard propagation delays, supporting data rates up to 1 Mbps. On many commercial breakout boards, Rs is already tied to GND on the PCB; if no separate Rs pin is broken out, the board is hardwired for high-speed mode.
 - **Rs through resistor to GND (10k to 100k ohm)**: Slope control mode. Limits slew rate to reduce EMI.
 - **Rs to VCC (> 0.75 * VCC)**: Low-power standby mode. The driver is disabled, but the receiver enters a low-power listening state with high propagation delay, unsuitable for high-speed vehicle networks (e.g. 500 kbps).
 
 **Important**: Connecting Rs to GND selects normal high-speed receiver operation. It does NOT enable transmission by itself. Passive listen-only safety is achieved through three independent hardware and software safeguards:
-1. **Physical Air Gap**: ESP32 GPIO17 is physically disconnected from the transceiver TXD.
-2. **Forced Recessive Bias**: Transceiver Pin 1 (TXD) is held permanently HIGH with a 3.3V pull-up resistor. On CAN transceivers, a HIGH TXD input forces the differential driver into recessive (idle) state.
-3. **TWAI Listen-Only Mode**: The ESP32 TWAI peripheral is initialized with `TWAI_MODE_LISTEN_ONLY`, which suppresses dominant ACK bits and error frames.
+1. **Physical Air Gap on GPIO17**: ESP32 GPIO17 is physically disconnected from the transceiver CTX pin. Note that the ESP32 microcontroller cannot detect whether an external wire is physically present; physical air gap inspection is mandatory.
+2. **Forced Recessive Bias via Direct 3.3V Connection**: Transceiver breakout pin `CTX` (Pin 1 / TXD) is connected directly to the ESP32 3V3 rail (NO 10k resistor). On CAN transceivers, a constant HIGH input clamps the differential driver permanently in the recessive (idle) state.
+3. **TWAI Listen-Only Mode**: The ESP32 TWAI peripheral is initialized with `TWAI_MODE_LISTEN_ONLY`, which suppresses dominant ACK bits and error frames in the controller hardware.
 
-### Critical: 120 Ohm Termination Resistor Removal
+### 120 Ohm Termination Resistor Considerations
 
 Standard ISO 11898-2 CAN buses are terminated at both physical ends with 120 ohm resistors, resulting in a nominal bus impedance of 60 ohms:
 $$\frac{1}{R_{total}} = \frac{1}{120\,\Omega} + \frac{1}{120\,\Omega} = \frac{1}{60\,\Omega} \implies R_{total} = 60\,\Omega$$
 
-Commercial SN65HVD230 breakout boards typically include an onboard 120 ohm SMD resistor (often labeled `R2` or `1200`) soldered directly across CANH and CANL.
-
-Because PulseShift connects as a **stub tap** to an existing, already terminated motorcycle bus, leaving this onboard resistor in place adds a third 120 ohm resistor in parallel:
+Because PulseShift connects as an intermediate stub tap to an existing, already terminated motorcycle network, the tap itself must not introduce a third terminating resistor:
 $$\frac{1}{R_{total}} = \frac{1}{120\,\Omega} + \frac{1}{120\,\Omega} + \frac{1}{120\,\Omega} = \frac{1}{40\,\Omega} \implies R_{total} = 40\,\Omega$$
 
-This drops the total bus resistance to 40 ohms, increasing transceiver current draw, reducing differential voltage swing, and triggering bus errors in the motorcycle ECU and ABS controllers.
+Dropping total bus resistance to 40 ohms increases transceiver current draw and can trigger ECU bus error warnings.
 
-**Mandatory action**: Before connecting the breakout board to the motorcycle, measure the resistance between CANH and CANL using a multimeter with the module unpowered. If it reads approximately 120 ohms, locate and desolder resistor R2 (or cut its PCB jumper trace). Resistance between CANH and CANL on the disconnected module must read open circuit (infinity).
+**Diagnostic Verification Procedure (Do not assume all boards have R2)**:
+1. Unpower the SN65HVD230 breakout module and disconnect it from all wiring.
+2. Measure the resistance across the module's `CANH` and `CANL` screw terminals / header pins using a digital multimeter.
+3. **If resistance measures ~120 ohms**: Locate the onboard SMD termination resistor (often labeled `R2` or `1200`, or a trace jumper pad) and desolder it (or cut the trace jumper).
+4. **If resistance measures open circuit / mega-ohms**: The breakout board was manufactured without a termination resistor. No desoldering is necessary.
+5. *Bench Testing Note*: When bench testing with a standalone CAN node (e.g. an isolated ECU simulator without internal termination), a 120 ohm resistor must be present across the test bench bus.
 
 ---
 
@@ -182,27 +185,31 @@ The signal flow from engine crankshaft rotation to visual shift light illuminati
 
 ### Distinguishing Key CAN & Engine Concepts
 
-To assemble and troubleshoot this system effectively, understand the distinct layers:
+To assemble, calibrate, and troubleshoot this system effectively, understand the distinct functional layers:
 
 1. **CAN Electrical Signals**:
    Physical voltages on the twisted-pair wire. A dominant bit is represented when CAN-H is pulled up to ~3.5V and CAN-L is pulled down to ~1.5V (differential voltage ~2.0V). A recessive bit occurs when both lines float at approximately 2.5V (differential voltage ~0.0V).
 
 2. **CAN Frame Identifiers (CAN ID)**:
-   A standard 11-bit (e.g. `0x1F0`) or extended 29-bit header at the start of each packet that defines the message identity and priority. For example, one ID might broadcast engine status, while another broadcasts wheel speeds. On the Pulsar NS125, the exact CAN ID carrying engine RPM is currently unknown.
+   A standard 11-bit (e.g. `0x301`) or extended 29-bit header at the start of each packet defining message identity and priority. In real acquisition on the 2025 Pulsar NS125 ABS, 18 distinct CAN IDs were recorded at 500 kbps across key-on, idling, and gentle throttle sweep stages.
 
 3. **CAN Payload Bytes**:
-   Up to 8 data bytes (`Byte 0` through `Byte 7`) contained within each frame. The RPM data is typically encoded into two contiguous bytes (16 bits), stored either in big-endian (MSB first) or little-endian (LSB first) order.
+   Up to 8 data bytes (`Byte 0` through `Byte 7`) contained within each frame. Real capture analysis identified **CAN ID 0x301, Payload Byte 0** as the primary candidate carrying engine speed data:
+   - Key ON, Engine OFF: raw value `0`
+   - Engine Idling (~1,400-1,600 RPM): raw value `35` to `40`
+   - Gentle Throttle Sweeps: raw value climbing dynamically up to `240`
 
-4. **Engine RPM Values**:
-   The calculated rotational speed of the engine crankshaft in revolutions per minute, derived by converting the raw 16-bit integer payload using a mathematical scaling formula:
-   $$\text{Engine RPM} = (\text{Raw Integer} \times \text{Multiplier}) + \text{Offset}$$
-   For instance, on some systems `RPM = Raw * 0.25`, while on others `RPM = Raw * 1.0`.
+4. **Engine RPM Values & Provisional Scaling**:
+   The calculated rotational speed of the engine crankshaft in revolutions per minute, derived by converting the candidate payload byte using a provisional multiplier:
+   $$\text{Estimated RPM} = \text{Raw Byte Value} \times 40.0$$
+   *Crucial safety distinction*: While the 40.0 multiplier yields ~1,400-1,600 RPM at idle and ~9,600 RPM at peak throttle sweeps (consistent with single-cylinder 125cc tachometer behavior), this calculation is **uncalibrated** against an independent physical reference tachometer. Physical shift lights must remain disabled in vehicle mode (`RPM_MAPPED=NO`) until calibration is verified.
 
 5. **Shift-Light Thresholds**:
-   Firmware configuration settings in `UserConfig.h` that determine when LEDs light up:
-   - `PULSESHIFT_DEMO_START_RPM` (default: 0 RPM): Start of progression.
-   - 1000 RPM increments: Each additional LED illuminates as engine speed climbs.
-   - `PULSESHIFT_DEMO_SHIFT_RPM` (default: 6000 RPM): Threshold where all six LEDs flash red in unison.
+   Firmware configuration settings in `UserConfig.h` that determine LED illumination stages when RPM is verified:
+   - `PULSESHIFT_RPM_REV_START` (default: 5000 RPM): Threshold where the first green LED illuminates.
+   - Intermediate RPM steps: Progressive illumination through yellow warnings as RPM approaches redline.
+   - `PULSESHIFT_RPM_SHIFT` (default: 8000 RPM): Threshold where all six LEDs flash red in unison.
+   - `PULSESHIFT_RPM_HYSTERESIS` (default: 100 RPM): Deadband preventing flickering at threshold boundaries.
 
 ---
 
@@ -211,10 +218,10 @@ To assemble and troubleshoot this system effectively, understand the distinct la
 Before connecting PulseShift to any motorcycle:
 
 1. [ ] **Measure 12V Regulator Output**: Verify with a multimeter that the buck converter outputs strictly 5.0V (+-0.2V) before connecting ESP32 or LEDs.
-2. [ ] **Check 120 Ohm Bus Resistor**: Verify with a multimeter that CANH-to-CANL resistance on the unpowered SN65HVD230 breakout is open circuit (infinity). If 120 ohms, desolder R2.
-3. [ ] **Verify GPIO17 Isolation**: Confirm that ESP32 GPIO17 is disconnected with no wire inserted in its header socket.
-4. [ ] **Verify TXD Pull-Up**: Check that SN65HVD230 Pin 1 (TXD) is tied to 3.3V through a 10k ohm resistor.
-5. [ ] **Verify Rs Pin**: Check that SN65HVD230 Pin 8 (Rs) is tied directly to GND.
-6. [ ] **Verify Common Ground**: Measure 0.0 ohms between ESP32 GND, power supply negative, LED GND, and transceiver GND.
-7. [ ] **Verify LED Capacitor**: Confirm 1000 uF capacitor polarity (+ lead to 5V, - lead to GND).
-8. [ ] **Identify Bike Pins**: Probe the motorcycle diagnostic connector with a multimeter (key on, engine off) to locate CAN-H (~2.5V to GND) and CAN-L (~2.5V to GND). Do not rely solely on wire color.
+2. [ ] **Check 120 Ohm Bus Resistor**: Measure resistance across the unpowered SN65HVD230 breakout's `CANH` and `CANL` pins with a multimeter. If ~120 ohms is measured, locate and desolder the SMD termination resistor (often labeled `R2` or `1200`) or cut the trace jumper to avoid loading the vehicle bus down to 40 ohms. If open circuit, leave as is.
+3. [ ] **Verify GPIO17 Physical Isolation**: Confirm that ESP32 GPIO17 has an air gap with no wire inserted in its header socket. Software cannot verify physical wire presence; manual inspection is mandatory.
+4. [ ] **Verify CTX / TXD Direct Clamping**: Confirm that SN65HVD230 breakout `CTX` (Pin 1 / TXD) is connected directly to the ESP32 3V3 rail. No 10k resistor is used in the verified working configuration. This clamps the transceiver driver permanently recessive.
+5. [ ] **Verify Rs Pin**: Check that Pin 8 (Rs) is tied to GND. On standard commercial breakout modules, this is connected to GND directly on the PCB for normal high-speed operation.
+6. [ ] **Verify Common Ground**: Measure 0.0 ohms between ESP32 GND, power supply negative, LED GND, transceiver GND, and motorcycle signal ground.
+7. [ ] **Verify LED Capacitor**: Confirm 1000 uF electrolytic capacitor polarity (+ lead to 5V rail, - lead to GND rail).
+8. [ ] **Identify Bike Pins**: Probe the motorcycle diagnostic connector with a multimeter (key on, engine off) to locate CAN-H (~2.5V-3.0V to GND) and CAN-L (~2.0V-2.5V to GND). Do not rely solely on wire color.

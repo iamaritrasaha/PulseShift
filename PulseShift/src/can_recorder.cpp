@@ -201,36 +201,43 @@ void CanRecorder::begin(uint32_t sessionId, uint32_t bootCount, uint32_t bitrate
                       (unsigned long)sz);
 #endif
       } else if (sz > sizeof(CaptureHeader)) {
-        const size_t recordsInFile = (sz - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
-        // If boot count or session ID differs, this capture was recorded in an earlier boot/session
-        if (hdr.bootCount != bootCount_ || hdr.sessionId != sessionId_) {
-          flashPreserved_ = true;
-          storageFull_ = true;
-          recording_ = false;
-          sessionId_ = hdr.sessionId;
-          DiagLogger::instance().logEvent(DiagLevel::Warn, "FLASH_CAPTURE_PRESERVED",
-                                         "Prior session %lu capture preserved (%lu records, %lu bytes). Use DUMP to export, or CLEAR YES to overwrite.",
-                                         (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
-#if PULSESHIFT_SERIAL_DIAGNOSTICS
-          Serial.printf("FLASH CAPTURE PRESERVED: session %lu has %lu records (%lu bytes). Use DUMP to export, or CLEAR YES to overwrite.\r\n",
-                        (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)sz);
-#endif
-        } else {
-          // Same session/boot: recover any trailing partial record at EOF
-          const size_t dataLen = sz - sizeof(CaptureHeader);
-          const size_t remainder = dataLen % sizeof(CanLogRecord);
-          if (remainder != 0) {
-            const bool truncOk = truncateToSize(CAPTURE_PATH, sz - remainder);
-            if (truncOk) {
-              DiagLogger::instance().logEvent(DiagLevel::Warn, "CAPTURE_RECOVERED",
-                                             "Truncated %u partial bytes at EOF", (unsigned)remainder);
-            } else {
-              DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_FAILED",
-                                             "Could not safely truncate %u partial bytes at EOF; original preserved.", (unsigned)remainder);
-            }
-          }
-          if (sm.size(CAPTURE_PATH) >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
+        size_t currentSz = sz;
+        const size_t dataLen = currentSz - sizeof(CaptureHeader);
+        const size_t remainder = dataLen % sizeof(CanLogRecord);
+        if (remainder != 0) {
+          const bool truncOk = truncateToSize(CAPTURE_PATH, currentSz - remainder);
+          if (truncOk) {
+            currentSz -= remainder;
+            DiagLogger::instance().logEvent(DiagLevel::Warn, "CAPTURE_RECOVERED",
+                                           "Truncated %u partial bytes at EOF", (unsigned)remainder);
+          } else {
+            damagedRecording_ = true;
             storageFull_ = true;
+            recording_ = false;
+            DiagLogger::instance().logEvent(DiagLevel::Error, "TRUNCATE_FAILED",
+                                           "Could not safely truncate %u partial bytes at EOF; original preserved.", (unsigned)remainder);
+          }
+        }
+
+        if (!damagedRecording_) {
+          const size_t recordsInFile = (currentSz - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
+          // If boot count or session ID differs, this capture was recorded in an earlier boot/session
+          if (hdr.bootCount != bootCount_ || hdr.sessionId != sessionId_) {
+            flashPreserved_ = true;
+            storageFull_ = true;
+            recording_ = false;
+            sessionId_ = hdr.sessionId;
+            DiagLogger::instance().logEvent(DiagLevel::Warn, "FLASH_CAPTURE_PRESERVED",
+                                           "Prior session %lu capture preserved (%lu records, %lu bytes). Use DUMP to export, or CLEAR YES to overwrite.",
+                                           (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)currentSz);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+            Serial.printf("FLASH CAPTURE PRESERVED: session %lu has %lu records (%lu bytes). Use DUMP to export, or CLEAR YES to overwrite.\r\n",
+                          (unsigned long)hdr.sessionId, (unsigned long)recordsInFile, (unsigned long)currentSz);
+#endif
+          } else {
+            if (sm.size(CAPTURE_PATH) >= MAX_CAPTURE_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
+              storageFull_ = true;
+            }
           }
         }
       }
@@ -508,10 +515,33 @@ void CanRecorder::flush() {
   // Write in contiguous batches from ring buffer to minimize flash transaction overhead
   while (count_ > 0) {
     const size_t contiguous = (head_ > tail_) ? count_ : (RING_CAPACITY - tail_);
-    const size_t batchCount = (contiguous > count_) ? count_ : contiguous;
+    size_t batchCount = (contiguous > count_) ? count_ : contiguous;
+
+    // Check available space before each batch to avoid unaligned partial writes
+    const size_t currentSize = sm.size(CAPTURE_PATH);
+    const size_t freeB = sm.freeBytes();
+    const size_t safeFreeBytes = (freeB > StorageManager::MIN_FREE_BYTES) ? (freeB - StorageManager::MIN_FREE_BYTES) : 0;
+    const size_t maxRecordsByFree = safeFreeBytes / sizeof(CanLogRecord);
+    const size_t bytesRemaining = (MAX_CAPTURE_SIZE > currentSize) ? (MAX_CAPTURE_SIZE - currentSize) : 0;
+    const size_t maxRecordsBySize = bytesRemaining / sizeof(CanLogRecord);
+    const size_t maxAllowed = (maxRecordsByFree < maxRecordsBySize) ? maxRecordsByFree : maxRecordsBySize;
+
+    if (maxAllowed == 0) {
+      storageFull_ = true;
+      droppedFrames_ += count_;
+      count_ = 0;
+      head_ = tail_;
+      break;
+    }
+    if (batchCount > maxAllowed) {
+      batchCount = maxAllowed;
+    }
+
     const size_t bytesToWrite = batchCount * sizeof(CanLogRecord);
     const size_t written = f.write(reinterpret_cast<const uint8_t*>(&ring_[tail_]), bytesToWrite);
     const size_t recordsWritten = written / sizeof(CanLogRecord);
+    const size_t remainder = written % sizeof(CanLogRecord);
+
     recordedFrames_ += recordsWritten;
     tail_ = (tail_ + recordsWritten) % RING_CAPACITY;
     count_ -= recordsWritten;
@@ -522,8 +552,27 @@ void CanRecorder::flush() {
       head_ = tail_;
       writeError_ = true;
       storageFull_ = true;
-      DiagLogger::instance().logEvent(DiagLevel::Error, "STORAGE_ERROR",
-                                     "Write error while flushing record to flash.");
+      if (remainder != 0) {
+        // A partial unaligned record fragment was written before failure.
+        // Close file handle and attempt immediate truncation to remove orphaned bytes.
+        f.flush();
+        f.close();
+        const size_t badSize = sm.size(CAPTURE_PATH);
+        if (badSize >= remainder && truncateToSize(CAPTURE_PATH, badSize - remainder)) {
+          DiagLogger::instance().logEvent(DiagLevel::Warn, "PARTIAL_RECORD_TRUNCATED",
+                                         "Short write recovered: %u partial bytes truncated.",
+                                         (unsigned)remainder);
+        } else {
+          damagedRecording_ = true;
+          DiagLogger::instance().logEvent(DiagLevel::Error, "PARTIAL_RECORD_COMMITTED",
+                                         "Short write left %u partial bytes at EOF; marked damaged.",
+                                         (unsigned)remainder);
+        }
+        return;
+      } else {
+        DiagLogger::instance().logEvent(DiagLevel::Error, "STORAGE_ERROR",
+                                       "Write error while flushing record to flash.");
+      }
       break;
     }
   }

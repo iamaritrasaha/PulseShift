@@ -104,19 +104,18 @@ size_t StorageManager::freeBytes() {
 }
 
 bool StorageManager::format() {
-  if (!mounted_) {
-    // Try to mount or format directly
-    if (LittleFS.format()) {
-      mounted_ = LittleFS.begin(false, "/littlefs", 10, "spiffs");
-      mountFailed_ = !mounted_;
-      storageFull_ = false;
-      return mounted_;
-    }
-    return false;
+  if (mounted_) {
+    LittleFS.end();
+    mounted_ = false;
   }
-  const bool ok = LittleFS.format();
-  storageFull_ = false;
-  return ok;
+  if (LittleFS.format()) {
+    mounted_ = LittleFS.begin(false, "/littlefs", 10, "spiffs");
+    mountFailed_ = !mounted_;
+    storageFull_ = false;
+    return mounted_;
+  }
+  mountFailed_ = true;
+  return false;
 }
 
 File StorageManager::open(const char* path, const char* mode) {

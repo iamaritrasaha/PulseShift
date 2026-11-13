@@ -20,8 +20,6 @@ __pycache__/
 # Release ZIP artifacts (built on CI)
 PulseShift-Arduino-v*.zip
 PulseShift-Arduino-v*.sha256
-REVIX-LINK-Arduino-v*.zip
-REVIX-LINK-Arduino-v*.sha256
 
 # Local notes and documentation
 /docs/research-*/

@@ -189,6 +189,75 @@ void test_status_and_stream_formatting() {
   pass("status and stream line formatting functions");
 }
 
+void test_bounds_and_nan_safety() {
+  // Test invalid byte index clamping in constructor
+  RpmCandidateMonitor badIdx(0x301, 10, 40.0f);
+  CHECK(badIdx.byteIndex() == 0); // clamped to 0
+
+  badIdx.setByteIndex(15);
+  CHECK(badIdx.byteIndex() == 0); // ignored, stays 0
+
+  badIdx.setByteIndex(4);
+  CHECK(badIdx.byteIndex() == 4);
+
+  // Test NaN / Inf multiplier rejection
+  float nanVal = 0.0f / 0.0f;
+  float infVal = 1.0f / 0.0f;
+  badIdx.setMultiplier(nanVal);
+  CHECK(badIdx.multiplier() == 40.0f); // unchanged
+
+  badIdx.setMultiplier(infVal);
+  CHECK(badIdx.multiplier() == 40.0f); // unchanged
+
+  badIdx.setMultiplier(-10.0f);
+  CHECK(badIdx.multiplier() == 40.0f); // unchanged
+
+  badIdx.setMultiplier(2000.0f);
+  CHECK(badIdx.multiplier() == 40.0f); // exceeds 1000 limit, unchanged
+
+  badIdx.setMultiplier(60.0f);
+  CHECK(badIdx.multiplier() == 60.0f);
+
+  // Test DLC bounds check in ingest
+  CanFrame shortDlc{};
+  shortDlc.id = 0x301;
+  shortDlc.dlc = 8;
+  // If byteIndex is 4, but dlc is 3
+  RpmCandidateMonitor mon4(0x301, 4, 40.0f);
+  CanFrame f = make301Frame(37, 8);
+  f.data[4] = 42;
+  CHECK(mon4.ingest(f, 100));
+  CHECK(mon4.rawValue() == 42);
+
+  pass("bounds checking, NaN/Inf rejection, and multiplier bounds safety");
+}
+
+void test_extended_can_id_support() {
+  // 29-bit candidate ID
+  RpmCandidateMonitor extMon(0x18FEE000, 0, 0.125f);
+  CHECK(extMon.candidateId() == 0x18FEE000);
+
+  // Standard frame for extended candidate must be rejected
+  CanFrame stdFrame{};
+  stdFrame.id = 0x18FEE000;
+  stdFrame.extended = false;
+  stdFrame.dlc = 8;
+  CHECK(!extMon.ingest(stdFrame, 100));
+  CHECK(extMon.rejectedCount() == 1);
+
+  // Extended frame must be accepted
+  CanFrame extFrame{};
+  extFrame.id = 0x18FEE000;
+  extFrame.extended = true;
+  extFrame.dlc = 8;
+  extFrame.data[0] = 80;
+  CHECK(extMon.ingest(extFrame, 200));
+  CHECK(extMon.receivedCount() == 1);
+  CHECK(extMon.rawValue() == 80);
+
+  pass("extended 29-bit CAN ID candidate frame support");
+}
+
 } // namespace
 
 int main() {
@@ -198,6 +267,8 @@ int main() {
   test_freshness_timeout_and_recovery();
   test_timer_rollover();
   test_custom_multiplier();
+  test_bounds_and_nan_safety();
+  test_extended_can_id_support();
   test_status_and_stream_formatting();
 
   std::printf("ALL PASS: %u cases, %u assertions\n", cases, assertions);

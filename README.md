@@ -1,18 +1,19 @@
 # PulseShift
 
-Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware. The firmware boots directly into passive CAN capture mode to acquire, stream, and record motorcycle CAN traffic from the Bajaj Pulsar NS125 ABS (2025), enabling exact identification of the motorcycle's RPM message. Once the vehicle profile is verified, six WS2812B LEDs light up progressively with engine RPM, flashing red at 6000 RPM as the shift alert.
+Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware. The firmware boots directly into passive CAN capture mode to acquire, stream, and record motorcycle CAN traffic from the Bajaj Pulsar NS125 ABS (2025), enabling exact identification and calibration of the motorcycle's RPM message. Once the vehicle profile is calibrated against an independent reference tachometer, six WS2812B LEDs light up progressively with engine RPM, flashing red at redline/shift RPM as the shift alert.
 
 ## What it does
 
-- **CAN Capture mode (Default production mode)**: Boots directly into passive listen-only mode at 500000 bps, receiving real motorcycle CAN frames, streaming rate-limited candidate telemetry, and recording frames with CRC16 checksums to internal flash (LittleFS).
-- **Live RPM Candidate Monitor (CAN ID 0x301)**: Continuously monitors the provisional engine-speed signal identified on the 2025 Bajaj Pulsar NS125 ABS (arbitration ID 0x301, payload byte 0). Calculates estimated RPM using a configurable provisional multiplier (default 40.0), tracks signal freshness with a 250 ms timeout, detects signal anomalies, and provides instant telemetry via `RPM STATUS` and `RPM MONITOR ON`.
-- **Bench-Testable Shift Light Engine**: The 6-LED WS2812B shift-light engine can be bench tested with simulated RPM inputs (`RPM TEST <val>`), verifying color transitions and 6000 RPM shift alerts without vehicle operation. In vehicle operation, physical engine-triggered shift lights remain strictly disabled (`RPM_MAPPED=NO`) until calibration against an independent physical tachometer is complete.
-- **Optimized CAN Reliability & High-Throughput Buffering**: Flash operations in CanRecorder are batched into contiguous memory blocks with an expanded 256-frame ring buffer, preventing SPI flash write delays from causing TWAI hardware overruns or driver missed frames.
-- **Intelligent diagnostics & error logging**: Real-time diagnostic events (CAN overflows, bus errors, storage full alerts, reset reasons) are streamed over USB and safely recorded to flash without circular wipes.
-- **Understandable LED hardware status**: In CAN capture mode, the six LEDs display controller health, frame arrival heartbeat, active recording stage (1, 2, or 3), and flash storage status.
+- **CAN Capture Mode (Default Production Mode)**: Boots directly into passive listen-only mode at 500,000 bps, receiving real motorcycle CAN frames, streaming rate-limited candidate telemetry, and recording frames with CRC16 checksums to internal flash (LittleFS).
+- **Physical CAN Acquisition Verified**: Real-world motorcycle acquisition successfully verified on a **2025 Bajaj Pulsar NS125 ABS** at 500,000 bps (Session 2: 22,542 exported records across 3 stages, 18 distinct CAN IDs, 0 corrupt records, ~82.5s duration).
+- **Live RPM Candidate Monitor (CAN ID 0x301)**: Continuously monitors the provisional engine-speed signal identified on the Pulsar NS125 (arbitration ID `0x301`, payload byte 0). Calculates estimated RPM using a configurable provisional multiplier (default 40.0), tracks signal freshness with a 250 ms timeout, detects signal anomalies, and provides instant telemetry via `RPM STATUS` and `RPM MONITOR ON`.
+- **Bench-Testable Shift Light Engine**: The 6-LED WS2812B shift-light engine can be bench tested with simulated RPM inputs (`RPM TEST <val>`), verifying color transitions and shift alerts without vehicle operation. In vehicle operation, physical engine-triggered shift lights remain strictly disabled (`RPM_MAPPED=NO`) until calibration against an independent physical tachometer is complete.
+- **Optimized CAN Reliability & High-Throughput Buffering**: Flash operations in CanRecorder are batched into 512-byte blocks with an expanded 256-frame ring buffer and multi-frame drain loop. Telemetry counters independently track ring drops (`rec_dropped`), TWAI driver queue drops (`missed`), and hardware FIFO overruns (`overrun`).
+- **Intelligent Diagnostics & Error Logging**: Real-time diagnostic events (CAN overflows, bus errors, storage full alerts, reset reasons) are streamed over USB and safely recorded to flash without circular wipes.
+- **Understandable LED Hardware Status**: In CAN capture mode, the six LEDs display controller health, frame arrival heartbeat, active recording stage (1, 2, or 3), and flash storage status.
 
 > [!IMPORTANT]
-> **Production Integrity Policy**: The production firmware contains no simulation, artificial RPM generation, or synthetic ECU traffic. If no motorcycle CAN frames arrive, the system truthfully reports `NO_CAN_TRAFFIC`. Mock CAN frames are strictly restricted to isolated host automated unit tests.
+> **Production Integrity Policy**: The production firmware contains no simulation, artificial RPM generation, or synthetic ECU traffic in vehicle capture mode. If no motorcycle CAN frames arrive, the system truthfully reports `NO_CAN_TRAFFIC`. Mock CAN frames are strictly restricted to isolated host automated unit tests.
 
 ## Parts
 
@@ -20,13 +21,14 @@ Customizable ESP32 motorcycle shift-light and real CAN bus acquisition firmware.
 
 | Part | Notes |
 |---|---|
-| ESP32 DevKit V1 (ESP32-WROOM-32) | 30-pin board with USB data cable |
+| ESP32 DevKit V1 (ESP32-WROOM-32) | 30-pin board with micro-USB data cable |
 | 6x WS2812B LED strip (5V, GRB, 800kHz) | 6-LED addressable segment |
 | 330-470 ohm resistor | In series with LED data line (close to DIN) |
 | 1000 uF 10V electrolytic capacitor | Across LED power rails at the strip (+ to 5V, - to GND) |
 | Regulated 5V supply, >= 1A (or DC-DC buck) | Powers LEDs (and ESP32 VIN when on motorcycle) |
-| SN65HVD230 3.3V CAN transceiver | For CAN Capture and Vehicle modes (remove onboard 120 ohm resistor) |
-| 10k ohm resistor | Pull-up resistor from transceiver TXD to 3.3V |
+| SN65HVD230 3.3V CAN transceiver breakout | Breakout pins labeled `CTX` (Pin 1 / TXD) and `CRX` (Pin 4 / RXD). Check termination with multimeter; desolder R2 if ~120 ohms |
+| Direct wire (CTX to 3V3) | Breakout CTX connects directly to ESP32 3V3 (no 10k resistor). Keeps transmit driver permanently recessive |
+| Physical air gap (GPIO17) | ESP32 GPIO17 has no wire inserted; completely disconnected from transceiver |
 | Optional: 74AHCT125 level shifter | For reliable 5V logic signaling over longer harness runs |
 | Optional: SSD1306 128x64 OLED display | I2C display (disabled by default in UserConfig.h) |
 
@@ -52,16 +54,16 @@ PulseShift is designed for quick bench verification using the built-in Demo mode
 | **WS2812B Strip** | +5V | Regulated 5V Rail | 5.0V DC (with 1000 uF bulk cap) | LED power (never connect to 3.3V) |
 | **WS2812B Strip** | GND | Common Ground | Ground plane | Power and signal return |
 | **WS2812B Strip** | DOUT | *Unconnected* | Open circuit | DOUT on 6th LED remains unused |
-| **SN65HVD230** | Pin 3 (VCC) | ESP32 3V3 Pin | Regulated 3.3V DC strictly | Transceiver logic power (never 5V or 12V) |
-| **SN65HVD230** | Pin 2 (GND) | Common Ground | Ground plane | Logic and differential reference |
-| **SN65HVD230** | Pin 4 (RXD) | ESP32 GPIO16 | 3.3V digital logic | Received CAN bitstream to TWAI controller |
-| **SN65HVD230** | Pin 1 (TXD) | 3.3V via 10k ohm | Forced HIGH (recessive) | Hardware safety: disables transmission |
-| **ESP32** | GPIO17 (TX2) | *Disconnected* | Physical air gap | Never connect GPIO17 to transceiver |
-| **SN65HVD230** | Pin 8 (Rs) | Common Ground | Connected to GND | Normal high-speed receiver mode (up to 1 Mbps) |
-| **SN65HVD230** | Pin 5 (Vref) | *Unconnected* | Leave open (NC) | Nominal VCC/2 reference output |
-| **SN65HVD230** | Pin 7 (CANH) | Motorcycle CAN-H | ISO 11898-2 differential high | High-speed differential bus tap |
-| **SN65HVD230** | Pin 6 (CANL) | Motorcycle CAN-L | ISO 11898-2 differential low | High-speed differential bus tap |
-| **SN65HVD230** | 120 ohm Resistor | *Removed* | Desoldered from module | Prevents loading vehicle bus down to 40 ohms |
+| **SN65HVD230 Breakout** | 3V3 (Pin 3 / VCC) | ESP32 3V3 Pin | Regulated 3.3V DC strictly | Transceiver logic power (never 5V or 12V) |
+| **SN65HVD230 Breakout** | GND (Pin 2) | Common Ground | Ground plane | Logic and differential reference |
+| **SN65HVD230 Breakout** | CRX (Pin 4 / RXD) | ESP32 GPIO16 | 3.3V digital logic | Received CAN bitstream to TWAI controller |
+| **SN65HVD230 Breakout** | CTX (Pin 1 / TXD) | ESP32 3V3 Pin | Directly tied to 3.3V (NO resistor) | Hardware safety: forces driver recessive |
+| **ESP32** | GPIO17 (TX2) | *Disconnected* | Physical air gap | Never connect GPIO17 to transceiver (software cannot detect wiring) |
+| **SN65HVD230 Breakout** | Rs (Pin 8) | Common Ground | Connected to GND (often hardwired on PCB) | Normal high-speed receiver mode (up to 1 Mbps) |
+| **SN65HVD230 Breakout** | Vref (Pin 5) | *Unconnected* | Leave open (NC) | Nominal VCC/2 reference output |
+| **SN65HVD230 Breakout** | CANH (Pin 7) | Motorcycle CAN-H | ISO 11898-2 differential high | High-speed differential bus tap |
+| **SN65HVD230 Breakout** | CANL (Pin 6) | Motorcycle CAN-L | ISO 11898-2 differential low | High-speed differential bus tap |
+| **SN65HVD230 Breakout** | 120 ohm Resistor | *Verified / Removed* | Multimeter test across unpowered CANH-CANL | If ~120 ohms, desolder R2 to prevent loading vehicle bus down to 40 ohms |
 | **OLED (Optional)**| SDA | ESP32 GPIO21 | 3.3V I2C Data | Optional diagnostic screen (disabled by default) |
 | **OLED (Optional)**| SCL | ESP32 GPIO22 | 3.3V I2C Clock | Optional diagnostic screen (disabled by default) |
 | **OLED (Optional)**| VCC / GND | ESP32 3V3 / GND | 3.3V DC / Ground | Optional screen power |
@@ -89,10 +91,10 @@ The PulseShift firmware operates strictly as a passive CAN listener. It never tr
 
 #### Mandatory Hardware Safety Safeguards
 
-1. **GPIO17 Physical Air Gap**: ESP32 GPIO17 (TWAI TX) must remain completely disconnected. Do not insert a wire into GPIO17. Software listen-only mode alone cannot guarantee electrical isolation against bootloader glitches or firmware misconfiguration.
-2. **TXD Forced Recessive**: SN65HVD230 Pin 1 (TXD) is held permanently HIGH through a 10k ohm pull-up resistor to 3.3V. On ISO 11898 transceivers, a HIGH TXD input forces the differential driver into the recessive (idle) state.
-3. **Transceiver Rs to GND**: SN65HVD230 Pin 8 (Rs) connects to GND to select normal high-speed operation (up to 1 Mbps). Rs LOW does NOT enable transmission when TXD is held high and isolated. Connecting Rs to 3.3V (standby mode) degrades receiver bandwidth and must not be used.
-4. **Remove Onboard 120 Ohm Resistor**: Most commercial breakout boards include an SMD 120 ohm terminating resistor (often labeled `R2` or `1200`). The motorcycle CAN bus is already terminated with 120 ohm resistors at each end (total impedance = 60 ohms). Adding a third 120 ohm resistor drops the bus load to 40 ohms, creating signal reflections and causing vehicle ECU communication errors. Test with a multimeter: if CANH-to-CANL resistance is ~120 ohms, desolder resistor R2.
+1. **GPIO17 Physical Air Gap**: ESP32 GPIO17 (TWAI TX) must remain completely disconnected. Do not insert a wire into GPIO17. Software listen-only mode alone cannot guarantee electrical isolation against bootloader glitches or firmware misconfiguration, and software cannot detect whether an external wire is physically present.
+2. **CTX / TXD Forced Recessive via Direct 3.3V Connection**: Transceiver breakout pin `CTX` (Pin 1 / TXD) is connected directly to the ESP32 3V3 rail (NO 10k resistor was used in the verified working configuration). On ISO 11898 transceivers, a constant HIGH input clamps the differential driver permanently into the recessive (idle) state.
+3. **Transceiver Rs to GND**: SN65HVD230 Pin 8 (Rs) connects to GND to select normal high-speed operation (up to 1 Mbps). On standard breakout modules, Rs is often tied to GND on the PCB; if broken out, connect to GND. Rs LOW does NOT enable transmission when CTX is held high and GPIO17 is disconnected.
+4. **Check Onboard 120 Ohm Termination Resistor**: Many commercial breakout boards include an SMD 120 ohm terminating resistor (often labeled `R2` or `1200`). The motorcycle CAN bus is already terminated with 120 ohm resistors at each physical end (total bus resistance = 60 ohms). Adding a third 120 ohm resistor drops the bus load to 40 ohms, which can trigger ECU bus error warnings. Test with a multimeter across unpowered CANH-CANL terminals: if ~120 ohms is measured, desolder resistor R2 (or cut the trace jumper). If open circuit, no desoldering is needed.
 
 ---
 
@@ -172,7 +174,7 @@ For extended electrical theory, TVS protection schematics, and oscilloscope veri
 | 5001-5999 | LED 1-6 | Orange / Red |
 | >= 6000 | All 6 LEDs | **Flashing Red: Shift Alert!** |
 
-Thresholds can be adjusted in `UserConfig.h` using `PULSESHIFT_DEMO_START_RPM`, `PULSESHIFT_DEMO_SHIFT_RPM`, and `PULSESHIFT_DEMO_MAX_RPM`.
+In bench test mode (`RPM TEST <val>`) or once vehicle RPM calibration is verified, thresholds can be adjusted in `UserConfig.h` using `PULSESHIFT_RPM_REV_START` (default 5000), `PULSESHIFT_RPM_SHIFT` (default 8000), and `PULSESHIFT_RPM_MAX` (default 10500).
 
 ---
 
@@ -204,7 +206,7 @@ Add this URL to **File -> Preferences -> Additional board manager URLs**:
 https://espressif.github.io/arduino-esp32/package_esp32_index.json
 ```
 
-Then install **esp32 by Espressif Systems** (version 2.0.17 recommended).
+Then install **esp32 by Espressif Systems** (version 3.3.12 recommended).
 
 ## How to upload
 
@@ -349,34 +351,84 @@ When testing on an operating motorcycle with a PC connected via USB:
 
 ## Serial Communication & Commands (115200 baud)
 
-### Serial Monitor Commands
+## Serial Communication & Commands (115200 baud)
 
-| Command | Description |
-|---|---|
-| `HELP` | Display complete list of available Serial Monitor commands |
-| `STATUS` | Show comprehensive system health, storage state, and intelligent troubleshooting advice |
-| `LOGS` | Dump saved persistent diagnostic events log from internal flash |
-| `RPM STATUS` | Display live 0x301 candidate engine-speed monitor snapshot and calibration status |
-| `RPM MONITOR ON` | Enable rate-limited (10 Hz) live 0x301 candidate streaming on Serial Monitor |
-| `RPM MONITOR OFF` | Disable live candidate streaming |
-| `RPM MONITOR` | Print single instantaneous 0x301 candidate stream line |
-| `RPM TEST <val>` | Bench test 6-LED shift lights with simulated RPM for 10s (e.g. `RPM TEST 4500`) |
-| `RPM TEST OFF` | Immediately turn off shift-light bench test and return to field status LEDs |
-| `RPM MULTIPLIER <val>` | Update candidate provisional multiplier (default: 40.0; calibration remains UNVERIFIED) |
-| `DUMP` | Export recorded CAN frames in 500-record pages (resumes next page if active) |
-| `DUMP NEXT` | Export next 500-record page of stored CAN frames |
-| `DUMP ALL` | Export all stored CAN records continuously without pagination |
-| `DUMP STATUS` | Show current export progress, cursor position, and total page count |
-| `DUMP CANCEL` | Reset export cursor back to Page 1 |
-| `DUMP PAGE <n>` | Export specific page number n (e.g. `DUMP PAGE 2`) |
-| `STAGE <1\|2\|3>` | Set field capture stage (1=KeyOn, 2=Idle, 3=GentleRPM) |
-| `1`, `2`, `3` | Quick single-digit shortcuts to set capture Stage 1, 2, or 3 |
-| `CAPTURE STOP` | Pause flash recording and flush in-memory buffers |
-| `CAPTURE RESUME` | Resume flash recording |
-| `STREAM ON` | Enable live raw CAN frame streaming over USB serial |
-| `STREAM OFF` | Disable live streaming (default: concise summaries only) |
-| `CLEAR` | Request instructions for erasing stored logs and capture file |
-| `CLEAR YES` | Confirm erase of stored diagnostic logs and start a fresh capture session |
+PulseShift features an interactive serial console operating at **115200 baud** (newline: `Both NL & CR` or `Newline` in Arduino Serial Monitor).
+
+### Serial Monitor Command Reference
+
+| Command | Syntax & Parameters | Description & Operational Bounds | Example Console Output / Usage |
+|---|---|---|---|
+| `HELP` | `HELP` | Displays the complete list of available commands and active syntax | Lists all 22 commands with usage tips |
+| `STATUS` | `STATUS` | Comprehensive system health snapshot: CAN bus state, controller stats, LittleFS storage, and candidate monitor | `[STATUS] Bus: OK (500000 bps) | RX: 22542 | Drops: 0 | Flash: 450 KB free` |
+| `LOGS` | `LOGS` | Dumps persistent diagnostic event log stored in LittleFS (`/diag_events.log`) | `[LOGS] Total events: 4 ...` |
+| `RPM STATUS` | `RPM STATUS` | Candidate 0x301 engine-speed snapshot: raw byte 0, provisional estimated RPM, freshness, range, and calibration status | `[RPM] Candidate: 0x301 Byte[0] | Raw: 37 | Est RPM: 1480 | Fresh: YES | Calibration: UNVERIFIED` |
+| `RPM MONITOR ON` | `RPM MONITOR ON` | Enables rate-limited (10 Hz) live streaming of candidate engine speed | `CAND,12450,0x301,37,1480,1` |
+| `RPM MONITOR OFF` | `RPM MONITOR OFF` | Disables live candidate engine speed streaming | `[RPM] Monitor stream disabled` |
+| `RPM MONITOR` | `RPM MONITOR` | Prints a single instantaneous candidate telemetry line | `CAND,12500,0x301,37,1480,1` |
+| `RPM TEST <val>` | `RPM TEST <0..20000>` | Bench tests 6-LED shift lights with simulated RPM for 10s (e.g. `RPM TEST 4500`). Auto-reverts after 10s. | `[TEST] Simulating 4500 RPM on LEDs for 10s` (LEDs 1-4 illuminate) |
+| `RPM TEST OFF` | `RPM TEST OFF` | Immediately cancels shift light bench test and restores field status LEDs | `[TEST] RPM test ended. Returning to status LEDs.` |
+| `RPM MULTIPLIER <val>` | `RPM MULTIPLIER <0.01..1000.0>` | Updates candidate provisional multiplier. Rejects NaN, Inf, <=0, >1000. | `[RPM] Multiplier updated: 42.1 (Calibration remains UNVERIFIED)` |
+| `STAGE <1\|2\|3>` | `STAGE 1`, `STAGE 2`, `STAGE 3` | Sets active field capture stage (1=KeyOn, 2=Idle, 3=GentleSweeps) | `[STAGE] Active stage set to 2 (ENGINE_IDLE)` |
+| `1`, `2`, `3` | `1`, `2`, `3` | Single-character shortcuts for rapid field stage switching | Sets stage; triggers 200ms white LED confirmation flash |
+| `CAPTURE STOP` | `CAPTURE STOP` | Pauses flash recording and flushes in-memory buffers to LittleFS | `[RECORDER] Capture paused. Pending records flushed.` |
+| `CAPTURE RESUME` | `CAPTURE RESUME` | Resumes active flash recording | `[RECORDER] Capture resumed.` |
+| `STREAM ON` | `STREAM ON` | Enables real-time raw CAN frame streaming over USB serial | `FRAME,1420,1,00000301,0,0,8,25000000000000C9` |
+| `STREAM OFF` | `STREAM OFF` | Disables raw frame streaming (default mode: concise 2s summaries only) | `[STREAM] Raw frame streaming disabled` |
+| `DUMP` | `DUMP` | Exports stored CAN frames in 500-record pages (resumes next page if active) | Outputs Page Header, CSV rows, Page Footer |
+| `DUMP NEXT` | `DUMP NEXT` | Exports the next 500-record page of stored CAN frames | Advances cursor and outputs next 500 rows |
+| `DUMP ALL` | `DUMP ALL` | Exports all stored records in a single uninterrupted stream | Exports all records with cumulative CRC validation |
+| `DUMP STATUS` | `DUMP STATUS` | Displays current export cursor, records exported, and total page count | `[DUMP] Cursor: 1000 / 22542 (Page 2 of 46)` |
+| `DUMP CANCEL` | `DUMP CANCEL` | Resets export cursor back to Page 1 | `[DUMP] Export cursor reset to Page 1` |
+| `DUMP PAGE <n>` | `DUMP PAGE <1..total_pages>` | Exports specific page number directly (e.g. `DUMP PAGE 3`) | Outputs records for requested page |
+| `CLEAR` | `CLEAR` | Requests instructions for erasing flash recording and diagnostic logs | `[SAFETY] Type 'CLEAR YES' to confirm format and start fresh session` |
+| `CLEAR YES` | `CLEAR YES` | Confirms erase, formats LittleFS partition, and increments session ID | `[STORAGE] Flash formatted. Session ID: 2` |
+
+### Example Serial Monitor Sessions
+
+#### 1. Checking Live Candidate RPM (`RPM STATUS` and `RPM MONITOR ON`)
+```text
+> RPM STATUS
+========================================
+PULSESHIFT CANDIDATE RPM MONITOR
+========================================
+Candidate CAN ID  : 0x301 (Standard 11-bit)
+Payload Byte Index: 0
+Current Raw Value : 38 (0x26)
+Provisional Mult  : 40.00
+Estimated RPM     : 1520 RPM
+Signal Freshness  : FRESH (last seen 42 ms ago)
+Signal Range      : Min=0, Max=240, Count=1840 frames
+Calibration Status: UNVERIFIED (Provisional scaling only)
+Vehicle Shift Light: DISABLED (RPM_MAPPED=NO)
+========================================
+
+> RPM MONITOR ON
+[RPM] Monitor stream enabled (10 Hz). Type 'RPM MONITOR OFF' to stop.
+CAND,15420,0x301,38,1520,1
+CAND,15520,0x301,37,1480,1
+CAND,15620,0x301,39,1560,1
+```
+
+#### 2. Bench-Testing the 6-LED Shift Lights (`RPM TEST 5500`)
+```text
+> RPM TEST 5500
+[TEST] Simulating 5500 RPM on 6-LED shift lights for 10s...
+[TEST] LEDs 1 to 5 illuminated (Progression: 5/6).
+[TEST] Shift alert threshold: 8000 RPM.
+```
+
+#### 3. Paginated CAN Capture Export (`DUMP`)
+```text
+> DUMP
+=== BEGIN PULSESHIFT RAW CAN CAPTURE [PAGE 1/46: RECORDS 1-500 OF 22542] ===
+[HEADER] magic=PULSECAP ver=1 recSize=20 sess=2 boot=1 bitrate=500000 startMs=1200 mode=CAN_CAPTURE vehicle=NS125 ABS 2025
+timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok
+1205,00000120,0,0,8,0102030405060708,1,1
+1208,00000301,0,0,8,00000000000000C9,1,1
+...
+=== END PULSESHIFT PAGE 1/46 (RECORDS 1-500 OF 22542) [Next: 'DUMP NEXT' or 'DUMP ALL'] ===
+```
 
 ### Machine-Readable Streaming Format
 
@@ -476,11 +528,13 @@ To independently calibrate the candidate signal without risky road tests:
 
 ## Safety notes
 
-- GPIO17 (CAN TX) must remain physically isolated from the SN65HVD230 TXD input at all times during motorcycle use.
-- PulseShift never transmits CAN frames. The TWAI controller is configured in listen-only mode.
-- Do not change wiring while powered. Power LEDs before connecting USB.
-- When connecting via USB to a motorcycle, always use a laptop running on battery power to prevent dangerous ground loops.
-- Some 5V WS2812B strips require a 74AHCT125 level shifter for reliable 3.3V signal recognition from the ESP32.
+- **GPIO17 Physical Air Gap**: ESP32 GPIO17 (TWAI TX) must remain physically isolated (air gap with no wire inserted) from the transceiver at all times during motorcycle use. Software listen-only mode alone cannot guarantee electrical isolation against bootloader glitches or firmware misconfiguration, and microcontroller software cannot detect whether a physical wire is inserted.
+- **Forced Recessive Clamping**: The SN65HVD230 transceiver breakout's `CTX` pin (Pin 1 / TXD) connects directly to the ESP32 3V3 rail (NO 10k resistor in the verified working configuration). This clamps the driver permanently into the recessive (idle) state.
+- **Listen-Only TWAI Operation**: PulseShift never transmits CAN frames or ACK bits. The TWAI controller is initialized strictly with `TWAI_MODE_LISTEN_ONLY`.
+- **Termination Resistor Verification**: Check resistance across unpowered transceiver CANH-CANL terminals with a multimeter. If ~120 ohms, desolder SMD resistor R2 to avoid loading down the motorcycle's factory 60 ohm bus to 40 ohms.
+- **Safe Power Sequencing**: Do not change wiring while powered. Switch on the external 5V power supply before connecting USB.
+- **Prevent Ground Loops on Vehicle**: When connecting via USB to a motorcycle, always use a laptop running on its internal battery (unplugged from AC mains) to prevent dangerous ground loops between building mains and vehicle chassis.
+- **Optional Level Shifter**: Some 5V WS2812B strips require a 74AHCT125 level shifter for reliable 3.3V signal recognition over longer automotive wiring harness runs.
 
 ## Directory structure
 
