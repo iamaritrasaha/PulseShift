@@ -56,7 +56,7 @@ static bool allBlack(const LedEffectEngine& e) {
   return true;
 }
 
-static bool countLit(const LedEffectEngine& e) {
+static uint8_t countLit(const LedEffectEngine& e) {
   uint8_t lit = 0;
   for (uint8_t i = 0; i < 6; ++i) {
     if (e.getPixel(i) != RgbColor{0, 0, 0}) ++lit;
