@@ -11,51 +11,42 @@ cd "$(dirname "$0")/.."
 BUILD_DIR="${TMPDIR:-/tmp}/pulseshift-host-tests"
 mkdir -p "$BUILD_DIR"
 
-# Core logic tests (no Arduino stubs needed)
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-    -fsanitize=address,undefined -fno-omit-frame-pointer \
-    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_MODE=1 \
+CXXFLAGS="-std=c++17 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined -fno-omit-frame-pointer"
+
+# Core logic tests: config state machine, calibration binding, snapshot TLV
+# serialization, event pacing and serial parsing (pure C++, no Arduino stubs;
+# serial diagnostics are compiled out so no Serial symbol is referenced).
+g++ $CXXFLAGS \
+    -DPULSESHIFT_SERIAL_DIAGNOSTICS=0 \
     -IPulseShift -IPulseShift/src \
-    PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
-    PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp \
+    PulseShift/src/rpm_candidate.cpp PulseShift/src/config_manager.cpp \
     test/test_core.cpp -o "$BUILD_DIR/test_core"
-
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-    -fsanitize=address,undefined -fno-omit-frame-pointer \
-    -IPulseShift -IPulseShift/src \
-    PulseShift/src/shift_light.cpp test/test_shift_refresh.cpp \
-    -o "$BUILD_DIR/test_shift_refresh"
-
-"$BUILD_DIR/test_shift_refresh"
 "$BUILD_DIR/test_core"
 
-# I/O and dashboard tests (requires Arduino stubs)
-for diagnostics in 0 1; do
-  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-      -fsanitize=address,undefined -fno-omit-frame-pointer \
-      -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_MODE=1 \
-      -DPULSESHIFT_OLED_ENABLED=1 -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
-      -Itest/stubs -IPulseShift -IPulseShift/src \
-      PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
-      PulseShift/src/simulated_ecu.cpp PulseShift/src/shift_light.cpp \
-      PulseShift/src/led_effects.cpp PulseShift/src/config_manager.cpp \
-      PulseShift/src/dashboard.cpp PulseShift/src/frame_log.cpp \
-      test/test_io.cpp -o "$BUILD_DIR/test_io_$diagnostics"
-  "$BUILD_DIR/test_io_$diagnostics"
-done
-
-# Vehicle profile and RPM tests
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-    -fsanitize=address,undefined -fno-omit-frame-pointer \
+# Unified LED engine tests: layer priorities, RPM validity safeguard,
+# hysteresis, warning patterns, direction/brightness.
+g++ $CXXFLAGS \
+    -DPULSESHIFT_SERIAL_DIAGNOSTICS=0 \
     -IPulseShift -IPulseShift/src \
-    PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
-    PulseShift/src/shift_light.cpp test/test_vehicle.cpp \
-    -o "$BUILD_DIR/test_vehicle"
-"$BUILD_DIR/test_vehicle"
+    PulseShift/src/rpm_candidate.cpp PulseShift/src/config_manager.cpp \
+    PulseShift/src/led_effects.cpp \
+    test/test_led_effects.cpp -o "$BUILD_DIR/test_led_effects"
+"$BUILD_DIR/test_led_effects"
+
+# BLE v2 command dispatch tests through the real BleManager dispatcher
+# (auth binding, staged transactions, calibration workflow, device commands).
+g++ $CXXFLAGS \
+    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_SERIAL_DIAGNOSTICS=1 \
+    -Itest/stubs -IPulseShift -IPulseShift/src \
+    PulseShift/src/ble_manager.cpp PulseShift/src/config_manager.cpp \
+    PulseShift/src/rpm_candidate.cpp PulseShift/src/can_transport.cpp \
+    PulseShift/src/frame_log.cpp PulseShift/src/can_recorder.cpp \
+    PulseShift/src/storage_manager.cpp \
+    test/test_ble_commands.cpp -o "$BUILD_DIR/test_ble_commands"
+"$BUILD_DIR/test_ble_commands"
 
 # Candidate 0x301 monitor tests
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-    -fsanitize=address,undefined -fno-omit-frame-pointer \
+g++ $CXXFLAGS \
     -IPulseShift -IPulseShift/src \
     PulseShift/src/rpm_candidate.cpp test/test_candidate_monitor.cpp \
     -o "$BUILD_DIR/test_candidate_monitor"
@@ -65,8 +56,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
 # Compile candidate monitor as its own translation unit (same as Arduino), not
 # by including its source inside the sketch, to catch missing configuration headers.
 for diagnostics in 0 1; do
-  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-      -fsanitize=address,undefined -fno-omit-frame-pointer \
+  g++ $CXXFLAGS \
       -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
       -IPulseShift -IPulseShift/src \
       PulseShift/src/rpm_candidate.cpp test/test_rpm_serial_output.cpp \
@@ -81,38 +71,15 @@ for diagnostics in 0 1; do
   fi
 done
 
+# CAN transport tests: listen-only routing, TX-pin isolation, overflow handling.
+g++ $CXXFLAGS \
+    -DPULSESHIFT_SERIAL_DIAGNOSTICS=1 \
+    -Itest/stubs -IPulseShift -IPulseShift/src \
+    PulseShift/src/can_transport.cpp PulseShift/src/frame_log.cpp \
+    test/test_transport.cpp -o "$BUILD_DIR/test_transport"
+"$BUILD_DIR/test_transport"
+
 # Python integration tests
 python3 -m unittest discover -s test -p 'test_*.py'
-
-# CAN transport tests (modes 3 and 4: CAN capture and vehicle)
-for mode in 3 4; do
-  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-      -fsanitize=address,undefined -fno-omit-frame-pointer \
-      -DPULSESHIFT_MODE=$mode \
-      -Itest/stubs -IPulseShift -IPulseShift/src \
-      PulseShift/src/can_transport.cpp PulseShift/src/frame_log.cpp \
-      PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
-      test/test_transport.cpp -o "$BUILD_DIR/test_transport_$mode"
-  "$BUILD_DIR/test_transport_$mode"
-done
-
-# Dashboard calibration tests (modes 1 and 4)
-for mode in 1 4; do
-  for diagnostics in 0 1; do
-    g++ -std=c++17 -Wall -Wextra -Werror -pedantic -g \
-        -fsanitize=address,undefined -fno-omit-frame-pointer \
-        -DPULSESHIFT_TEST_BUILD \
-        -DPULSESHIFT_MODE=$mode -DPULSESHIFT_OLED_ENABLED=1 \
-        -DPULSESHIFT_SERIAL_DIAGNOSTICS=$diagnostics \
-        -Itest/stubs -IPulseShift -IPulseShift/src \
-        PulseShift/src/rpm_decoder.cpp PulseShift/src/vehicle_profile.cpp \
-        PulseShift/src/shift_light.cpp PulseShift/src/led_effects.cpp \
-        PulseShift/src/config_manager.cpp PulseShift/src/dashboard.cpp \
-        test/test_dashboard_calibration.cpp \
-        -Wl,--wrap=_Z22selectedVehicleProfilev \
-        -o "$BUILD_DIR/test_dashboard-$mode-$diagnostics"
-    "$BUILD_DIR/test_dashboard-$mode-$diagnostics"
-  done
-done
 
 echo "All tests passed."

@@ -2,7 +2,7 @@
 
 **ESP32 motorcycle shift-light and CAN bus acquisition firmware.**
 
-PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network) diagnostic logger and progressive shift-light display for motorcycles. It boots directly into listen-only capture mode, records every CAN frame to internal flash storage, and streams live telemetry over USB - all without transmitting a single bit onto the motorcycle's network.
+PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Area Network) diagnostic logger and progressive shift-light display for motorcycles. It boots directly into one production operating path - listen-only CAN monitoring, the unified RPM decoder, six-LED rendering and flash capture - streams live telemetry over BLE, and is fully configured from the Android app without ever transmitting a single bit onto the motorcycle's network. No PC, USB connection or internet is required after flashing.
 
 > [!IMPORTANT]
 > **Real motorcycle CAN communication has already been successfully captured.**
@@ -37,20 +37,22 @@ PulseShift turns an ESP32 DevKit V1 into a passive CAN (Controller Area Network)
 
 | Capability | Status |
 |---|---|
-| Firmware compilation (CAN Capture mode) | ✅ Verified - GitHub Actions CI |
-| Firmware compilation (Vehicle RPM mode) | ✅ Verified - GitHub Actions CI |
+| Firmware compilation (single production path) | ✅ Verified - GitHub Actions CI |
 | Physical CAN reception on motorcycle | ✅ **Verified** - 2025 Bajaj Pulsar NS125 ABS |
 | CAN recording to internal flash | ✅ Verified - 22,542 records, 0 corrupt |
 | CAN export via Serial Monitor | ✅ Demonstrated - paginated DUMP workflow |
+| CAN capture export over BLE (bounded pages) | ✅ Implemented - host-tested dispatcher, bench BLE validation pending |
 | BLE monitoring and streaming (protocol v1) | ✅ Implemented and software-tested - bench BLE only, not vehicle-validated |
-| BLE configuration protocol v2 (NVS, LED effects, mobile calibration) | ✅ Implemented and software-tested - bench BLE only, not vehicle-validated |
+| BLE configuration and command protocol v2 (2.2.0) | ✅ Implemented and software-tested - bench BLE only, not vehicle-validated |
 | BLE owner enrollment and challenge-response security | ✅ Implemented and software-tested - physical BOOT window required |
+| Device commands (restart, reload, clear diagnostics, recording toggle) | ✅ Implemented and host-tested |
+| Firmware-driven calibration workflow | ✅ Implemented and host-tested - vehicle validation pending |
 | LED bench test (`RPM TEST`) | ✅ Implemented and software-tested |
-| LED status display in CAN capture mode | ✅ Implemented |
+| Unified LED controller (six WS2812B, no display dependency) | ✅ Implemented - host-tested layer priorities |
 | RPM candidate identification (CAN ID `0x301`) | ✅ Observed in real capture data |
 | RPM conversion formula (multiplier 40.0) | ⚠️ Provisional - not independently verified |
 | Real engine RPM-driven shift lights | 🔒 Disabled - requires calibration verification (firmware-enforced) |
-| Android integration | 🔗 Separate project, not part of this firmware |
+| Android app | 🔗 Separate workspace (`D:\Development\PulseShift\android`) - compiles and passes unit tests with the 2.2.0 protocol |
 
 **Verified capture details:**
 
@@ -128,7 +130,6 @@ ESP32 GPIO16  →  TWAI Controller  (extracts complete CAN frames, listen-only)
 | 1000 µF / 10V electrolytic capacitor | Across LED +5V and GND at the strip |
 | Regulated 5V supply, ≥ 1A | Powers LEDs; use a DC-DC buck converter from motorcycle 12V |
 | Optional: SN74AHCT125 level shifter | Recommended for vehicle harness runs >20 cm |
-| Optional: SSD1306 128×64 OLED display | I²C display - disabled by default in `UserConfig.h` |
 
 > [!NOTE]
 > Six WS2812B LEDs at full white (brightness 255) draw approximately 360 mA. Combined with the ESP32 (~90-120 mA) and transceiver (~15 mA), worst-case demand is around 465 mA peak on the 5V rail. A supply rated for at least 1 A is recommended.
@@ -240,9 +241,6 @@ Go to **Tools → Manage Libraries** and install each of the following by search
 |---|---|
 | **Adafruit NeoPixel** | 1.12.3 |
 | **NimBLE-Arduino** | 2.3.8 |
-| **Adafruit SSD1306** | 2.5.13 *(only if OLED is enabled)* |
-| **Adafruit GFX Library** | 1.11.11 *(only if OLED is enabled)* |
-| **Adafruit BusIO** | 1.17.0 *(only if OLED is enabled)* |
 
 Click **Install** for each. If prompted to install dependencies, choose **Install all**.
 
@@ -707,7 +705,7 @@ The resulting formula is: `RPM = raw × 42.1 − 108`
 
 **Validation:** Take at least one additional measurement at a different RPM and verify that the formula predicts it correctly within a reasonable tolerance. If the prediction is significantly off, collect more reference points.
 
-**Enabling shift lights:** Once the formula is independently validated with physical test data across multiple sessions, update `PulseShift/src/vehicle_profile.cpp` with the calibrated constants and set `RPM_MAPPED = YES` in the profile definition. Physical shift lights will then activate in Vehicle RPM mode.
+**Enabling shift lights:** No recompile is involved. The Android app drives the firmware calibration session (RPM & Calibration screen, Advanced tab): it captures 2-second raw samples at 3+ operating points spanning at least 1,500 RPM against a trustworthy independent tachometer reference, the ESP32 fits and validates scale/offset on-device (monotonic evidence, <= 150 RPM residual), and only then binds a verification record to the exact decoder fingerprint. Physical six-stage RPM bar lighting activates automatically once that record is bound; any decoder change unbinds it and blanks the bar until recalibration.
 
 Do not enable shift lights based on a single RPM reference point or a theoretical calculation alone.
 
@@ -785,28 +783,20 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 > `CLEAR YES` is irreversible. It permanently erases all stored CAN capture data and diagnostic logs. Only use it after successfully exporting and verifying your recordings.
 
 > [!NOTE]
-> Commands shown in `demo start` / `demo stop` / `rpm <val>` / `profile <style>` / `brightness <val>` are development-only test commands present only in builds compiled with `PULSESHIFT_TEST_BUILD`. They are not available in the production CAN Capture firmware. Do not attempt to enable them.
+> The Android app is the complete command interface: all lighting, decoder, calibration, capture and diagnostics commands work over BLE with firmware acknowledgement and readback. The serial console below is an optional bench convenience.
 
 ---
 
 ## 14. Configuration
 
-Edit `PulseShift/UserConfig.h` before uploading to customize the firmware for your hardware.
-
-### Operating mode
-
-| Setting | Default | Options | Notes |
-|---|---|---|---|
-| `PULSESHIFT_OPERATING_MODE` | `CAN_CAPTURE` | `CAN_CAPTURE`, `VEHICLE_RPM` | **CAN_CAPTURE** is the production mode. **VEHICLE_RPM** requires a completed vehicle profile. |
+`PulseShift/UserConfig.h` only holds hardware-level compile-time settings. All user-facing lighting, threshold, decoder and calibration settings live in NVS and are edited from the Android app over BLE; no recompile is needed to change them. There is a single production operating path: passive CAN monitoring, the unified RPM decoder, LED rendering and BLE run always, and flash capture is a runtime-toggleable subsystem (BOOT button, serial or BLE command).
 
 ### LED settings
 
 | Setting | Default | Description |
 |---|---|---|
 | `PULSESHIFT_LED_DATA_GPIO` | `27` | ESP32 GPIO connected to LED DIN via 330-470 Ω resistor |
-| `PULSESHIFT_LED_COUNT` | `6` | Number of addressable pixels (1-32) |
-| `PULSESHIFT_LED_BRIGHTNESS` | `255` | Master brightness (0-255) |
-| `PULSESHIFT_SHIFT_LIGHT_STYLE` | `CLASSIC` | `CLASSIC`, `RACING`, `MINIMAL`, `CUSTOM` |
+| `PULSESHIFT_LED_COUNT` | `6` | Number of addressable pixels (1-6; the six-stage shift-light engine renders six stages) |
 
 ### CAN hardware settings
 
@@ -819,34 +809,16 @@ Edit `PulseShift/UserConfig.h` before uploading to customize the firmware for yo
 > [!WARNING]
 > `PULSESHIFT_CAN_RX_GPIO` and `PULSESHIFT_CAN_TX_GPIO` are hardware-critical. Changing GPIO numbers without updating your physical wiring will prevent CAN reception. `PULSESHIFT_CAN_BITRATE` must match the motorcycle's actual CAN bitrate exactly (the NS125 ABS uses 500,000 bps).
 
-### Serial and storage settings
+### Serial, storage and BLE settings
 
 | Setting | Default | Description |
 |---|---|---|
+| `PULSESHIFT_SERIAL_DIAGNOSTICS` | `1` | `0` silences the serial console for fully headless operation (BLE stays the command interface) |
 | `PULSESHIFT_SERIAL_BAUD` | `115200` | Match this in Arduino IDE Serial Monitor |
-| `PULSESHIFT_BOOT_BUTTON_GPIO` | `0` | BOOT button GPIO - short press cycles stages, long press pauses recording |
+| `PULSESHIFT_BOOT_BUTTON_GPIO` | `0` | BOOT button GPIO - short press cycles stages, long press toggles recording, any press opens the owner enrollment window |
 | `PULSESHIFT_MAX_CAPTURE_BYTES` | `1000000` | Maximum capture file size in bytes (~50,000 frames) |
-
-### RPM thresholds (for shift-light calibration, not yet active)
-
-| Setting | Default | Description |
-|---|---|---|
-| `PULSESHIFT_DEMO_START_RPM` | `0` | RPM at which first LED illuminates |
-| `PULSESHIFT_DEMO_SHIFT_RPM` | `6000` | RPM at which all LEDs flash red |
-| `PULSESHIFT_DEMO_MAX_RPM` | `6500` | Maximum valid RPM scale |
-
-> [!NOTE]
-> These threshold names include "DEMO" for historical reasons. They define the LED progression scale. No threshold value here represents a verified calibration setting for the NS125 - they are placeholder defaults only.
-
-### Optional OLED
-
-| Setting | Default | Notes |
-|---|---|---|
-| `PULSESHIFT_OLED_ENABLED` | `0` | Set to `1` only if SSD1306 128×64 at I²C address 0x3C is physically installed |
-| `PULSESHIFT_OLED_SDA_GPIO` | `21` | OLED SDA GPIO |
-| `PULSESHIFT_OLED_SCL_GPIO` | `22` | OLED SCL GPIO |
-
-If OLED is enabled without the hardware, the firmware continues normally and prints `OLED INIT FAILED (CAN processing continues)` to Serial Monitor.
+| `PULSESHIFT_MAX_DIAG_LOG_BYTES` | `131072` | Maximum diagnostic event log size |
+| `PULSESHIFT_BLE_ENABLED` | `1` | BLE GATT peripheral for Android telemetry, configuration and diagnostics |
 
 ---
 
@@ -888,16 +860,14 @@ PulseShift-Firmware/
 │       ├── can_transport.*       ← TWAI driver wrapper (listen-only hardware interface)
 │       ├── can_recorder.*        ← CAN capture to LittleFS flash with CRC16 and paging
 │       ├── rpm_candidate.*       ← Unified phone-configurable candidate RPM decoder/state holder
-│       ├── rpm_decoder.*         ← Legacy profile-based decoding framework (VEHICLE_RPM mode)
-│       ├── ble_manager.*         ← BLE GATT server: v1 telemetry + v2 configuration
-│       ├── ble_protocol.h        ← Versioned BLE packet layouts
+│       ├── ble_manager.*         ← BLE GATT server: v1 telemetry + v2 configuration/commands
+│       ├── ble_protocol.h        ← Versioned BLE packet layouts and opcodes
 │       ├── config_manager.*      ← NVS-backed configuration, security and calibration
-│       ├── led_effects.*         ← Unified priority LED controller (safeguard, effects, RPM bar)
-│       ├── shift_light.*         ← Legacy WS2812B shift-light engine (test harness path)
-│       ├── dashboard.*           ← OLED display and LED status coordination
+│       ├── led_controller.*      ← Sole owner of the six WS2812B pixels (no display dependency)
+│       ├── led_effects.*         ← Unified priority LED engine (safeguard, effects, RPM bar)
+│       ├── led_color.h           ← Shared RGB color primitives
 │       ├── storage_manager.*     ← LittleFS mount, session tracking, safe formatting
 │       ├── diag_logger.*         ← Persistent diagnostic event log to flash
-│       ├── vehicle_profile.*     ← Vehicle-specific CAN signal definitions
 │       ├── button_handler.h      ← BOOT button stage/recording control
 │       ├── serial_protocol.h     ← Serial command parser
 │       └── config.h              ← Internal compiled-in constants
@@ -912,10 +882,9 @@ PulseShift-Firmware/
 ├── test/                         ← Host-side C++ and Python regression tests
 ├── tools/                        ← Optional capture utilities (pulseshift_capture.py)
 ├── docs/                         ← Extended reference documentation
-│   ├── BLE-PROTOCOL.md           ← BLE v1 telemetry + v2 configuration protocol reference
+│   ├── BLE-PROTOCOL.md           ← BLE v1 telemetry + v2 configuration/command protocol reference (2.2.0)
 │   ├── HARDWARE.md               ← Detailed electrical specs and automotive protection
 │   ├── TESTING.md                ← Test suite and verification procedure
-│   ├── VERIFICATION.md           ← Historical development snapshot
 │   └── CAN-INVESTIGATION.md      ← Historical TWAI simulator investigation
 └── README.md
 ```
@@ -931,11 +900,10 @@ Every push and pull request to `main` automatically runs compilation checks:
 [![Firmware CI](https://github.com/iamaritrasaha/PulseShift/actions/workflows/ci.yml/badge.svg)](https://github.com/iamaritrasaha/PulseShift/actions/workflows/ci.yml)
 
 The CI pipeline (`.github/workflows/ci.yml`) verifies:
-- CAN Capture mode compiles cleanly with esp32:esp32 core 3.3.12
-- Vehicle RPM mode compiles cleanly
-- OLED-enabled variant compiles cleanly
-- Demo mode is **rejected** at compile time in production builds
+- Production firmware compiles cleanly with esp32:esp32 core 3.3.12
+- Fully headless variant (serial diagnostics off) compiles cleanly
 - Invalid `UserConfig.h` settings trigger compile-time errors
+- No OLED dependency (SSD1306/GFX) is referenced anywhere in the sources or CI
 
 A passing CI build confirms that the sketch compiles correctly on a clean machine. It does not replace motorcycle testing, hardware wiring verification, or RPM calibration.
 
@@ -946,14 +914,16 @@ bash test/run.sh
 ```
 
 The host-side test suite (run on Ubuntu in CI) validates:
-- CAN frame envelope validation, RTR rejection, extended frame handling
-- Binary record format (76-byte header, 20-byte records) and CRC16-CCITT integrity
-- Power-loss-safe LittleFS capture, EOF truncation, and rollback safety
-- Shift-light progression, RGB scaling, and alert modes
-- Unified RPM candidate monitor bounds, NaN/Inf rejection, 32-bit timer rollover
+- Configuration state machine: validation rules, snapshot TLV serialization with CRC32
+- Firmware-driven calibration session: point capture, monotonicity/span/residual rejection, fingerprint-bound verification
+- Unified LED engine: layer priorities, RPM validity safeguard, per-LED hysteresis, warning patterns, direction and brightness
+- BLE v2 command dispatch through the real dispatcher: authorization binding, staged transactions, calibration workflow, device commands, diagnostics TLV blob
+- Unified RPM candidate monitor bounds, staleness, 32-bit timer rollover
+- CAN transport: listen-only install, TX-pin isolation routing, overflow handling, bounded logging
 - RPM serial diagnostics output regression (present when enabled, silent when disabled)
-- OLED dashboard calibration bar, blanking and recovery behavior
+- Binary capture format (76-byte header, 20-byte records) and CRC16-CCITT integrity (offline)
 - BLE v1 protocol framing and BLE v2 configuration command handling (Python, 88 tests)
+- Production integrity: no OLED/demo/simulation symbols remain, single passive CAN path, bounded command queues, restore-defaults preserves credentials
 
 ### Physical verification
 

@@ -1,761 +1,300 @@
-// Copyright (c) 2026 Aritra Saha. All rights reserved.
-#include "rpm_decoder.h"
-#include "dashboard_model.h"
-#include "tx_tracker.h"
-#include "simulated_ecu.h"
-#include "shift_light.h"
-#include "demo_commands.h"
+// Core logic tests: config validation/serialization, calibration session fit,
+// staged transactions, event pacing and serial parsing helpers.
+// Pure host build: no Arduino stubs needed (config_manager uses the chrono
+// millis() fallback when compiled without ARDUINO / PULSESHIFT_TEST_BUILD).
 #include "event_summary.h"
+#include "serial_protocol.h"
+#include "led_color.h"
+#include "rpm_candidate.h"
+#include "config_manager.h"
 #include <cstdio>
 #include <cstdlib>
-#include <climits>
 #include <cstring>
-#include <initializer_list>
+#include <cstdint>
+#include <cmath>
+#include <string>
 
-namespace {
-unsigned assertions = 0, cases = 0;
-#define CHECK(expr) do { ++assertions; if (!(expr)) { std::fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#expr); std::exit(1); } } while(0)
-void pass(const char* name) { ++cases; std::printf("PASS %s\n",name); }
+#define CHECK(x) do {++checks;if(!(x)){std::fprintf(stderr,"CORE FAIL %d: %s\n",__LINE__,#x);std::exit(1);}}while(0)
+static unsigned checks=0;
 
-CanFrame frame(uint16_t raw=2430) {
-  auto f=demonstrationFrame(100,0); f.data[0]=uint8_t(raw); f.data[1]=uint8_t(raw>>8); return f;
+static void event_summary_pacing() {
+  EventSummary s;
+  CHECK(s.total()==0 && s.take(0,1000)==0);
+  s.record(); s.record(); s.record();
+  CHECK(s.total()==3 && s.take(500,1000)==0);      // interval not elapsed
+  CHECK(s.take(1000,1000)==3);                     // flushes all pending
+  CHECK(s.total()==3 && s.take(1100,1000)==0);     // nothing pending
 }
 
-void decoding() {
-  auto m=demonstrationMapping(); auto f=frame(); uint16_t rpm=42;
-  CHECK(decodeRpm(f,m,rpm)==DecodeResult::Valid); CHECK(rpm==2430);
-  pass("valid LE CAN frame");
-  f.id=0x301; CHECK(decodeRpm(f,m,rpm)==DecodeResult::WrongId);
-  f.id=0x800; CHECK(decodeRpm(f,m,rpm)==DecodeResult::Malformed);
-  f=frame(); f.extended=true; CHECK(decodeRpm(f,m,rpm)==DecodeResult::WrongId);
-  m.extended=true; CHECK(decodeRpm(f,m,rpm)==DecodeResult::Valid);
-  f.id=m.id=0x1FFFFFFF; CHECK(decodeRpm(f,m,rpm)==DecodeResult::Valid);
-  f.id=0x20000000; CHECK(decodeRpm(f,m,rpm)==DecodeResult::Malformed);
-  pass("identifier width and standard/extended distinction");
-  m=demonstrationMapping(); f=frame();
-  for(unsigned dlc=0;dlc<256;++dlc) {
-    f.dlc=uint8_t(dlc); rpm=42;
-    const auto r=decodeRpm(f,m,rpm);
-    CHECK(r==(dlc==8 ? DecodeResult::Valid : dlc>8 ? DecodeResult::Malformed : DecodeResult::WrongDlc));
-    CHECK(rpm==(dlc==8 ? 2430 : 42));
-  }
-  pass("all DLC values and output preservation on rejection");
-  f=frame(); f.remote=true; CHECK(decodeRpm(f,m,rpm)==DecodeResult::Remote);
-  m.enabled=false; f.remote=false; CHECK(decodeRpm(f,m,rpm)==DecodeResult::Disabled);
-  pass("RTR rejection and disabled bike mapping");
-  m=demonstrationMapping(); m.littleEndian=false; f=frame(); f.data[0]=0x09; f.data[1]=0x7E;
-  CHECK(decodeRpm(f,m,rpm)==DecodeResult::Valid); CHECK(rpm==2430);
-  m.offset=6; f.data[6]=0x09; f.data[7]=0x7E;
-  CHECK(decodeRpm(f,m,rpm)==DecodeResult::Valid); CHECK(rpm==2430);
-  m.offset=7; CHECK(decodeRpm(f,m,rpm)==DecodeResult::BadMapping);
-  m.offset=255; CHECK(decodeRpm(f,m,rpm)==DecodeResult::BadMapping);
-  m.offset=0; m.denominator=0; CHECK(decodeRpm(f,m,rpm)==DecodeResult::BadMapping);
-  m=demonstrationMapping(); m.id=0x800; CHECK(decodeRpm(f,m,rpm)==DecodeResult::BadMapping);
-  pass("BE, offsets, mapping bounds, zero divisor");
-  m=demonstrationMapping(); m.numerator=3; m.denominator=2;
-  f=frame(3); CHECK(decodeRpm(f,m,rpm)==DecodeResult::Valid); CHECK(rpm==4);
-  f=frame(4334); CHECK(decodeRpm(f,m,rpm)==DecodeResult::OutOfRange);
-  m.numerator=1; m.denominator=2; f=frame(13001);
-  CHECK(decodeRpm(f,m,rpm)==DecodeResult::OutOfRange); // 6500.5 must not round into range
-  m.numerator=0xFFFFFFFF; m.denominator=0xFFFFFFFF; f=frame(6500);
-  CHECK(decodeRpm(f,m,rpm)==DecodeResult::Valid); CHECK(rpm==6500);
-  m.denominator=1; CHECK(decodeRpm(f,m,rpm)==DecodeResult::OutOfRange);
-  pass("rational conversion, rounding and overflow safety");
-  m=demonstrationMapping();
-  for(unsigned raw=0;raw<=65535;++raw) {
-    f=frame(uint16_t(raw)); rpm=42; const auto result=decodeRpm(f,m,rpm);
-    CHECK(result==(raw<=6500 ? DecodeResult::Valid : DecodeResult::OutOfRange));
-    CHECK(rpm==(raw<=6500 ? raw : 42));
-  }
-  pass("exhaustive 16-bit RPM range including zero and limits");
+static void serial_parse_helpers() {
+  uint32_t v = 123;
+  CHECK(parseUnsignedNumber(" 4500\t", 20000, v) && v==4500);
+  v = 123;
+  CHECK(!parseUnsignedNumber("20001", 20000, v) && v==123);
+  CHECK(!parseUnsignedNumber("-5", 20000, v));
+  CHECK(parseUnsignedNumber("0", 0, v) && v==0);
+  CHECK(!parseUnsignedNumber("1", 0, v));
+  CHECK(parseUnsignedNumber("4294967295", UINT32_MAX, v) && v==UINT32_MAX);
+
+  SerialProtocol proto;
+  for (char c : std::string("STATUS")) CHECK(!proto.feed(c));
+  CHECK(proto.feed('\r') && std::strcmp(proto.command(),"STATUS")==0);
+  proto.reset();
+  // Overlong command must be dropped, not truncated.
+  for (unsigned i=0;i<200;++i) CHECK(!proto.feed('x'));
+  CHECK(!proto.feed('\n'));
+
+  // Color scaling: 255 is identity, rounding is symmetric.
+  const RgbColor c{100, 200, 255};
+  CHECK(scaleColor(c, 255) == c);
+  const RgbColor half = scaleColor(c, 128);
+  CHECK(half.r==50 && half.g==100 && half.b==128);
 }
 
-void envelope() {
-  CanFrame f{}; f.dlc=8; f.extended=false;
-  f.id=0x7FF; CHECK(validEnvelope(f));
-  f.id=0x800; CHECK(!validEnvelope(f));
-  f.extended=true;
-  f.id=0x1FFFFFFF; CHECK(validEnvelope(f));
-  f.id=0x20000000; CHECK(!validEnvelope(f));
-  f.id=0x100; f.extended=false;
-  f.dlc=8; CHECK(validEnvelope(f));
-  f.dlc=9; CHECK(!validEnvelope(f));
-  f.dlc=0; CHECK(validEnvelope(f));
-  pass("validEnvelope: ID and DLC boundary conditions");
+static void config_validate() {
+  PulseShiftConfig cfg; // default member initializers == documented safe defaults
+  CHECK(ConfigManager::validateConfig(cfg));
+
+  // RPM bar without a bound verification record is invalid (safety rule).
+  cfg.effect = 4;
+  CHECK(!ConfigManager::validateConfig(cfg));
+  cfg.effect = 0;
+
+  cfg.rpmThresholds[3] = 500; // breaks ascending order
+  CHECK(!ConfigManager::validateConfig(cfg));
+
+  cfg = PulseShiftConfig{};
+  cfg.rpmMultiplier = 0.05f;
+  CHECK(!ConfigManager::validateConfig(cfg));
+  cfg.rpmMultiplier = 1000.0f;
+  CHECK(ConfigManager::validateConfig(cfg));
+
+  cfg = PulseShiftConfig{};
+  cfg.candidateByteWidth = 2;
+  cfg.candidateByteIndex = 7; // 7 + 2 > 8
+  CHECK(!ConfigManager::validateConfig(cfg));
+
+  cfg = PulseShiftConfig{};
+  cfg.canCandidateId = 0x800; // standard frame must stay within 11 bits
+  CHECK(!ConfigManager::validateConfig(cfg));
+
+  cfg = PulseShiftConfig{};
+  cfg.warningPatternId = 4;
+  CHECK(!ConfigManager::validateConfig(cfg));
 }
 
-void decode_names() {
-  const DecodeResult all[] = {
-    DecodeResult::Valid, DecodeResult::Disabled, DecodeResult::Malformed,
-    DecodeResult::Remote, DecodeResult::WrongId, DecodeResult::WrongDlc,
-    DecodeResult::BadMapping, DecodeResult::OutOfRange
-  };
-  for(auto r : all) {
-    const char* n = decodeName(r);
-    CHECK(n != nullptr);
-    CHECK(n[0] != '\0');
-  }
-  pass("decodeName: all enum values return non-empty strings");
-}
-
-void state() {
-  RpmState s(demonstrationMapping());
-  CHECK(!s.fresh(0,1000)); CHECK(!s.hasValue());
-  CHECK(viewStatus(s,0,1000,true)==ViewStatus::Disconnected);
-  auto f=frame(0); f.timestampMs=0; CHECK(s.ingest(f)==DecodeResult::Valid);
-  CHECK(s.fresh(999,1000)); CHECK(s.rpm()==0); CHECK(!s.fresh(1000,1000));
-  CHECK(viewStatus(s,1000,1000,true)==ViewStatus::Stale);
-  f=frame(6501); f.timestampMs=1100; s.ingest(f);
-  CHECK(!s.fresh(1100,1000)); CHECK(s.rpm()==0); CHECK(s.busFresh(1100,1000));
-  f=frame(4000); f.timestampMs=1200; s.ingest(f);
-  CHECK(s.fresh(1200,1000)); CHECK(s.rpm()==4000); CHECK(s.accepted()==2); CHECK(s.rejected()==1);
-  CHECK(viewStatus(s,1200,1000,false)==ViewStatus::Fault);
-  CHECK(viewStatus(s,1200,1000,true,false)==ViewStatus::Unconfigured);
-  pass("missing, valid zero, stale boundary, invalid non-refresh, recovery and faults");
-  RpmState wrap(demonstrationMapping()); f.timestampMs=0xFFFFFFF0; wrap.ingest(f);
-  CHECK(wrap.fresh(0x20,1000)); CHECK(!wrap.fresh(0x400,1000));
-  pass("millis rollover");
-  RpmState bike(RpmMapping{}); f.timestampMs=20; bike.ingest(f);
-  CHECK(!bike.hasValue()); CHECK(viewStatus(bike,20,1000,true)==ViewStatus::Unmapped);
-  CHECK(viewStatus(bike,1020,1000,true)==ViewStatus::Disconnected);
-  RpmState invalid(demonstrationMapping()); f.dlc=1; invalid.ingest(f);
-  CHECK(viewStatus(invalid,20,1000,true)==ViewStatus::Invalid);
-  pass("unmapped, invalid and disconnected states");
-  RpmState ctr(demonstrationMapping());
-  CHECK(ctr.accepted()==0); CHECK(ctr.rejected()==0);
-  auto g=frame(100); g.timestampMs=0; ctr.ingest(g);
-  CHECK(ctr.accepted()==1); CHECK(ctr.rejected()==0);
-  g=frame(9999); g.timestampMs=0; ctr.ingest(g);
-  CHECK(ctr.accepted()==1); CHECK(ctr.rejected()==1);
-  g.remote=true; g.dlc=8; ctr.ingest(g);
-  CHECK(ctr.accepted()==1); CHECK(ctr.rejected()==2);
-  pass("RpmState accepted/rejected counters");
-}
-
-void leds() {
-  CHECK(litLedCount(0,6500,6,true)==0);
-  for(unsigned n=1;n<=6;++n) {
-    unsigned threshold=(6500*n+5)/6;
-    CHECK(litLedCount(uint16_t(threshold-1),6500,6,true)==uint8_t(n-1));
-    CHECK(litLedCount(uint16_t(threshold),6500,6,true)==uint8_t(n));
-  }
-  CHECK(litLedCount(65535,6500,6,true)==6);
-  CHECK(litLedCount(6500,6500,6,false)==0);
-  CHECK(litLedCount(6500,0,6,true)==0);
-  CHECK(litLedCount(6500,6500,0,true)==0);
-  CHECK(litLedCount(6499,6500,1,true)==0);
-  CHECK(litLedCount(6500,6500,1,true)==1);
-  pass("six LED thresholds, clamping, zero count and stale/off behavior");
-}
-
-void tx() {
-  auto f=frame(); TxTracker t;
-  CHECK(t.begin(f,0)); CHECK(!t.begin(f,0)); CHECK(t.onReceive(f)); CHECK(!t.finish(1)); CHECK(!t.finish(0));
-  CHECK(!t.timedOut(1499,1500)); CHECK(t.timedOut(1500,1500)); CHECK(t.halt());
-  CHECK(!t.halt()); CHECK(!t.timedOut(1600,1500)); CHECK(!t.begin(f,2000)); CHECK(!t.onTxSuccess());
-  pass("original RX-without-TX regression, single timeout, no queue flooding");
-  for(unsigned order=0;order<2;++order) {
-    TxTracker ok; CHECK(ok.begin(f,0));
-    if(order==0) { CHECK(ok.onReceive(f)); CHECK(ok.onTxSuccess()); }
-    else { CHECK(ok.onTxSuccess()); CHECK(ok.onReceive(f)); }
-    CHECK(!ok.finish(1)); CHECK(ok.finish(0)); CHECK(!ok.pending()); CHECK(ok.begin(f,100));
-  }
-  TxTracker mismatch; CHECK(mismatch.begin(f,0)); f.data[4]^=1;
-  CHECK(!mismatch.onReceive(f)); f.data[4]^=1;
-  CHECK(mismatch.onReceive(f)); CHECK(!mismatch.onReceive(f));
-  pass("RX/TX ordering, driver pending requirement, sequence mismatch and duplicates");
-  {
-    TxTracker rtr_test; auto fr=frame(); CHECK(rtr_test.begin(fr,0));
-    auto fr_rtr=fr; fr_rtr.remote=true;
-    CHECK(!rtr_test.onReceive(fr_rtr));
-    pass("TxTracker rejects RTR frames");
-  }
-  {
-    TxTracker dlc_test; auto fd=frame(); CHECK(dlc_test.begin(fd,0));
-    auto fd_bad=fd; fd_bad.dlc=7;
-    CHECK(!dlc_test.onReceive(fd_bad));
-    pass("TxTracker rejects DLC-mismatched frames");
-  }
-  {
-    TxTracker ext_test; auto fe=frame(); CHECK(ext_test.begin(fe,0));
-    auto fe_ext=fe; fe_ext.extended=true;
-    CHECK(!ext_test.onReceive(fe_ext));
-    pass("TxTracker rejects extended-flag-mismatched frames");
-  }
-}
-
-void replay() {
-  ReplayTransport replay; RpmState s(demonstrationMapping()); CanFrame f;
-  for(uint32_t now=0;now<=20000;now+=100) {
-    const bool got=replay.receive(now,f);
-    if(got) s.ingest(f);
-    if(now==100) CHECK(s.fresh(now,1000));
-    if(now==13500) CHECK(!s.fresh(now,1000));
-    if(now==16000) { CHECK(!got); CHECK(!s.busFresh(now,1000)); }
-    if(now==17000) CHECK(s.fresh(now,1000));
-  }
-  pass("full-frame replay, invalid interval, silence and resumed frames");
-  {
-    ReplayTransport seq_replay; CanFrame sf;
-    bool got0 = seq_replay.receive(100, sf);
-    CHECK(got0);
-    uint32_t seq0 = uint32_t(sf.data[2]) | (uint32_t(sf.data[3])<<8)
-                  | (uint32_t(sf.data[4])<<16) | (uint32_t(sf.data[5])<<24);
-    bool got1 = seq_replay.receive(200, sf);
-    CHECK(got1);
-    uint32_t seq1 = uint32_t(sf.data[2]) | (uint32_t(sf.data[3])<<8)
-                  | (uint32_t(sf.data[4])<<16) | (uint32_t(sf.data[5])<<24);
-    CHECK(seq1 == seq0 + 1);
-    pass("demonstration frame sequence counter increments by 1");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Shift-light engine test suite
-// ---------------------------------------------------------------------------
-
-ShiftLightConfig defaultTestConfig() {
-  ShiftLightConfig c;
-  c.ledCount = 6;
-  c.masterBrightness = 255;  // 100% brightness for unambiguous RGB checks
-  c.style = ShiftLightStyle::Classic;
-  c.direction = LedDirection::Normal;
-  c.startupAnimationEnabled = false;  // test direct live rendering first
-  c.smoothTransitions = true;
-  c.alertMode = ShiftAlertMode::FlashRed;
-  c.rpmStart = 1500;
-  c.rpmShift = 5800;
-  c.rpmMax = 6500;
-  c.hysteresisRpm = 150;
-  c.animationIntervalMs = 0;  // immediate updates in unit tests
-  c.idleEffectEnabled = false;
-  c.idleMaxRpm = 1300;
-  return c;
-}
-
-void shift_light_progressive_fill() {
-  auto cfg = defaultTestConfig();
-  ShiftLightEngine engine(cfg);
-  engine.reset(0);
-
-  // 1. Below start RPM (1500): all LEDs off
-  engine.update(100, 0, ViewStatus::Live);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  engine.update(150, 1499, ViewStatus::Live);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // Exactly at start RPM: progress = 0, all off
-  engine.update(200, 1500, ViewStatus::Live);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // 2. Progressive progression: span = 5800 - 1500 = 4300 RPM.
-  // Each LED span = 4300 / 6 = 716.67 RPM.
-  // At 1500 + 717 = 2217 RPM: LED 0 is 100% lit (Green), LED 1 is off or starting.
-  engine.update(250, 2217, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
-  CHECK(engine.getPixel(2) == RgbColor(0, 0, 0));
-  CHECK(engine.getPixel(5) == RgbColor(0, 0, 0));
-
-  // 3. Smooth transition test:
-  // Mid-way through LED 1 (at ~2575 RPM: 1.5 LEDs).
-  // LED 0 is 100% Green; LED 1 is partial Green (~50% brightness); LEDs 2..5 off.
-  engine.update(300, 2575, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
-  RgbColor p1 = engine.getPixel(1);
-  CHECK(p1.g > 60 && p1.g < 200 && p1.r == 0 && p1.b == 0);
-  CHECK(engine.getPixel(2) == RgbColor(0, 0, 0));
-
-  // 4. Test with smoothTransitions = false (discrete step fill)
-  cfg.smoothTransitions = false;
-  ShiftLightEngine stepEngine(cfg);
-  stepEngine.reset(0);
-  stepEngine.update(100, 2575, ViewStatus::Live);
-  CHECK(stepEngine.getPixel(0) == RgbColor(0, 255, 0));
-  CHECK(stepEngine.getPixel(1) == RgbColor(0, 0, 0));  // discrete: partial is off
-
-  // 5. Variable LED counts:
-  // Single LED bar
-  cfg.ledCount = 1;
-  cfg.smoothTransitions = true;
-  ShiftLightEngine singleEngine(cfg);
-  singleEngine.reset(0);
-  singleEngine.update(100, 1500, ViewStatus::Live);
-  CHECK(singleEngine.getPixel(0) == RgbColor(0, 0, 0));
-  singleEngine.update(150, 3650, ViewStatus::Live);  // 50%
-  CHECK(singleEngine.getPixel(0).g > 80 && singleEngine.getPixel(0).g < 180);
-
-  // 12 LEDs
-  cfg.ledCount = 12;
-  ShiftLightEngine twelveEngine(cfg);
-  twelveEngine.reset(0);
-  twelveEngine.update(100, 5800, ViewStatus::Live);
-  // At 5800 RPM, all 12 LEDs are lit (or alert)
-  CHECK(twelveEngine.ledCount() == 12);
-
-  pass("progressive RPM illumination, smooth partial brightness, and variable LED counts");
-}
-
-void shift_light_color_styles() {
-  auto cfg = defaultTestConfig();
-  cfg.alertMode = ShiftAlertMode::Off;  // inspect progressive color bar at maximum fill
-  cfg.rpmShift = 10000;
-  ShiftLightEngine engine(cfg);
-  engine.reset(0);
-
-  // 1. CLASSIC style check: Green (0, 1) -> Yellow (2, 3) -> Orange (4) -> Red (5)
-  cfg.style = ShiftLightStyle::Classic;
-  engine.setStyle(ShiftLightStyle::Classic);
-  engine.update(100, 10000, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));    // Green
-  CHECK(engine.getPixel(1) == RgbColor(0, 255, 0));    // Green
-  CHECK(engine.getPixel(2) == RgbColor(255, 200, 0));  // Yellow
-  CHECK(engine.getPixel(3) == RgbColor(255, 200, 0));  // Yellow
-  CHECK(engine.getPixel(4) == RgbColor(255, 80, 0));   // Orange
-  CHECK(engine.getPixel(5) == RgbColor(255, 0, 0));    // Red
-
-  // 2. RACING style check: Vivid Green (0, 1) -> Amber (2, 3) -> Crimson (4) -> Red (5)
-  engine.setStyle(ShiftLightStyle::Racing);
-  engine.update(200, 10000, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 60));
-  CHECK(engine.getPixel(2) == RgbColor(255, 160, 0));
-  CHECK(engine.getPixel(4) == RgbColor(255, 0, 90));
-  CHECK(engine.getPixel(5) == RgbColor(255, 0, 0));
-
-  // 3. MINIMAL style check: Ice White (0..4) -> Red (5)
-  engine.setStyle(ShiftLightStyle::Minimal);
-  engine.update(300, 10000, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(220, 235, 255));
-  CHECK(engine.getPixel(4) == RgbColor(220, 235, 255));
-  CHECK(engine.getPixel(5) == RgbColor(255, 0, 0));
-
-  // 4. CUSTOM style check:
-  cfg.style = ShiftLightStyle::Custom;
-  cfg.customColors[0] = RgbColor{10, 20, 30};
-  cfg.customColors[1] = RgbColor{40, 50, 60};
-  ShiftLightEngine customEngine(cfg);
-  customEngine.reset(0);
-  customEngine.update(400, 10000, ViewStatus::Live);
-  CHECK(customEngine.getPixel(0) == RgbColor(10, 20, 30));
-  CHECK(customEngine.getPixel(1) == RgbColor(40, 50, 60));
-
-  // 5. Master brightness scaling:
-  engine.setStyle(ShiftLightStyle::Classic);
-  engine.setMasterBrightness(128);  // ~50%
-  engine.update(500, 10000, ViewStatus::Live);
-  RgbColor p0 = engine.getPixel(0);
-  CHECK(p0.g >= 127 && p0.g <= 129 && p0.r == 0 && p0.b == 0);
-
-  engine.setMasterBrightness(0);
-  engine.update(600, 10000, ViewStatus::Live);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // 6. Reversed direction:
-  cfg.style = ShiftLightStyle::Classic;
-  cfg.masterBrightness = 255;
-  cfg.direction = LedDirection::Reversed;
-  ShiftLightEngine revEngine(cfg);
-  revEngine.reset(0);
-  revEngine.update(700, 10000, ViewStatus::Live);
-  // In reverse order, index 0 is Red and index 5 is Green!
-  CHECK(revEngine.getPixel(0) == RgbColor(255, 0, 0));
-  CHECK(revEngine.getPixel(5) == RgbColor(0, 255, 0));
-
-  pass("color styles (Classic, Racing, Minimal, Custom), brightness scaling, and direction reversal");
-}
-
-void shift_light_shift_alert_hysteresis() {
-  auto cfg = defaultTestConfig();
-  cfg.rpmShift = 5800;
-  cfg.hysteresisRpm = 150;
-  cfg.alertMode = ShiftAlertMode::FlashRed;
-  ShiftLightEngine engine(cfg);
-  engine.reset(0);
-
-  // 1. Just below threshold (5799 RPM): alert inactive
-  engine.update(100, 5799, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-
-  // 2. Exactly at threshold (5800 RPM): alert triggers!
-  engine.update(200, 5800, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-
-  // 3. Small oscillation drop (5780 RPM): hysteresis keeps alert ACTIVE
-  engine.update(250, 5780, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-
-  // 4. Oscillate back up to 5820 RPM: still ACTIVE
-  engine.update(300, 5820, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-
-  // 5. Drop to 5651 RPM (clear threshold is 5800 - 150 = 5650): still ACTIVE
-  engine.update(350, 5651, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-
-  // 6. Drop to 5649 RPM (below 5650): alert DEACTIVATES!
-  engine.update(400, 5649, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-
-  // 7. Rise back to 5750 RPM (below 5800): stays inactive until 5800
-  engine.update(450, 5750, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-
-  // 8. Test alert modes:
-  // FlashRed mode toggles on/off:
-  engine.update(500, 5900, ViewStatus::Live);  // triggers alert at t=500
-  CHECK(engine.isAlertActive());
-  // At t=520 (elapsed 20ms into 100ms cycle: on)
-  engine.update(520, 5900, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(255, 0, 0));
-  // At t=570 (elapsed 70ms into 100ms cycle: off)
-  engine.update(570, 5900, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(0, 0, 0));
-
-  // SolidRed mode:
-  engine.setAlertMode(ShiftAlertMode::SolidRed);
-  engine.update(600, 5900, ViewStatus::Live);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(255, 0, 0));
-
-  // FlashWhite mode:
-  engine.setAlertMode(ShiftAlertMode::FlashWhite);
-  engine.update(720, 5900, ViewStatus::Live);  // t=720: elapsed 220 % 100 = 20ms (on)
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(255, 255, 255));
-
-  // Off mode (alert disabled, progressive fill shown):
-  engine.setAlertMode(ShiftAlertMode::Off);
-  engine.update(800, 5900, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));  // classic green at bottom
-
-  pass("shift alert activation, hysteresis oscillation damping, and alert visual modes");
-}
-
-void shift_light_startup_sequence() {
-  auto cfg = defaultTestConfig();
-  cfg.startupAnimationEnabled = true;
-  ShiftLightEngine engine(cfg);
-  engine.reset(1000);  // start animation at t=1000
-  CHECK(!engine.isStartupComplete());
-
-  // Sweep 1: forward sweep (0..400ms -> t=1000..1400)
-  engine.update(1100, 3000, ViewStatus::Live);
-  CHECK(!engine.isStartupComplete());
-  // Active LED should be around index 1 (100ms / 400ms * 6 = 1.5)
-  CHECK(engine.getPixel(1) != RgbColor(0, 0, 0));
-
-  // Sweep 2: reverse sweep (400..800ms -> t=1400..1800)
-  engine.update(1500, 3000, ViewStatus::Live);
-  CHECK(!engine.isStartupComplete());
-
-  // Pulse: (800..1100ms -> t=1800..2100)
-  engine.update(1950, 3000, ViewStatus::Live);
-  CHECK(!engine.isStartupComplete());
-  // At peak of pulse (150ms in), pixels are illuminated
-  CHECK(engine.getPixel(0) != RgbColor(0, 0, 0));
-
-  // Completion: (>1200ms -> t>=2200)
-  engine.update(2201, 3000, ViewStatus::Live);
-  CHECK(engine.isStartupComplete());
-
-  // Interruption by CAN Fault during startup:
-  engine.reset(3000);
-  CHECK(!engine.isStartupComplete());
-  engine.update(3100, 3000, ViewStatus::Fault);  // fault occurs!
-  CHECK(engine.isStartupComplete());             // immediately completed/aborted
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // Monotonic timer rollover test:
-  engine.reset(0xFFFFFFF0);
-  CHECK(!engine.isStartupComplete());
-  // After 1300 ms across 32-bit rollover: (0xFFFFFFF0 + 1300) = 0x00000504
-  engine.update(0x00000504, 3000, ViewStatus::Live);
-  CHECK(engine.isStartupComplete());
-
-  pass("non-blocking startup animation, phase progression, fault interruption, and timer rollover");
-}
-
-void shift_light_faults_and_safety() {
-  auto cfg = defaultTestConfig();
-  ShiftLightEngine engine(cfg);
-  engine.reset(0);
-
-  // 1. Establish valid high RPM with active shift alert
-  engine.update(100, 6000, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-
-  // 2. Data becomes Stale: alert MUST clear immediately, LEDs MUST turn off
-  engine.update(200, 6000, ViewStatus::Stale);
-  CHECK(!engine.isAlertActive());
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // 3. Disconnected: LEDs stay off
-  engine.update(300, 6000, ViewStatus::Disconnected);
-  CHECK(!engine.isAlertActive());
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // 4. Invalid frame / unmapped: LEDs stay off
-  engine.update(400, 6000, ViewStatus::Invalid);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  engine.update(500, 6000, ViewStatus::Unmapped);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // 5. Fault: LEDs stay off
-  engine.update(600, 6000, ViewStatus::Fault);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // 6. Recovery: valid data resumes at 4000 RPM -> progressive fill restores
-  engine.update(700, 4000, ViewStatus::Live);
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
-
-  pass("fail-safe blanking on stale, disconnected, invalid, unmapped, and fault states");
-}
-
-void shift_light_idle_effect() {
-  auto cfg = defaultTestConfig();
-  cfg.idleEffectEnabled = true;
-  cfg.idleMaxRpm = 1300;
-  ShiftLightEngine engine(cfg);
-  engine.reset(0);
-
-  // Live at 1000 RPM (idle): LED 0 breathes, remaining LEDs off
-  engine.update(100, 1000, ViewStatus::Live);
-  CHECK(engine.getPixel(0) != RgbColor(0, 0, 0));
-  for (uint8_t i = 1; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // Disconnected at 1000 RPM: ALL LEDs off (idle does not mask disconnection)
-  engine.update(200, 1000, ViewStatus::Disconnected);
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  pass("idle breathing effect active only during live reception below idle threshold");
-}
-
-void shift_light_replay_manual_control() {
-  ReplayTransport replay;
-  CanFrame f;
-
-  // 1. Manual synthetic RPM injection
-  replay.setManualRpm(4200);
-  CHECK(replay.manualRpm() == 4200);
-  bool got = replay.receive(100, f);
-  CHECK(got);
-  uint16_t rpm = uint16_t(f.data[0]) | (uint16_t(f.data[1]) << 8);
-  CHECK(rpm == 4200);
-
-  // 2. Pause demonstration
-  replay.setManualRpm(-1);  // return to auto cycle
-  replay.setPaused(true);
-  CHECK(replay.isPaused());
-  CHECK(!replay.receive(200, f));
-
-  // 3. Resume demonstration
-  replay.setPaused(false);
-  CHECK(replay.receive(300, f));
-
-  pass("ReplayTransport manual synthetic RPM injection and pause/resume control");
-}
-
-void shift_light_operating_range_0_to_6000() {
-  ShiftLightConfig c;
-  c.ledCount = 6;
-  c.masterBrightness = 255;
-  c.style = ShiftLightStyle::Classic;
-  c.direction = LedDirection::Normal;
-  c.startupAnimationEnabled = false;
-  c.smoothTransitions = true;
-  c.alertMode = ShiftAlertMode::FlashRed;
-  c.rpmStart = 0;
-  c.rpmShift = 6000;
-  c.rpmMax = 6500;
-  c.hysteresisRpm = 150;
-  c.animationIntervalMs = 0;
-  c.idleEffectEnabled = false;
-
-  ShiftLightEngine engine(c);
-  engine.reset(0);
-
-  // 1. At 0 RPM: all six LEDs must be completely off
-  engine.update(100, 0, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-  for (uint8_t i = 0; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // 2. Progressive activation at 1000 RPM increments:
-  // At 1000 RPM: LED 0 is fully lit Green, LEDs 1..5 are off
-  engine.update(150, 1000, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
-  for (uint8_t i = 1; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // At 2000 RPM: LEDs 0 and 1 are fully lit Green, LEDs 2..5 are off
-  engine.update(200, 2000, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
-  CHECK(engine.getPixel(1) == RgbColor(0, 255, 0));
-  for (uint8_t i = 2; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // At 3000 RPM: LEDs 0, 1 (Green), LED 2 (Yellow) fully lit, LEDs 3..5 are off
-  engine.update(250, 3000, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
-  CHECK(engine.getPixel(1) == RgbColor(0, 255, 0));
-  CHECK(engine.getPixel(2) == RgbColor(255, 200, 0));
-  for (uint8_t i = 3; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // At 4000 RPM: LEDs 0, 1 (Green), LEDs 2, 3 (Yellow) fully lit, LEDs 4..5 are off
-  engine.update(300, 4000, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-  CHECK(engine.getPixel(0) == RgbColor(0, 255, 0));
-  CHECK(engine.getPixel(1) == RgbColor(0, 255, 0));
-  CHECK(engine.getPixel(2) == RgbColor(255, 200, 0));
-  CHECK(engine.getPixel(3) == RgbColor(255, 200, 0));
-  for (uint8_t i = 4; i < 6; ++i) CHECK(engine.getPixel(i) == RgbColor(0, 0, 0));
-
-  // At 5000 RPM: LEDs 0..3 lit, LED 4 (Orange) fully lit, LED 5 is off
-  engine.update(350, 5000, ViewStatus::Live);
-  CHECK(!engine.isAlertActive());
-  CHECK(engine.getPixel(4) == RgbColor(255, 80, 0));
-  CHECK(engine.getPixel(5) == RgbColor(0, 0, 0));
-
-  // 3. At 6000 RPM: trigger shift alert across all six LEDs
-  engine.update(400, 6000, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-
-  // 4. Above 6000 RPM: retain full shift alert rather than wrapping around
-  engine.update(450, 6500, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-  engine.update(500, 8000, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-  engine.update(550, 12000, ViewStatus::Live);
-  CHECK(engine.isAlertActive());
-
-  // 5. Alert mode Off retains full illumination without wrap-around
-  c.alertMode = ShiftAlertMode::Off;
-  ShiftLightEngine engineNoAlert(c);
-  engineNoAlert.reset(0);
-  engineNoAlert.update(100, 8500, ViewStatus::Live);
-  CHECK(engineNoAlert.getPixel(0) == RgbColor(0, 255, 0));
-  CHECK(engineNoAlert.getPixel(5) == RgbColor(255, 0, 0));
-
-  pass("0-6000 RPM shift-light operating range, 1000 RPM progressive increments, and above-6000 alert retention");
-}
-
-
-void command_regressions() {
-  uint32_t value = 123;
-  for (const char* invalid : {"", " ", "abc", "-1", "+1", "42rpm", "1 2", "0x10", "4294967296", "999999999999999999999"}) {
-    CHECK(!parseDemoUnsigned(invalid, UINT32_MAX, value)); CHECK(value == 123);
-  }
-  CHECK(parseDemoUnsigned(" 4500\t", 20000, value)); CHECK(value == 4500);
-  CHECK(!parseDemoUnsigned("20001", 20000, value)); CHECK(value == 4500);
-  CHECK(parseDemoUnsigned("4294967295", UINT32_MAX, value)); CHECK(value == UINT32_MAX);
-  CHECK(parseDemoUnsigned("0", 0, value)); CHECK(value == 0);
-  CHECK(!parseDemoUnsigned("1", 0, value));
-  DemoCommandLine line;
-  for (unsigned i=0; i<1000; ++i) CHECK(line.feed('x') == DemoCommandLine::Result::None);
-  CHECK(line.feed('\n') == DemoCommandLine::Result::Rejected);
-  CHECK(line.feed('\r') == DemoCommandLine::Result::None);
-  for (char ch : "rpm 4500") if (ch) line.feed(ch);
-  CHECK(line.feed('\r') == DemoCommandLine::Result::Ready);
-  CHECK(std::strcmp(line.text(), "rpm 4500") == 0);
-  CHECK(line.feed('\n') == DemoCommandLine::Result::None);
-  line.feed('r'); line.feed('\0'); line.feed('x');
-  CHECK(line.feed('\n') == DemoCommandLine::Result::Rejected);
-  line.feed('h'); CHECK(line.feed('\n') == DemoCommandLine::Result::Ready);
-  CHECK(std::strcmp(line.text(), "h") == 0);
-  pass("bounded command parser rejects overflow, binary input, junk numbers, and recovers at newline");
-}
-
-void replay_regressions() {
-  ReplayTransport replay;
-  RpmState state(demonstrationMapping());
-  CanFrame f{}; f.extended = true; f.remote = true; f.id = 0x10000000;
-  replay.setManualRpm(4200);
-  CHECK(replay.receive(100, f)); CHECK(!f.extended && !f.remote && f.dlc == 8);
-  CHECK(state.ingest(f) == DecodeResult::Valid); CHECK(state.rpm() == 4200);
-  replay.setPaused(true);
-  CHECK(!replay.receive(200, f)); CHECK(!replay.receive(1100, f));
-  CHECK(!state.fresh(1100, 1000));
-  replay.setPaused(false); replay.setManualRpm(6501);
-  CHECK(replay.receive(1200, f)); CHECK(state.ingest(f) == DecodeResult::OutOfRange);
-  CHECK(state.rpm() == 4200 && !state.fresh(1200, 1000));
-  replay.setManualRpm(0); CHECK(replay.receive(1300, f));
-  CHECK(state.ingest(f) == DecodeResult::Valid); CHECK(state.rpm() == 0 && state.fresh(1300,1000));
-  pass("manual replay retains full frame semantics, stops during pause, rejects above-range injection, and recovers");
-}
-
-void warning_aggregation() {
-  EventSummary summary;
-  for (unsigned i=0;i<10000;++i) summary.record();
-  CHECK(summary.total() == 10000); CHECK(summary.take(999, 1000) == 0);
-  CHECK(summary.take(1000, 1000) == 10000); CHECK(summary.take(2000, 1000) == 0);
-  summary.record(); CHECK(summary.take(2000, 1000) == 1);
-  summary.record(); CHECK(summary.take(0xFFFFFFF0, 1000) == 1);
-  summary.record(); CHECK(summary.take(0x20, 1000) == 0);
-  CHECK(summary.take(0x400, 1000) == 1);
-  CHECK(summary.total() == 10003);
-  pass("bus-error alert aggregation bounds logging without losing observation counts, including timer rollover");
-}
-
-void explicit_custom_black() {
-  auto cfg=defaultTestConfig(); cfg.style=ShiftLightStyle::Custom;
-  cfg.customColorCount=2; cfg.customColors[0]={0,0,0}; cfg.customColors[1]={0,0,255};
-  cfg.alertMode=ShiftAlertMode::Off;
-  ShiftLightEngine engine(cfg); engine.reset(0); engine.update(100,6500,ViewStatus::Live);
-  CHECK(engine.getPixel(0)==RgbColor(0,0,0)); CHECK(engine.getPixel(1)==RgbColor(0,0,255));
-  pass("explicit custom black remains dark and assigned blue is preserved");
-}
-
-void visual_configuration_matrix() {
-  for (unsigned count=1;count<=32;++count)
-  for (unsigned style=1;style<=4;++style)
-  for (unsigned direction=1;direction<=2;++direction)
-  for (unsigned alert=0;alert<=3;++alert)
-  for (unsigned brightness : {0u, 1u, 40u, 255u}) {
-    auto cfg = defaultTestConfig();
-    cfg.ledCount=uint8_t(count); cfg.style=static_cast<ShiftLightStyle>(style);
-    cfg.direction=static_cast<LedDirection>(direction);
-    cfg.alertMode=static_cast<ShiftAlertMode>(alert); cfg.masterBrightness=uint8_t(brightness);
-    ShiftLightEngine engine(cfg); engine.reset(0);
-    CHECK(engine.ledCount()==count);
-    engine.update(100,6500,ViewStatus::Live);
-    CHECK(engine.isAlertActive());
-    for(unsigned i=0;i<count;++i) {
-      const auto c=engine.getPixel(uint8_t(i)); CHECK(c.r<=brightness && c.g<=brightness && c.b<=brightness);
+static void snapshot_serialization_roundtrip() {
+  ConfigManager& cm = ConfigManager::instance();
+  CHECK(cm.restoreDefaults(0xA5, 0x5A)); // normalize to safe defaults
+
+  PulseShiftConfig& cfg = cm.activeMutable();
+  cfg.brightness = 123;
+  cfg.rpmThresholds[2] = 5200;
+  cfg.rpmHysteresis = 300;
+
+  uint8_t buf[512];
+  const size_t len = cm.serializeSnapshot(buf, sizeof(buf));
+  CHECK(len > 40 && len <= sizeof(buf));
+
+  // Header: schema byte (=3) + revision u32
+  CHECK(buf[0] == 3);
+
+  // Walk TLVs and verify the mandatory schema-3 set is present, then CRC32.
+  size_t off = 5;
+  bool sawHysteresis=false, sawDecoderExt=false, sawCalRecord=false, sawThresholds=false;
+  while (off + 2 <= len - 4) {
+    const uint8_t id = buf[off];
+    const uint8_t tl = buf[off+1];
+    CHECK(off + 2 + tl <= len - 4);
+    if (id == 0x16 && tl == 12) {
+      sawThresholds = true;
+      const uint16_t t2 = uint16_t(buf[off+2+4]) | uint16_t(uint16_t(buf[off+2+5]) << 8);
+      CHECK(t2 == 5200);
     }
-    // Every non-live state must blank an active shift alert.
-    for (auto status : {ViewStatus::Disconnected, ViewStatus::Stale, ViewStatus::Invalid,
-                       ViewStatus::Unmapped, ViewStatus::Fault, ViewStatus::Unconfigured}) {
-      engine.update(200,6500,status);
-      CHECK(!engine.isAlertActive());
-      for(unsigned i=0;i<count;++i) CHECK(engine.getPixel(uint8_t(i))==RgbColor(0,0,0));
-      engine.update(300,6500,ViewStatus::Live);
+    if (id == 0x1C && tl == 8) sawDecoderExt = true;
+    if (id == 0x1D && tl == 11) sawCalRecord = true;
+    if (id == 0x1E && tl == 2) {
+      sawHysteresis = true;
+      const uint16_t h = uint16_t(buf[off+2]) | uint16_t(uint16_t(buf[off+3]) << 8);
+      CHECK(h == 300);
     }
+    off += 2 + tl;
   }
-  pass("all 1..32 counts, styles, directions, alert modes and brightness extremes blank on every invalid state");
+  CHECK(sawThresholds && sawDecoderExt && sawCalRecord && sawHysteresis);
+
+  uint32_t crc = 0xFFFFFFFF;
+  for (size_t i=0;i<len-4;++i) {
+    crc ^= buf[i];
+    for (uint8_t b=0;b<8;++b) crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320u : (crc >> 1);
+  }
+  crc ^= 0xFFFFFFFF;
+  const uint32_t stored = uint32_t(buf[len-4]) | uint32_t(uint32_t(buf[len-3]) << 8) |
+                          uint32_t(uint32_t(buf[len-2]) << 16) | uint32_t(uint32_t(buf[len-1]) << 24);
+  CHECK(crc == stored);
+
+  CHECK(cm.restoreDefaults(0xA5, 0x5A)); // leave clean defaults for later cases
 }
 
-} // namespace
+static void decoder_fingerprint() {
+  RpmDecoderSettings a; // defaults: 0x301, byte 0, x40.0
+  RpmDecoderSettings b = a;
+  CHECK(computeDecoderFingerprint(a) == computeDecoderFingerprint(b));
+  b.multiplier = 41.0f;
+  CHECK(computeDecoderFingerprint(a) != computeDecoderFingerprint(b));
+  b = a;
+  b.canId = 0x302;
+  CHECK(computeDecoderFingerprint(a) != computeDecoderFingerprint(b));
+  b = a;
+  b.byteWidth = 2;
+  CHECK(computeDecoderFingerprint(a) != computeDecoderFingerprint(b));
+  b = a;
+  b.offset = 5.0f;
+  CHECK(computeDecoderFingerprint(a) != computeDecoderFingerprint(b));
+}
+
+static void calibration_session_fit_and_bind() {
+  ConfigManager& cm = ConfigManager::instance();
+  CHECK(cm.restoreDefaults(0xA5, 0x5A));
+  const uint32_t t0 = 100000;
+
+  // A session that was never begun rejects commits and compute.
+  CHECK(cm.commitCalibrationPoint(4000, t0) == BLE_CFG_STATUS_INVALID_STATE);
+  const CalibrationResult early = cm.computeCalibration(false, t0);
+  CHECK(early.status == BLE_CFG_STATUS_INVALID_STATE);
+
+  // Three stable, monotonic operating points: raw 100->4000, 200->8000, 300->12000.
+  struct Pt { uint16_t raw; uint16_t ref; };
+  const Pt pts[] = {{100,4000},{200,8000},{300,12000}};
+  CHECK(cm.beginCalibrationSession(t0));
+  for (const Pt& p : pts) {
+    CHECK(cm.startCalibrationCapture(t0 + 1));
+    for (unsigned i=0;i<30;++i) cm.feedCalibrationSample(p.raw, t0 + 10 + i);
+    CHECK(cm.calibrationCaptureSamples() >= 10);
+    CHECK(cm.commitCalibrationPoint(p.ref, t0 + 500) == BLE_CFG_STATUS_OK);
+  }
+  CHECK(cm.calibrationPointCount() == 3);
+
+  // Fit-only preview must not mutate the active config.
+  const CalibrationResult preview = cm.computeCalibration(false, t0 + 600);
+  CHECK(preview.status == BLE_CFG_STATUS_OK);
+  CHECK(std::fabs(preview.multiplier - 40.0f) < 0.01f);
+  CHECK(std::fabs(preview.offset) < 1.0f);
+  CHECK(!cm.active().calibrationVerified);
+
+  // Apply must bind the verification record to the resulting fingerprint.
+  const CalibrationResult applied = cm.computeCalibration(true, t0 + 700);
+  CHECK(applied.status == BLE_CFG_STATUS_OK);
+  CHECK(cm.active().calibrationVerified);
+  CHECK(cm.active().calPointsUsed == 3);
+  CHECK(cm.active().calFingerprint != 0);
+  RpmDecoderSettings s;
+  s.canId = cm.active().canCandidateId;
+  s.byteIndex = cm.active().candidateByteIndex;
+  s.byteWidth = cm.active().candidateByteWidth;
+  s.littleEndian = cm.active().candidateLittleEndian;
+  s.multiplier = cm.active().rpmMultiplier;
+  s.offset = cm.active().rpmOffset;
+  s.maxRpm = cm.active().rpmMaxValid;
+  CHECK(cm.active().calFingerprint == computeDecoderFingerprint(s));
+
+  // With the record bound, the RPM bar effect becomes valid and the
+  // safeguard can qualify a matching snapshot.
+  PulseShiftConfig checkCfg = cm.active();
+  checkCfg.effect = 4;
+  CHECK(ConfigManager::validateConfig(checkCfg));
+}
+
+static void calibration_rejects_bad_evidence() {
+  ConfigManager& cm = ConfigManager::instance();
+  CHECK(cm.restoreDefaults(0xA5, 0x5A)); // clear the record bound by the previous case
+  const uint32_t t0 = 500000;
+  CHECK(cm.beginCalibrationSession(t0));
+
+  // Non-monotonic evidence (higher reference but lower raw) must be rejected.
+  struct Pt { uint16_t raw; uint16_t ref; };
+  const Pt pts[] = {{100,2000},{150,6000},{120,10000}};
+  for (const Pt& p : pts) {
+    CHECK(cm.startCalibrationCapture(t0+1));
+    for (unsigned i=0;i<20;++i) cm.feedCalibrationSample(p.raw, t0+10+i);
+    CHECK(cm.commitCalibrationPoint(p.ref, t0+400) == BLE_CFG_STATUS_OK);
+  }
+  const CalibrationResult r = cm.computeCalibration(false, t0+500);
+  CHECK(r.status == BLE_CFG_STATUS_VALIDATION_FAILED);
+  CHECK(!cm.active().calibrationVerified);
+  cm.abortCalibrationSession();
+}
+
+static void staged_transactions() {
+  ConfigManager& cm = ConfigManager::instance();
+  CHECK(cm.restoreDefaults(0xA5, 0x5A));
+  const uint32_t rev0 = cm.activeRevision();
+  CHECK(cm.beginTransaction());
+  CHECK(cm.isStagedTransactionActive());
+  CHECK(cm.setBrightness(77, true) == BLE_CFG_STATUS_OK);
+  CHECK(cm.active().brightness == 200); // staged copy untouched until commit
+  CHECK(cm.commitTransaction());
+  CHECK(cm.active().brightness == 77);
+  CHECK(cm.activeRevision() == rev0 + 1);
+  CHECK(!cm.isStagedTransactionActive());
+
+  // Validation failure rolls back the apply but KEEPS the transaction open
+  // (the client may fix staged fields and retry, or abort explicitly).
+  CHECK(cm.beginTransaction());
+  CHECK(cm.setLedThreshold(1, 50, true) == BLE_CFG_STATUS_OK);
+  CHECK(!cm.commitTransaction());
+  CHECK(cm.active().rpmThresholds[1] == 4000);
+  CHECK(cm.active().brightness == 77); // failed commit keeps previous state
+  CHECK(cm.isStagedTransactionActive());
+  cm.abortTransaction();
+  CHECK(!cm.isStagedTransactionActive());
+  CHECK(cm.active().rpmThresholds[1] == 4000); // abort leaves active untouched
+
+  CHECK(cm.restoreDefaults(0xA5, 0x5A)); // leave clean defaults
+}
+
+static void restore_defaults_preserves_shape() {
+  ConfigManager& cm = ConfigManager::instance();
+  CHECK(!cm.restoreDefaults(0x00, 0x00)); // wrong confirmation bytes rejected
+  CHECK(cm.restoreDefaults(0xA5, 0x5A));
+  const PulseShiftConfig& cfg = cm.active();
+  CHECK(cfg.brightness == 200);
+  CHECK(cfg.rpmMultiplier == 40.0f);
+  CHECK(cfg.canCandidateId == 0x301);
+  CHECK(!cfg.calibrationVerified); // fresh defaults are strictly unverified
+}
+
+static void candidate_monitor_staleness() {
+  // The LEDs must never keep rendering the last RPM after CAN disappears:
+  // the monitor marks samples stale once the freshness timeout elapses.
+  RpmCandidateMonitor m; // 250 ms freshness
+  CanFrame f{};
+  f.id = 0x301; f.dlc = 8; f.data[0] = 44;
+  CHECK(m.ingest(f, 1000));
+  CHECK(m.isFresh(1100));
+  CHECK(m.estimatedRpm(1100) == 44 * 40);
+  CHECK(!m.isFresh(1400)); // 400 ms > 250 ms timeout
+  CHECK(m.estimatedRpm(1400) == 0);
+  const auto snap = m.snapshot(1500);
+  CHECK(!snap.fresh && !snap.valid && snap.rpm == 0);
+
+  // Wrong CAN ID / DLC rejected.
+  CanFrame bad{}; bad.id = 0x302; bad.dlc = 8; bad.data[0] = 44;
+  CHECK(!m.ingest(bad, 1600));
+  CanFrame short_{}; short_.id = 0x301; short_.dlc = 7;
+  CHECK(!m.ingest(short_, 1601));
+}
 
 int main() {
-  explicit_custom_black();
-  command_regressions();
-  replay_regressions();
-  warning_aggregation();
-  visual_configuration_matrix();
-  decoding();
-  envelope();
-  decode_names();
-  state();
-  leds();
-  tx();
-  replay();
-  shift_light_progressive_fill();
-  shift_light_color_styles();
-  shift_light_shift_alert_hysteresis();
-  shift_light_startup_sequence();
-  shift_light_faults_and_safety();
-  shift_light_idle_effect();
-  shift_light_replay_manual_control();
-  shift_light_operating_range_0_to_6000();
-  std::printf("ALL PASS: %u cases, %u assertions\n", cases, assertions);
+  event_summary_pacing();
+  serial_parse_helpers();
+  config_validate();
+  snapshot_serialization_roundtrip();
+  decoder_fingerprint();
+  calibration_session_fit_and_bind();
+  calibration_rejects_bad_evidence();
+  staged_transactions();
+  restore_defaults_preserves_shape();
+  candidate_monitor_staleness();
+  std::printf("PASS config state machine, calibration binding, serialization, pacing: %u checks\n", checks);
   return 0;
 }

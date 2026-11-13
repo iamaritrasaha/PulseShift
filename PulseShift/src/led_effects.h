@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "shift_light.h"     // RgbColor / scaleColor
+#include "led_color.h"       // RgbColor / scaleColor
 #include "rpm_candidate.h"   // LiveRpmSnapshot (authoritative RPM state)
 #include "config_manager.h"
 
@@ -14,15 +14,16 @@
 // write contradictory output during a single refresh:
 //
 //   1. Hardware fault / safety state      (CAN halted: red blink)
-//   2. Calibration & RPM validity safeguard (RPM bar requested but the live
+//   2. Button feedback flash              (physical interaction acknowledgment)
+//   3. Calibration & RPM validity safeguard (RPM bar requested but the live
 //      RPM sample is stale, invalid or unverified: blank - never fake RPM)
-//   3. Owner commissioning indication     (physical auth window: cyan pulse)
-//   4. Startup indication                 (configured boot animation)
-//   5. Verified RPM-based lighting        (six-stage bar + shift warning) and
+//   4. Owner commissioning indication     (physical auth window: cyan pulse)
+//   5. Startup indication                 (configured boot animation)
+//   6. Verified RPM-based lighting        (six-stage bar + shift warning) and
 //                                         owner-initiated bench test preview
-//   6. Manual decorative lighting         (static/breathing/rainbow/chase)
+//   7. Manual decorative lighting         (static/breathing/rainbow/chase)
 //
-// A cosmetic effect can never bypass a safety condition: layers 1-3 always
+// A cosmetic effect can never bypass a safety condition: layers 1-4 always
 // win, and RPM-driven lighting only renders from the same authoritative
 // LiveRpmSnapshot that BLE telemetry reports.
 //
@@ -33,20 +34,22 @@
 enum class LedActiveLayer : uint8_t {
   Off = 0,           // master power off
   Fault = 1,         // P1 hardware fault
-  SafeguardBlank = 2,// P2 RPM validity safeguard (all dark)
-  Commissioning = 3, // P3 auth window pulse
-  Startup = 4,       // P4 startup animation
-  RpmBar = 5,        // P5 verified RPM bar
-  BenchTest = 6,     // P5 owner bench-test preview (explicit provenance)
-  Decorative = 7,    // P6 manual effect
-  Warning = 8        // shift warning overlay (reported as its own layer)
+  Feedback = 2,      // P2 button-press acknowledgment flash
+  SafeguardBlank = 3,// P3 RPM validity safeguard (all dark)
+  Commissioning = 4, // P4 auth window pulse
+  Startup = 5,       // P5 startup animation
+  RpmBar = 6,        // P6 verified RPM bar
+  BenchTest = 7,     // P6 owner bench-test preview (explicit provenance)
+  Decorative = 8,    // P7 manual effect
+  Warning = 9        // shift warning overlay (reported as its own layer)
 };
 
 // Per-frame inputs that do not belong to the persisted configuration.
 struct LedFrameInput {
   bool     canHealthy = true;      // P1: false => CAN controller halted/fault
-  bool     authWindowOpen = false; // P3: physical owner commissioning window
-  bool     testRpmActive = false;  // P5b: bench-test preview active
+  bool     feedbackActive = false; // P2: 200 ms white flash after button press
+  bool     authWindowOpen = false; // P4: physical owner commissioning window
+  bool     testRpmActive = false;  // P6b: bench-test preview active
   uint16_t testRpm = 0;
 };
 
@@ -70,14 +73,17 @@ class LedEffectEngine {
 
   bool isStartupComplete() const { return startupComplete_; }
   LedActiveLayer activeLayer() const { return activeLayer_; }
-  bool warningActive() const { return warningLatched_; }
 
  private:
   void renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg);
   void renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg);
   void renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg, uint16_t rpm);
   void setAllPixels(RgbColor color);
-  void finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg);
+  // Renders logicalPixels_ into outputPixels_ (direction + brightness),
+  // detects the change against the previous physical frame, records the
+  // change flag and refreshes the previous-frame buffer. Returns whether the
+  // visible output changed and therefore requires a physical LED write.
+  bool finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg);
 
   // Fast integer HSV to RGB converter (h: 0..255, s: 0..255, v: 0..255)
   static RgbColor hsvToRgb(uint8_t h, uint8_t s, uint8_t v);

@@ -5,10 +5,19 @@
 #include "rpm_candidate.h"
 #include "can_transport.h"
 #include "can_recorder.h"
-#include "rpm_decoder.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <atomic>
+
+// ============================================================================
+// BLE GATT server (NimBLE).
+//
+// Threading contract: NimBLE callbacks run in the NimBLE host task and ONLY
+// copy bounded packets into a small SPSC command ring; every protocol action
+// (dispatch, notifications, streaming) happens single-threaded in poll() on
+// the main loop. Session authorization is bound to the connection handle that
+// authenticated, and is re-checked per command.
+// ============================================================================
 
 class BleManager {
  public:
@@ -18,8 +27,7 @@ class BleManager {
   void poll(uint32_t nowMs,
             RpmCandidateMonitor& candidate,
             const CanTransport& transport,
-            const CanRecorder& recorder,
-            const RpmState& rpm);
+            const CanRecorder& recorder);
 
   bool isClientConnected() const;
   bool isRpmSubscribed() const;
@@ -42,12 +50,30 @@ class BleManager {
   uint32_t rpmNotifyCount() const { return rpmNotifyCount_; }
   uint32_t healthNotifyCount() const { return healthNotifyCount_; }
   uint32_t logNotifyCount() const { return logNotifyCount_; }
+  uint32_t droppedCommandCount() const { return droppedCommands_; }
   void printStatus() const;
 
   // Rebuild the authoritative live decoder from the active configuration and
   // refresh the calibration mirror (single source of truth: ConfigManager).
   // Called by the application on boot, after config commits and serial overrides.
   static void syncDecoderToMonitor(RpmCandidateMonitor& candidate);
+
+#if defined(PULSESHIFT_TEST_BUILD)
+  // Host-test hooks: inject commands into the same bounded queue the NimBLE
+  // callback fills, drain them through the real dispatcher, and read back the
+  // result packets captured by the host (non-NimBLE) sendResult path.
+  void testEnqueueCommand(const BleConfigCommandPacket& pkt, uint16_t connId);
+  void testDrainCommands(uint32_t nowMs, RpmCandidateMonitor& candidate,
+                         const CanTransport& transport, const CanRecorder& recorder) {
+    while (configQueueTail_.load(std::memory_order_acquire) != configQueueHead_.load(std::memory_order_acquire)) {
+      processConfigCommand(nowMs, candidate, transport, recorder);
+    }
+  }
+  size_t testResultCount() const { return testResultCount_; }
+  const BleConfigResultPacket& testResult(size_t index) const { return testResults_[index]; }
+  size_t testPendingSnapshotLen() const { return snapshotLen_; }
+  const uint8_t* testPendingSnapshotData() const { return snapshotBuf_; }
+#endif
 
  private:
   BleManager();
@@ -56,8 +82,7 @@ class BleManager {
   void sendRpmNotification(uint32_t nowMs,
                            const RpmCandidateMonitor& candidate,
                            const CanTransport& transport,
-                           const CanRecorder& recorder,
-                           const RpmState& rpm);
+                           const CanRecorder& recorder);
 
   void sendHealthNotification(const CanTransport& transport,
                               const CanRecorder& recorder);
@@ -65,11 +90,12 @@ class BleManager {
   void processLogQueue();
   void processHistoricalPageRead();
   void processCapturePage();
-  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate);
+  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate,
+                            const CanTransport& transport, const CanRecorder& recorder);
   void processSnapshotStream();
   void updateCapabilitiesChar();
   void sendResult(BleConfigResultPacket& res);
-  size_t buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen,
+  size_t buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen, uint32_t nowMs,
                               const RpmCandidateMonitor& candidate,
                               const CanTransport& transport,
                               const CanRecorder& recorder) const;
@@ -79,6 +105,7 @@ class BleManager {
   uint16_t rpmSeq_ = 0;
   uint16_t healthSeq_ = 0;
   uint16_t logMsgId_ = 0;
+  uint32_t droppedCommands_ = 0;
 
   uint32_t lastRpmNotifyMs_ = 0;
   uint32_t lastHealthNotifyMs_ = 0;
@@ -107,6 +134,7 @@ class BleManager {
   size_t activeMsgLen_ = 0;
   size_t activeMsgOffset_ = 0;
   uint8_t activeChunkIndex_ = 0;
+  uint8_t activeMsgFlags_ = 0; // BleLogFlags for the active message (e.g. CAPTURE_LINE)
 
   // CAN capture page streaming state (v1 control extension)
   bool capturePageActive_ = false;
@@ -116,15 +144,17 @@ class BleManager {
   uint8_t captureRecordsSent_ = 0;
   bool captureLineStaged_ = false;
   bool captureCancelRequested_ = false;
-  uint32_t captureCorruptSeen_ = 0;
 
   // Control request command queue (thread-safe decoupling from NimBLE callback)
   struct PendingCtrlCmd {
     uint8_t opcode = 0;
     uint32_t offset = 0;
-    std::atomic<bool> pending{false};
   };
-  PendingCtrlCmd pendingCtrlCmd_{};
+  static constexpr size_t CTRL_QUEUE_CAPACITY = 4;
+  PendingCtrlCmd ctrlQueue_[CTRL_QUEUE_CAPACITY]{};
+  std::atomic<uint8_t> ctrlQueueHead_{0};  // NimBLE callback task writes
+  std::atomic<uint8_t> ctrlQueueTail_{0};  // main loop reads
+
   bool histPageActive_ = false;
   bool histPageEopPending_ = false;
   uint8_t histPageFinished_ = 0;
@@ -133,21 +163,31 @@ class BleManager {
   bool histFinished_ = false;
   bool histCancelRequested_ = false;
 
-  // Configuration V2 Command Queue
+  // Configuration V2 Command Queue (bounded SPSC ring; overflow drops the
+  // oldest unprocessed command and is counted for diagnostics).
   struct PendingConfigCmd {
     BleConfigCommandPacket packet{};
     uint16_t connId = 0;
-    std::atomic<bool> pending{false};
   };
-  PendingConfigCmd pendingConfigCmd_{};
+  static constexpr size_t CONFIG_QUEUE_CAPACITY = 4;
+  PendingConfigCmd configQueue_[CONFIG_QUEUE_CAPACITY]{};
+  std::atomic<uint8_t> configQueueHead_{0}; // NimBLE callback task writes
+  std::atomic<uint8_t> configQueueTail_{0}; // main loop reads
 
-  // Configuration Snapshot Stream State
+  // Configuration Snapshot Stream State (also used for diagnostics blobs)
   bool snapshotActive_ = false;
   uint16_t snapshotId_ = 0;
   uint8_t snapshotBuf_[512]{};
   size_t snapshotLen_ = 0;
   uint8_t snapshotChunkIdx_ = 0;
   uint8_t snapshotTotalChunks_ = 0;
+
+#if defined(PULSESHIFT_TEST_BUILD)
+  // Host-only capture of emitted result packets (NimBLE sendResult is inert
+  // without the radio stack). Sized for a full dispatch test sequence.
+  BleConfigResultPacket testResults_[64]{};
+  size_t testResultCount_ = 0;
+#endif
 
   friend class BleServerCallbacksImpl;
   friend class BleControlCallbacksImpl;

@@ -46,8 +46,11 @@ Automated regression tests run locally with:
 bash test/run.sh
 ```
 The test suite validates:
-- CAN envelope validation, RTR rejection, and extended frame handling.
-- Binary record format (76-byte header, 20-byte records) and CRC16-CCITT integrity.
-- Power-loss safe LittleFS capture, EOF unaligned remainder truncation, and rollback safety.
-- Shift-light progression, RGB scaling, and alert modes.
-- Candidate 0x301 monitor bounds, NaN/Inf rejection, and 32-bit timer rollover safety.
+- Configuration state machine: validation rules, snapshot TLV serialization with CRC32, staged transactions, restore-defaults.
+- Firmware-driven calibration session: point capture, bad-evidence rejection (non-monotonic, unstable, small span), fingerprint-bound verification.
+- Unified LED engine: layer priorities, RPM validity safeguard, per-LED hysteresis, warning patterns, direction and brightness scaling.
+- BLE v2 command dispatch through the real dispatcher: authorization binding to the connection handle, staged transactions, calibration workflow, device commands (restart/clear-diagnostics/recording), diagnostics TLV blob with CRC32.
+- CAN transport: listen-only install, zero TX queue, TX-pin isolation routing, overflow handling, bounded logging.
+- Candidate 0x301 monitor bounds, staleness, NaN/Inf rejection, and 32-bit timer rollover safety.
+- RPM serial diagnostics output regression (present when enabled, silent when disabled).
+- Offline Python checks: binary capture format (76-byte header, 20-byte records) and CRC16 integrity, power-loss truncation rollback, protocol wire fixtures, production integrity (no OLED/demo/simulation symbols, single passive CAN path).

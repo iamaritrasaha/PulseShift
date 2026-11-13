@@ -208,11 +208,19 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     activeLayer_ = LedActiveLayer::Fault;
     const bool on = ((nowMs / 100) % 2) == 0;
     setAllPixels(on ? RgbColor{255, 0, 0} : RgbColor{0, 0, 0});
-    finishFrame(nowMs, cfg);
-    return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+    return finishFrame(nowMs, cfg);
   }
 
-  // ---- Priority 2: calibration / RPM validity safeguard ----------------
+  // ---- Priority 2: button feedback acknowledgment ----------------------
+  // Cosmetic acknowledgment of a physical interaction. It wins over all
+  // lighting layers but never over the fault indication above.
+  if (input.feedbackActive) {
+    activeLayer_ = LedActiveLayer::Feedback;
+    setAllPixels(RgbColor{255, 255, 255});
+    return finishFrame(nowMs, cfg);
+  }
+
+  // ---- Priority 3: calibration / RPM validity safeguard ----------------
   // RPM-driven lighting is requested but the live sample does not qualify:
   // render nothing rather than imply engine RPM.
   if (cfg.effect == 4) {
@@ -228,7 +236,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // ---- Priority 3: owner commissioning indication ----------------------
+  // ---- Priority 4: owner commissioning indication ----------------------
   if (input.authWindowOpen) {
     activeLayer_ = LedActiveLayer::Commissioning;
     const uint32_t phase = nowMs % 1000;
@@ -237,55 +245,58 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
         : static_cast<uint8_t>((1000 - phase) * 255 / 500);
     const RgbColor cyan = scaleColor(RgbColor{0, 255, 255}, factor);
     setAllPixels(cyan);
-    finishFrame(nowMs, cfg);
-    return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+    return finishFrame(nowMs, cfg);
   }
 
   // ---- Master power switch ---------------------------------------------
   if (!cfg.isPowerOn) {
     activeLayer_ = LedActiveLayer::Off;
     setAllPixels(RgbColor{0, 0, 0});
-    finishFrame(nowMs, cfg);
-    return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+    return finishFrame(nowMs, cfg);
   }
 
-  // ---- Priority 4: startup indication ----------------------------------
+  // ---- Priority 5: startup indication ----------------------------------
   if (!startupComplete_) {
     renderStartup(nowMs, cfg);
     if (!startupComplete_) {
       activeLayer_ = LedActiveLayer::Startup;
-      finishFrame(nowMs, cfg);
-      return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+      return finishFrame(nowMs, cfg);
     }
   }
 
-  // ---- Priority 5: verified RPM bar / bench-test preview ---------------
+  // ---- Priority 6: verified RPM bar / bench-test preview ---------------
   if (cfg.effect == 4) {
     activeLayer_ = LedActiveLayer::RpmBar;
     renderRpmBar(nowMs, cfg, rpm.rpm);
-    finishFrame(nowMs, cfg);
-    return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+    return finishFrame(nowMs, cfg);
   }
   if (input.testRpmActive) {
     activeLayer_ = LedActiveLayer::BenchTest;
     renderRpmBar(nowMs, cfg, input.testRpm);
-    finishFrame(nowMs, cfg);
-    return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+    return finishFrame(nowMs, cfg);
   }
 
-  // ---- Priority 6: manual decorative lighting --------------------------
+  // ---- Priority 7: manual decorative lighting --------------------------
   activeLayer_ = LedActiveLayer::Decorative;
   renderEffect(nowMs, cfg);
-  finishFrame(nowMs, cfg);
-  return memcmp(outputPixels_, lastOutputPixels_, sizeof(outputPixels_)) != 0;
+  return finishFrame(nowMs, cfg);
 }
 
-void LedEffectEngine::finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg) {
-  // Apply LED ordering (direction) & master brightness scaling, then decide
-  // whether the visible frame actually changed.
+bool LedEffectEngine::finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg) {
+  // Apply LED ordering (direction) & master brightness scaling, then detect
+  // the change against the PREVIOUS physical frame. The previous-frame
+  // buffer is refreshed every call so unchanged frames return false and no
+  // redundant WS2812B write is issued; lit-to-black transitions return true
+  // and therefore always produce a physical leds_.show() call.
+  bool changed = false;
   for (uint8_t i = 0; i < LED_COUNT; ++i) {
     const uint8_t srcIdx = (cfg.ledDirection == 1) ? (LED_COUNT - 1 - i) : i;
     outputPixels_[i] = scaleColor(logicalPixels_[srcIdx], cfg.brightness);
+    if (outputPixels_[i] != lastOutputPixels_[i]) changed = true;
+  }
+  if (changed) {
+    memcpy(lastOutputPixels_, outputPixels_, sizeof(outputPixels_));
   }
   (void)nowMs;
+  return changed;
 }

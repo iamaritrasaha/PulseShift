@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "ble_protocol.h"
-#include "shift_light.h"
+#include "led_color.h"
 
 // Schema version 3: adds decoder extension fields (byte width, byte order,
 // offset, validity clamp), threshold hysteresis and the bound calibration
@@ -76,6 +76,11 @@ class ConfigManager {
   bool begin();
   void poll(uint32_t nowMs);
 
+  // Re-read the persisted configuration blob from NVS and apply it to the
+  // active state without touching owner credentials or captures. Returns
+  // false (active state unchanged) when no valid blob is stored.
+  bool reloadFromNvs();
+
   const PulseShiftConfig& active() const { return active_; }
   PulseShiftConfig& activeMutable() { return active_; }
 
@@ -142,6 +147,7 @@ class ConfigManager {
   uint8_t calibrationPointCount() const { return calPointCount_; }
   bool calibrationCaptureActive() const { return calCaptureActive_; }
   uint16_t calibrationCaptureSamples() const { return calCaptureSamples_; }
+  uint32_t calibrationCaptureStartMs() const { return calCaptureStartMs_; }
 
   // Security / Provisioning
   void triggerAuthWindow(uint32_t nowMs);
@@ -151,12 +157,12 @@ class ConfigManager {
   // Session authorization is bound to the connection that authenticated.
   bool isAuthorizedFor(uint16_t connId, uint32_t nowMs) const;
   bool isOwnerEnrolled() const { return ownerEnrolled_; }
+  bool isSessionAuthorized() const { return sessionAuthorized_; }
   BleConfigStatusCode enrollOwner(const uint8_t* secret, size_t len, uint32_t nowMs, uint16_t connId);
   bool requestChallenge(uint32_t nowMs, uint32_t& outChallenge);
   BleConfigStatusCode authenticateChallenge(const uint8_t* proof, size_t len, uint16_t sequence,
                                             uint32_t nowMs, uint16_t connId);
   void refreshSessionActivity(uint32_t nowMs);
-  void clearOwnerEnrollment();
   void onClientDisconnected();
   uint8_t securityMode() const { return BLE_SEC_MODE_HYBRID; }
 
@@ -216,6 +222,9 @@ class ConfigManager {
 
   void applySafeDefaults(PulseShiftConfig& cfg);
   void loadOwnerSecurity();
+  // Shared NVS blob read path (schema-3 + schema-2 migration) used by
+  // begin() and reloadFromNvs().
+  bool loadConfigBlobLocked(PulseShiftConfig& out);
   // Invalidate the verification record; if an RPM-driven effect is active,
   // revert it to a decorative effect so the config always stays valid.
   void invalidateCalibration(PulseShiftConfig& cfg);
