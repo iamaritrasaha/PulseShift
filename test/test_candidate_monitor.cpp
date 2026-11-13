@@ -219,15 +219,15 @@ void test_bounds_and_nan_safety() {
   CHECK(badIdx.multiplier() == 60.0f);
 
   // Test DLC bounds check in ingest
-  CanFrame shortDlc{};
-  shortDlc.id = 0x301;
-  shortDlc.dlc = 8;
-  // If byteIndex is 4, but dlc is 3
   RpmCandidateMonitor mon4(0x301, 4, 40.0f);
   CanFrame f = make301Frame(37, 8);
   f.data[4] = 42;
   CHECK(mon4.ingest(f, 100));
   CHECK(mon4.rawValue() == 42);
+
+  // If byteIndex is 4, but dlc is 3, frame must be rejected
+  CanFrame shortDlc = make301Frame(37, 3);
+  CHECK(!mon4.ingest(shortDlc, 200));
 
   pass("bounds checking, NaN/Inf rejection, and multiplier bounds safety");
 }
