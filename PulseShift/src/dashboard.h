@@ -3,6 +3,7 @@
 #include "config.h"
 #include "dashboard_model.h"
 #include "shift_light.h"
+#include "led_effects.h"
 #include <Adafruit_NeoPixel.h>
 #if PULSESHIFT_OLED_ENABLED
 #include <Adafruit_SSD1306.h>
@@ -11,6 +12,8 @@
 class Dashboard {
  public:
   bool begin();
+  void update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
+  void update(const LiveRpmSnapshot& rpm, const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
   void update(const RpmState& s, uint32_t now, bool healthy, bool configured, uint32_t timeout = config::staleMs);
   void triggerButtonFeedback(uint32_t now) {
     feedbackStartMs_ = now;
@@ -27,6 +30,9 @@ class Dashboard {
   ShiftLightEngine& shiftLight() { return shiftLight_; }
   const ShiftLightEngine& shiftLight() const { return shiftLight_; }
 
+  LedEffectEngine& ledEffects() { return ledEffects_; }
+  const LedEffectEngine& ledEffects() const { return ledEffects_; }
+
  private:
   void renderFieldStatus(uint32_t now, bool healthy, bool configured);
 
@@ -35,6 +41,7 @@ class Dashboard {
 #endif
   Adafruit_NeoPixel leds_{config::ledCount, config::ledPin, NEO_GRB + NEO_KHZ800};
   ShiftLightEngine shiftLight_{config::makeShiftLightConfig()};
+  LedEffectEngine ledEffects_{};
   bool ready_ = false;
   uint32_t lastOledRefresh_ = 0;
   uint16_t lastRpm_ = 0;

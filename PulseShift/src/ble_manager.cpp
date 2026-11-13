@@ -7,6 +7,7 @@
 #include "ble_manager.h"
 #include "storage_manager.h"
 #include "diag_logger.h"
+#include "config_manager.h"
 #include <string.h>
 #include <stdio.h>
 #include <atomic>
@@ -20,14 +21,24 @@ static NimBLECharacteristic* s_pHealthChar = nullptr;
 static NimBLECharacteristic* s_pLogsChar = nullptr;
 static NimBLECharacteristic* s_pControlChar = nullptr;
 
+// V2 Characteristics
+static NimBLECharacteristic* s_pConfigCmdChar = nullptr;
+static NimBLECharacteristic* s_pConfigResultChar = nullptr;
+static NimBLECharacteristic* s_pConfigSnapshotChar = nullptr;
+static NimBLECharacteristic* s_pCapabilitiesChar = nullptr;
+
 static std::atomic<bool> s_clientConnected{false};
+static std::atomic<uint16_t> s_connHandle{0};
 static std::atomic<bool> s_rpmSubscribed{false};
 static std::atomic<bool> s_healthSubscribed{false};
 static std::atomic<bool> s_logsSubscribed{false};
+static std::atomic<bool> s_configResultSubscribed{false};
+static std::atomic<bool> s_configSnapshotSubscribed{false};
 
 class BleServerCallbacksImpl : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
     s_clientConnected.store(true, std::memory_order_release);
+    s_connHandle.store(connInfo.getConnHandle(), std::memory_order_release);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("[BLE] Client connected: %s\r\n", connInfo.getAddress().toString().c_str());
 #endif
@@ -38,9 +49,12 @@ class BleServerCallbacksImpl : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
     (void)pServer; (void)connInfo; (void)reason;
     s_clientConnected.store(false, std::memory_order_release);
+    s_connHandle.store(0, std::memory_order_release);
     s_rpmSubscribed.store(false, std::memory_order_release);
     s_healthSubscribed.store(false, std::memory_order_release);
     s_logsSubscribed.store(false, std::memory_order_release);
+    s_configResultSubscribed.store(false, std::memory_order_release);
+    s_configSnapshotSubscribed.store(false, std::memory_order_release);
     BleManager::instance().onClientDisconnected();
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("[BLE] Client disconnected (reason %d). Re-advertising...\r\n", reason);
@@ -91,6 +105,8 @@ class BleControlCallbacksImpl : public NimBLECharacteristicCallbacks {
     // Protocol v1 Control commands:
     // [0x01, 0x10, offset_u32_LE] -> Request page of historical diagnostic logs (6 bytes)
     // [0x01, 0x11]                -> Cancel historical log retrieval (2 bytes)
+    // [0x01, 0x12, startRec_u32]  -> Request page of CAN capture records (6 bytes)
+    // [0x01, 0x13]                -> Cancel CAN capture export (2 bytes)
     if (len >= 2 && data[0] == PULSESHIFT_BLE_PROTOCOL_VERSION) {
       if (data[1] == BLE_CTRL_CMD_GET_LOG_PAGE && len == 6) {
         uint32_t offset = 0;
@@ -110,6 +126,24 @@ class BleControlCallbacksImpl : public NimBLECharacteristicCallbacks {
         Serial.println("[BLE] Queued log page retrieval cancellation");
 #endif
         return;
+      } else if (data[1] == BLE_CTRL_CMD_GET_CAPTURE_PAGE && len == 6) {
+        uint32_t startRec = 0;
+        memcpy(&startRec, &data[2], 4);
+        mgr.pendingCtrlCmd_.opcode = BLE_CTRL_CMD_GET_CAPTURE_PAGE;
+        mgr.pendingCtrlCmd_.offset = startRec;
+        mgr.pendingCtrlCmd_.pending.store(true, std::memory_order_release);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.printf("[BLE] Queued capture page request from record %lu\r\n", (unsigned long)startRec);
+#endif
+        return;
+      } else if (data[1] == BLE_CTRL_CMD_CANCEL_CAPTURE && len == 2) {
+        mgr.pendingCtrlCmd_.opcode = BLE_CTRL_CMD_CANCEL_CAPTURE;
+        mgr.pendingCtrlCmd_.offset = 0;
+        mgr.pendingCtrlCmd_.pending.store(true, std::memory_order_release);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+        Serial.println("[BLE] Queued capture export cancellation");
+#endif
+        return;
       }
     }
 
@@ -119,11 +153,62 @@ class BleControlCallbacksImpl : public NimBLECharacteristicCallbacks {
   }
 };
 
+class BleConfigResultCallbacksImpl : public NimBLECharacteristicCallbacks {
+  void onSubscribe(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo, uint16_t subValue) override {
+    (void)pCharacteristic; (void)connInfo;
+    s_configResultSubscribed.store((subValue & 0x01) != 0, std::memory_order_release);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.printf("[BLE] Config Result notifications %s\r\n",
+                  s_configResultSubscribed.load(std::memory_order_acquire) ? "ENABLED" : "DISABLED");
+#endif
+  }
+};
+
+class BleConfigSnapshotCallbacksImpl : public NimBLECharacteristicCallbacks {
+  void onSubscribe(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo, uint16_t subValue) override {
+    (void)pCharacteristic; (void)connInfo;
+    s_configSnapshotSubscribed.store((subValue & 0x01) != 0, std::memory_order_release);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    Serial.printf("[BLE] Config Snapshot notifications %s\r\n",
+                  s_configSnapshotSubscribed.load(std::memory_order_acquire) ? "ENABLED" : "DISABLED");
+#endif
+  }
+};
+
+class BleConfigCmdCallbacksImpl : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
+    (void)connInfo;
+    const std::string val = pCharacteristic->getValue();
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(val.data());
+    const size_t len = val.size();
+
+    auto& mgr = BleManager::instance();
+    if (len >= 6 && len <= sizeof(BleConfigCommandPacket)) {
+      BleConfigCommandPacket pkt{};
+      memcpy(&pkt, data, len);
+      mgr.pendingConfigCmd_.packet = pkt;
+      mgr.pendingConfigCmd_.connId = connInfo.getConnHandle();
+      mgr.pendingConfigCmd_.pending.store(true, std::memory_order_release);
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+      Serial.printf("[BLE] Queued config command (opcode=0x%02X, seq=%u, len=%u, flags=0x%02X)\r\n",
+                    pkt.opcode, pkt.sequence, pkt.payloadLength, pkt.flags);
+#endif
+    } else {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+      Serial.printf("[BLE] Rejected malformed config command packet (len=%u)\r\n", (unsigned)len);
+#endif
+    }
+  }
+};
+
 static BleServerCallbacksImpl s_serverCallbacks;
 static BleRpmCallbacksImpl s_rpmCallbacks;
 static BleHealthCallbacksImpl s_healthCallbacks;
 static BleLogCallbacksImpl s_logCallbacks;
 static BleControlCallbacksImpl s_controlCallbacks;
+static BleConfigResultCallbacksImpl s_configResultCallbacks;
+static BleConfigSnapshotCallbacksImpl s_configSnapshotCallbacks;
+static BleConfigCmdCallbacksImpl s_configCmdCallbacks;
 
 #endif // defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED)
 
@@ -140,6 +225,8 @@ void BleManager::onClientDisconnected() {
   histCancelRequested_ = false;
   activeMsgInProgress_ = false;
   histLinesSent_ = 0;
+  snapshotActive_ = false;
+  ConfigManager::instance().onClientDisconnected();
 }
 
 bool BleManager::isClientConnected() const {
@@ -174,6 +261,22 @@ bool BleManager::isLogsSubscribed() const {
 #endif
 }
 
+bool BleManager::isConfigResultSubscribed() const {
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+  return s_clientConnected.load(std::memory_order_acquire) && s_configResultSubscribed.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
+}
+
+bool BleManager::isConfigSnapshotSubscribed() const {
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+  return s_clientConnected.load(std::memory_order_acquire) && s_configSnapshotSubscribed.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
+}
+
 bool BleManager::isAdvertising() const {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
@@ -199,8 +302,26 @@ void BleManager::printStatus() const {
                 (unsigned long)logNotifyCount_,
                 (unsigned long)notifyCount_,
                 (unsigned long)dropCount_);
-  Serial.println("Protocol: PulseShift BLE v1 (fixed 20-byte packed frames, little-endian)");
+  Serial.println("Protocol: PulseShift BLE v1 & v2 (fixed 20-byte packed frames, little-endian)");
   Serial.println("========================================");
+#endif
+}
+
+void BleManager::updateCapabilitiesChar() {
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+  if (!s_pCapabilitiesChar) return;
+  BleCapabilitiesPacket caps{};
+  caps.version = PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION;
+  caps.physicalLedCount = 6;
+  caps.featureMask = BLE_FEAT_INDIVIDUAL_RGB | BLE_FEAT_EFFECTS |
+                     BLE_FEAT_STARTUP_ANIM | BLE_FEAT_RPM_THRESHOLDS |
+                     BLE_FEAT_SHIFT_WARNING | BLE_FEAT_RPM_MULTIPLIER |
+                     BLE_FEAT_CANDIDATE_SOURCE | BLE_FEAT_PHONE_PRESETS |
+                     BLE_FEAT_NVS_PERSISTENCE | BLE_FEAT_AUTH_WRITES;
+  caps.currentRevision = ConfigManager::instance().activeRevision();
+  caps.hardwarePresetCapacity = 0; // Phone-managed presets
+  caps.securityMode = ConfigManager::instance().securityMode();
+  s_pCapabilitiesChar->setValue(reinterpret_cast<const uint8_t*>(&caps), sizeof(caps));
 #endif
 }
 
@@ -262,6 +383,41 @@ bool BleManager::begin() {
     s_pControlChar->setCallbacks(&s_controlCallbacks);
   }
 
+  // Characteristic 5: Configuration Commands (WRITE)
+  s_pConfigCmdChar = pService->createCharacteristic(
+      PULSESHIFT_BLE_CHAR_CONFIG_CMD_UUID,
+      NIMBLE_PROPERTY::WRITE);
+  if (s_pConfigCmdChar) {
+    s_pConfigCmdChar->setCallbacks(&s_configCmdCallbacks);
+  }
+
+  // Characteristic 6: Configuration Results (READ, NOTIFY)
+  s_pConfigResultChar = pService->createCharacteristic(
+      PULSESHIFT_BLE_CHAR_CONFIG_RESULT_UUID,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  if (s_pConfigResultChar) {
+    s_pConfigResultChar->setCallbacks(&s_configResultCallbacks);
+    BleConfigResultPacket initialResult{};
+    initialResult.version = PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION;
+    s_pConfigResultChar->setValue(reinterpret_cast<const uint8_t*>(&initialResult), sizeof(initialResult));
+  }
+
+  // Characteristic 7: Configuration Snapshots (NOTIFY)
+  s_pConfigSnapshotChar = pService->createCharacteristic(
+      PULSESHIFT_BLE_CHAR_CONFIG_SNAPSHOT_UUID,
+      NIMBLE_PROPERTY::NOTIFY);
+  if (s_pConfigSnapshotChar) {
+    s_pConfigSnapshotChar->setCallbacks(&s_configSnapshotCallbacks);
+  }
+
+  // Characteristic 8: Capabilities (READ)
+  s_pCapabilitiesChar = pService->createCharacteristic(
+      PULSESHIFT_BLE_CHAR_CAPABILITIES_UUID,
+      NIMBLE_PROPERTY::READ);
+  if (s_pCapabilitiesChar) {
+    updateCapabilitiesChar();
+  }
+
   pService->start();
 
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
@@ -302,20 +458,20 @@ void BleManager::queueLiveLog(const char* text) {
 }
 
 void BleManager::poll(uint32_t nowMs,
-                      const RpmCandidateMonitor& candidate,
+                      RpmCandidateMonitor& candidate,
                       const CanTransport& transport,
                       const CanRecorder& recorder,
                       const RpmState& rpm) {
   if (!initialized_) return;
 
   if (!isClientConnected()) {
-    if (histPageActive_ || activeMsgInProgress_) {
+    if (histPageActive_ || activeMsgInProgress_ || snapshotActive_) {
       onClientDisconnected();
     }
     return;
   }
 
-  // 0. Handle any decoupled control commands received via BLE write callbacks
+  // 0a. Handle any decoupled control commands received via BLE write callbacks
   if (pendingCtrlCmd_.pending.load(std::memory_order_acquire)) {
     const uint8_t op = pendingCtrlCmd_.opcode;
     const uint32_t off = pendingCtrlCmd_.offset;
@@ -339,6 +495,9 @@ void BleManager::poll(uint32_t nowMs,
     }
   }
 
+  // 0b. Process any incoming Configuration V2 commands
+  processConfigCommand(nowMs, candidate);
+
   // 1. Live RPM telemetry: send at ~10 Hz (every 100 ms) when subscribed
   if (isRpmSubscribed() && uint32_t(nowMs - lastRpmNotifyMs_) >= 100) {
     lastRpmNotifyMs_ = nowMs;
@@ -351,20 +510,25 @@ void BleManager::poll(uint32_t nowMs,
     sendHealthNotification(transport, recorder);
   }
 
-  // 3. Service diagnostic log chunks with strict time-based pacing (20 ms between consecutive notifications)
-  if (isLogsSubscribed() && (uint32_t(nowMs - lastLogNotifyMs_) >= LOG_NOTIFICATION_INTERVAL_MS)) {
-    if (histPageEopPending_) {
+  // 3. Service diagnostic log chunks & config snapshots with strict time-based pacing (20 ms between consecutive notifications)
+  if ((uint32_t(nowMs - lastLogNotifyMs_) >= LOG_NOTIFICATION_INTERVAL_MS)) {
+    if (snapshotActive_) {
       lastLogNotifyMs_ = nowMs;
-      processHistoricalPageRead();
-    } else if (activeMsgInProgress_) {
-      lastLogNotifyMs_ = nowMs;
-      processLogQueue();
-    } else if (histPageActive_) {
-      lastLogNotifyMs_ = nowMs;
-      processHistoricalPageRead();
-    } else if (liveLogCount_ > 0) {
-      lastLogNotifyMs_ = nowMs;
-      processLogQueue();
+      processSnapshotStream();
+    } else if (isLogsSubscribed()) {
+      if (histPageEopPending_) {
+        lastLogNotifyMs_ = nowMs;
+        processHistoricalPageRead();
+      } else if (activeMsgInProgress_) {
+        lastLogNotifyMs_ = nowMs;
+        processLogQueue();
+      } else if (histPageActive_) {
+        lastLogNotifyMs_ = nowMs;
+        processHistoricalPageRead();
+      } else if (liveLogCount_ > 0) {
+        lastLogNotifyMs_ = nowMs;
+        processLogQueue();
+      }
     }
   }
 }
@@ -383,9 +547,9 @@ void BleManager::sendRpmNotification(uint32_t nowMs,
   const bool fresh = candidate.isFresh(nowMs);
   uint8_t flags = 0;
   if (fresh) flags |= BLE_RPM_FLAG_CANDIDATE_FRESH;
-  // Calibration remains UNVERIFIED in v1; never set verified flag
+  if (candidate.isCalibrated()) flags |= BLE_RPM_FLAG_CALIBRATION_VERIFIED;
   if (rpm.mapped()) flags |= BLE_RPM_FLAG_RPM_MAPPED;
-  // Physical shift lights remain DISABLED for unverified candidate; never set shift-lights flag
+  if (candidate.isShiftLightEnabled()) flags |= BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED;
   if (transport.healthy()) flags |= BLE_RPM_FLAG_CAN_HEALTHY;
   if (transport.hasTraffic(nowMs)) flags |= BLE_RPM_FLAG_TRAFFIC_ACTIVE;
   if (recorder.isRecording() && !recorder.isFlashPreserved() && !recorder.isStorageFull()) {
@@ -612,6 +776,418 @@ void BleManager::processHistoricalPageRead() {
     histPageFinished_ = 1;
     histPageEopPending_ = true;
     histPageActive_ = false;
+  }
+#endif
+}
+
+void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate) {
+  if (!pendingConfigCmd_.pending.load(std::memory_order_acquire)) return;
+
+  BleConfigCommandPacket pkt = pendingConfigCmd_.packet;
+  pendingConfigCmd_.pending.store(false, std::memory_order_release);
+
+  BleConfigResultPacket res{};
+  res.version = PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION;
+  res.respondedOpcode = pkt.opcode;
+  res.sequence = pkt.sequence;
+
+  if (pkt.version != PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION) {
+    res.statusCode = BLE_CFG_STATUS_VERSION_MISMATCH;
+    res.resultFlags = 0;
+    res.activeRevision = ConfigManager::instance().activeRevision();
+    res.payloadLength = 0;
+    if (s_pConfigResultChar) {
+      s_pConfigResultChar->setValue(reinterpret_cast<const uint8_t*>(&res), sizeof(res));
+      if (isConfigResultSubscribed()) s_pConfigResultChar->notify();
+    }
+    return;
+  }
+
+  if ((pkt.flags & ~BLE_CFG_FLAG_STAGED) != 0) {
+    res.statusCode = BLE_CFG_STATUS_INVALID_PARAM;
+    res.resultFlags = 0;
+    res.activeRevision = ConfigManager::instance().activeRevision();
+    res.payloadLength = 0;
+    if (s_pConfigResultChar) {
+      s_pConfigResultChar->setValue(reinterpret_cast<const uint8_t*>(&res), sizeof(res));
+      if (isConfigResultSubscribed()) s_pConfigResultChar->notify();
+    }
+    return;
+  }
+
+  const bool isStaged = (pkt.flags & BLE_CFG_FLAG_STAGED) != 0;
+  uint8_t status = BLE_CFG_STATUS_OK;
+  uint8_t resFlags = 0;
+
+  // Authorization check
+  const bool isReadQuery = (pkt.opcode == BLE_CFG_OP_GET_CAPABILITIES || pkt.opcode == BLE_CFG_OP_GET_SNAPSHOT);
+  const bool isAuthFlow = (pkt.opcode == BLE_CFG_OP_AUTHENTICATE ||
+                           pkt.opcode == BLE_CFG_OP_REQUEST_CHALLENGE ||
+                           pkt.opcode == BLE_CFG_OP_ENROLL_OWNER);
+  if (!isReadQuery && !isAuthFlow) {
+    if (!ConfigManager::instance().isAuthorized(nowMs)) {
+      res.statusCode = BLE_CFG_STATUS_UNAUTHORIZED;
+      res.resultFlags = BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+      res.activeRevision = ConfigManager::instance().activeRevision();
+      res.payloadLength = 0;
+      if (s_pConfigResultChar) {
+        s_pConfigResultChar->setValue(reinterpret_cast<const uint8_t*>(&res), sizeof(res));
+        if (isConfigResultSubscribed()) s_pConfigResultChar->notify();
+      }
+      return;
+    }
+  }
+
+  // Activity refresh for authorized sessions
+  ConfigManager::instance().refreshSessionActivity(nowMs);
+
+  switch (pkt.opcode) {
+    case BLE_CFG_OP_GET_CAPABILITIES: {
+      status = BLE_CFG_STATUS_OK;
+      resFlags = 0;
+      break;
+    }
+
+    case BLE_CFG_OP_GET_SNAPSHOT: {
+      status = BLE_CFG_STATUS_OK;
+      resFlags = 0;
+      snapshotLen_ = ConfigManager::instance().serializeSnapshot(snapshotBuf_, sizeof(snapshotBuf_));
+      snapshotId_ = pkt.sequence;
+      snapshotTotalChunks_ = static_cast<uint8_t>((snapshotLen_ + 13) / 14);
+      snapshotChunkIdx_ = 0;
+      snapshotActive_ = true;
+      break;
+    }
+
+    case BLE_CFG_OP_ENROLL_OWNER: {
+      status = ConfigManager::instance().enrollOwner(pkt.payload, pkt.payloadLength, nowMs,
+                                                     pendingConfigCmd_.connId);
+      if (status == BLE_CFG_STATUS_OK) {
+        resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
+      } else if (status == BLE_CFG_STATUS_UNAUTHORIZED) {
+        resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_REQUEST_CHALLENGE: {
+      uint32_t challengeNonce = 0;
+      bool ok = ConfigManager::instance().requestChallenge(nowMs, challengeNonce);
+      if (ok) {
+        status = BLE_CFG_STATUS_OK;
+        res.payload[0] = static_cast<uint8_t>(challengeNonce & 0xFF);
+        res.payload[1] = static_cast<uint8_t>((challengeNonce >> 8) & 0xFF);
+        res.payload[2] = static_cast<uint8_t>((challengeNonce >> 16) & 0xFF);
+        res.payload[3] = static_cast<uint8_t>((challengeNonce >> 24) & 0xFF);
+        res.payloadLength = 4;
+      } else {
+        if (!ConfigManager::instance().isOwnerEnrolled()) {
+          status = BLE_CFG_STATUS_INVALID_STATE;
+          resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+        } else {
+          status = BLE_CFG_STATUS_BUSY;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_AUTHENTICATE: {
+      status = ConfigManager::instance().authenticateChallenge(pkt.payload, pkt.payloadLength, pkt.sequence,
+                                                               nowMs, pendingConfigCmd_.connId);
+      if (status != BLE_CFG_STATUS_OK) {
+        resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_POWER: {
+      if (pkt.payloadLength < 1) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        status = ConfigManager::instance().setPower(pkt.payload[0] != 0, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_BRIGHTNESS: {
+      if (pkt.payloadLength < 1) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        status = ConfigManager::instance().setBrightness(pkt.payload[0], isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_GLOBAL_RGB: {
+      if (pkt.payloadLength < 3) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        RgbColor color{pkt.payload[0], pkt.payload[1], pkt.payload[2]};
+        status = ConfigManager::instance().setGlobalRgb(color, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_LED_RGB: {
+      if (pkt.payloadLength < 4) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        RgbColor color{pkt.payload[1], pkt.payload[2], pkt.payload[3]};
+        status = ConfigManager::instance().setLedRgb(pkt.payload[0], color, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_EFFECT: {
+      if (pkt.payloadLength < 2) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        status = ConfigManager::instance().setEffect(pkt.payload[0], pkt.payload[1], isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_STARTUP: {
+      if (pkt.payloadLength < 3) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        uint16_t dur = static_cast<uint16_t>(pkt.payload[1]) | (static_cast<uint16_t>(pkt.payload[2]) << 8);
+        status = ConfigManager::instance().setStartupAnimation(pkt.payload[0], dur, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_LED_THRESHOLD: {
+      if (pkt.payloadLength < 3) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        uint16_t rpm = static_cast<uint16_t>(pkt.payload[1]) | (static_cast<uint16_t>(pkt.payload[2]) << 8);
+        status = ConfigManager::instance().setLedThreshold(pkt.payload[0], rpm, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_SHIFT_WARNING: {
+      if (pkt.payloadLength < 3) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        uint16_t warnRpm = static_cast<uint16_t>(pkt.payload[0]) | (static_cast<uint16_t>(pkt.payload[1]) << 8);
+        status = ConfigManager::instance().setShiftWarning(warnRpm, pkt.payload[2], isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_RPM_MULTIPLIER: {
+      if (pkt.payloadLength < 4) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        uint32_t multX1000 = static_cast<uint32_t>(pkt.payload[0]) |
+                             (static_cast<uint32_t>(pkt.payload[1]) << 8) |
+                             (static_cast<uint32_t>(pkt.payload[2]) << 16) |
+                             (static_cast<uint32_t>(pkt.payload[3]) << 24);
+        float mult = multX1000 / 1000.0f;
+        status = ConfigManager::instance().setRpmMultiplier(mult, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+          if (!isStaged) {
+            candidate.setMultiplier(mult);
+          }
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_CANDIDATE_SOURCE: {
+      if (pkt.payloadLength < 6) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        uint32_t canId = static_cast<uint32_t>(pkt.payload[0]) |
+                         (static_cast<uint32_t>(pkt.payload[1]) << 8) |
+                         (static_cast<uint32_t>(pkt.payload[2]) << 16) |
+                         (static_cast<uint32_t>(pkt.payload[3]) << 24);
+        uint8_t byteIdx = pkt.payload[4];
+        bool isExt = (pkt.payload[5] != 0);
+        status = ConfigManager::instance().setCandidateSource(canId, byteIdx, isExt, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+          if (!isStaged) {
+            candidate.setCandidateSource(canId, byteIdx, isExt);
+          }
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_LED_DIRECTION: {
+      if (pkt.payloadLength < 1) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        status = ConfigManager::instance().setLedDirection(pkt.payload[0], isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SET_WARNING_RGB: {
+      if (pkt.payloadLength < 3) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        RgbColor color{pkt.payload[0], pkt.payload[1], pkt.payload[2]};
+        status = ConfigManager::instance().setWarningRgb(color, isStaged);
+        if (status == BLE_CFG_STATUS_OK) {
+          resFlags |= isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_SAVE_CONFIG: {
+      bool ok = ConfigManager::instance().saveToNvs();
+      status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_STORAGE_ERROR;
+      if (ok) {
+        resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_RESTORE_DEFAULTS: {
+      if (pkt.payloadLength < 2) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else {
+        bool ok = ConfigManager::instance().restoreDefaults(pkt.payload[0], pkt.payload[1]);
+        status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_INVALID_PARAM;
+        if (ok) {
+          resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
+          candidate.reset();
+        }
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_BEGIN_TRANSACTION: {
+      bool ok = ConfigManager::instance().beginTransaction();
+      status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_INVALID_STATE;
+      if (ok) resFlags |= BLE_CFG_RESULT_FLAG_STAGED;
+      break;
+    }
+
+    case BLE_CFG_OP_COMMIT_TRANSACTION: {
+      bool ok = ConfigManager::instance().commitTransaction();
+      status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_VALIDATION_FAILED;
+      if (ok) {
+        resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+        const auto& active = ConfigManager::instance().active();
+        candidate.setCandidateSource(active.canCandidateId, active.candidateByteIndex, active.isExtendedFrame);
+        candidate.setMultiplier(active.rpmMultiplier);
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_ABORT_TRANSACTION: {
+      ConfigManager::instance().abortTransaction();
+      status = BLE_CFG_STATUS_OK;
+      resFlags = 0;
+      break;
+    }
+
+    default:
+      status = BLE_CFG_STATUS_UNSUPPORTED;
+      break;
+  }
+
+  res.statusCode = status;
+  res.resultFlags = resFlags;
+  res.activeRevision = ConfigManager::instance().activeRevision();
+
+  if (s_pConfigResultChar) {
+    s_pConfigResultChar->setValue(reinterpret_cast<const uint8_t*>(&res), sizeof(res));
+    if (isConfigResultSubscribed()) {
+      s_pConfigResultChar->notify();
+      ++notifyCount_;
+      ++configResultNotifyCount_;
+    }
+  }
+  updateCapabilitiesChar();
+}
+
+void BleManager::syncDecoderToMonitor(RpmCandidateMonitor& candidate) {
+  // Rebuild the authoritative live decoder from the active ConfigManager
+  // record (single source of truth) and refresh the calibration verification
+  // mirror. The verification mirror is only kept when the stored calibration
+  // fingerprint still matches the exact decoder configuration being applied.
+  const PulseShiftConfig& cfg = ConfigManager::instance().active();
+  RpmDecoderSettings s;
+  s.canId = cfg.canCandidateId;
+  s.extended = cfg.isExtendedFrame;
+  s.byteIndex = cfg.candidateByteIndex;
+  s.byteWidth = cfg.candidateByteWidth;
+  s.littleEndian = cfg.candidateLittleEndian;
+  s.multiplier = cfg.rpmMultiplier;
+  s.offset = cfg.rpmOffset;
+  s.maxRpm = cfg.rpmMaxValid;
+  candidate.applyDecoderSettings(s, millis());
+  candidate.setCalibrationVerified(cfg.calibrationVerified &&
+                                   cfg.calFingerprint == computeDecoderFingerprint(s));
+}
+
+void BleManager::processSnapshotStream() {
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+  if (!snapshotActive_ || !s_pConfigSnapshotChar) return;
+
+  if (snapshotChunkIdx_ < snapshotTotalChunks_) {
+    const size_t offset = snapshotChunkIdx_ * 14;
+    const size_t rem = (snapshotLen_ > offset) ? (snapshotLen_ - offset) : 0;
+    const uint8_t chunkBytes = static_cast<uint8_t>((rem < 14) ? rem : 14);
+
+    BleConfigSnapshotChunkPacket chunk{};
+    chunk.version = PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION;
+    chunk.snapshotId = snapshotId_;
+    chunk.chunkIndex = snapshotChunkIdx_;
+    chunk.chunkCount = snapshotTotalChunks_;
+    chunk.payloadLength = chunkBytes;
+    if (chunkBytes > 0) {
+      memcpy(chunk.payload, &snapshotBuf_[offset], chunkBytes);
+    }
+
+    s_pConfigSnapshotChar->setValue(reinterpret_cast<const uint8_t*>(&chunk), sizeof(chunk));
+    if (isConfigSnapshotSubscribed()) {
+      s_pConfigSnapshotChar->notify();
+      ++notifyCount_;
+      ++configSnapshotNotifyCount_;
+    }
+
+    ++snapshotChunkIdx_;
+    if (snapshotChunkIdx_ >= snapshotTotalChunks_) {
+      snapshotActive_ = false;
+    }
+  } else {
+    snapshotActive_ = false;
   }
 #endif
 }

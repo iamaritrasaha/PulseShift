@@ -16,7 +16,7 @@ class BleManager {
 
   bool begin();
   void poll(uint32_t nowMs,
-            const RpmCandidateMonitor& candidate,
+            RpmCandidateMonitor& candidate,
             const CanTransport& transport,
             const CanRecorder& recorder,
             const RpmState& rpm);
@@ -25,6 +25,8 @@ class BleManager {
   bool isRpmSubscribed() const;
   bool isHealthSubscribed() const;
   bool isLogsSubscribed() const;
+  bool isConfigResultSubscribed() const;
+  bool isConfigSnapshotSubscribed() const;
   bool isEnabled() const { return initialized_; }
   bool isAdvertising() const;
 
@@ -42,6 +44,11 @@ class BleManager {
   uint32_t logNotifyCount() const { return logNotifyCount_; }
   void printStatus() const;
 
+  // Rebuild the authoritative live decoder from the active configuration and
+  // refresh the calibration mirror (single source of truth: ConfigManager).
+  // Called by the application on boot, after config commits and serial overrides.
+  static void syncDecoderToMonitor(RpmCandidateMonitor& candidate);
+
  private:
   BleManager();
   ~BleManager() = default;
@@ -57,6 +64,15 @@ class BleManager {
 
   void processLogQueue();
   void processHistoricalPageRead();
+  void processCapturePage();
+  void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate);
+  void processSnapshotStream();
+  void updateCapabilitiesChar();
+  void sendResult(BleConfigResultPacket& res);
+  size_t buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen,
+                              const RpmCandidateMonitor& candidate,
+                              const CanTransport& transport,
+                              const CanRecorder& recorder) const;
 
   // Internal state
   bool initialized_ = false;
@@ -73,6 +89,8 @@ class BleManager {
   uint32_t rpmNotifyCount_ = 0;
   uint32_t healthNotifyCount_ = 0;
   uint32_t logNotifyCount_ = 0;
+  uint32_t configResultNotifyCount_ = 0;
+  uint32_t configSnapshotNotifyCount_ = 0;
 
   // Bounded ring buffer for live log events (16 messages, max 128 chars each)
   static constexpr size_t LIVE_LOG_CAPACITY = 16;
@@ -90,6 +108,16 @@ class BleManager {
   size_t activeMsgOffset_ = 0;
   uint8_t activeChunkIndex_ = 0;
 
+  // CAN capture page streaming state (v1 control extension)
+  bool capturePageActive_ = false;
+  bool capturePageEopPending_ = false;
+  uint8_t capturePageFinished_ = 0;
+  uint32_t captureNextRecord_ = 0;
+  uint8_t captureRecordsSent_ = 0;
+  bool captureLineStaged_ = false;
+  bool captureCancelRequested_ = false;
+  uint32_t captureCorruptSeen_ = 0;
+
   // Control request command queue (thread-safe decoupling from NimBLE callback)
   struct PendingCtrlCmd {
     uint8_t opcode = 0;
@@ -105,9 +133,28 @@ class BleManager {
   bool histFinished_ = false;
   bool histCancelRequested_ = false;
 
+  // Configuration V2 Command Queue
+  struct PendingConfigCmd {
+    BleConfigCommandPacket packet{};
+    uint16_t connId = 0;
+    std::atomic<bool> pending{false};
+  };
+  PendingConfigCmd pendingConfigCmd_{};
+
+  // Configuration Snapshot Stream State
+  bool snapshotActive_ = false;
+  uint16_t snapshotId_ = 0;
+  uint8_t snapshotBuf_[512]{};
+  size_t snapshotLen_ = 0;
+  uint8_t snapshotChunkIdx_ = 0;
+  uint8_t snapshotTotalChunks_ = 0;
+
   friend class BleServerCallbacksImpl;
   friend class BleControlCallbacksImpl;
   friend class BleRpmCallbacksImpl;
   friend class BleHealthCallbacksImpl;
   friend class BleLogCallbacksImpl;
+  friend class BleConfigCmdCallbacksImpl;
+  friend class BleConfigResultCallbacksImpl;
+  friend class BleConfigSnapshotCallbacksImpl;
 };

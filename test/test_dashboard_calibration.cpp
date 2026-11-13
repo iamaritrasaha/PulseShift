@@ -36,16 +36,31 @@ static RpmState state() {
   return RpmState(RpmMapping{true,0x612,false,2,0,true,1,1,12000});
 #endif
 }
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
+static Dashboard* blankDashboard=nullptr;
+#endif
 static void blank() {
   CHECK(testOledBarFills==0 && testOledBarWidth==0);
   CHECK(testOledText.find("-- RPM")!=std::string::npos);
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
+  // Non-REPLAY vehicle builds drive the unified LED engine. With the default
+  // decorative configuration the accent colors stay lit; the fail-safe
+  // contract is that no RPM-driven layer may be active while the sample is
+  // stale/invalid or calibration is unverified.
+  CHECK(blankDashboard!=nullptr);
+  CHECK(blankDashboard->ledEffects().activeLayer()!=LedActiveLayer::RpmBar);
+#else
   for(auto pixel:testPixels) CHECK(pixel==0);
+#endif
 }
 int main() {
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
   CHECK(vehicleProfileReady(selected));
 #endif
   Dashboard dashboard; CHECK(dashboard.begin());
+#if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
+  blankDashboard=&dashboard;
+#endif
   auto rpm=state();
   const uint16_t maximum=
 #if PULSESHIFT_MODE == PULSESHIFT_VEHICLE
@@ -54,7 +69,9 @@ int main() {
     config::maxRpm;
 #endif
   CHECK(dashboard.shiftLight().config().rpmMax==maximum);
-  uint32_t now=100;
+  // Start past the 2 s unified LED startup animation (default config) so the
+  // OLED shows live/stale RPM text instead of STARTUP during these checks.
+  uint32_t now=3000;
   for(uint16_t value:{uint16_t(0),uint16_t(2500),uint16_t(5000),maximum,uint16_t(11000)}) {
     CHECK(rpm.ingest(frame(value,now))==DecodeResult::Valid);
     dashboard.update(rpm,now,true,true,rpm.timeoutMs(config::staleMs));
@@ -66,7 +83,7 @@ int main() {
   rpm.expire(lastValid+rpm.timeoutMs(config::staleMs),rpm.timeoutMs(config::staleMs),config::staleMs);
   dashboard.update(rpm,lastValid+rpm.timeoutMs(config::staleMs),true,true,rpm.timeoutMs(config::staleMs));
   blank();
-  now=2000;
+  now=4000;
   CHECK(rpm.ingest(frame(5000,now))==DecodeResult::Valid);
   dashboard.update(rpm,now,false,true,rpm.timeoutMs(config::staleMs)); blank();
   dashboard.update(rpm,now+100,true,false,rpm.timeoutMs(config::staleMs)); blank();
