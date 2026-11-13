@@ -54,7 +54,9 @@ int main() {
     config::maxRpm;
 #endif
   CHECK(dashboard.shiftLight().config().rpmMax==maximum);
-  uint32_t now=100;
+  // Start past the 2 s unified LED startup animation (default config) so the
+  // OLED shows live/stale RPM text instead of STARTUP during these checks.
+  uint32_t now=3000;
   for(uint16_t value:{uint16_t(0),uint16_t(2500),uint16_t(5000),maximum,uint16_t(11000)}) {
     CHECK(rpm.ingest(frame(value,now))==DecodeResult::Valid);
     dashboard.update(rpm,now,true,true,rpm.timeoutMs(config::staleMs));
@@ -66,7 +68,7 @@ int main() {
   rpm.expire(lastValid+rpm.timeoutMs(config::staleMs),rpm.timeoutMs(config::staleMs),config::staleMs);
   dashboard.update(rpm,lastValid+rpm.timeoutMs(config::staleMs),true,true,rpm.timeoutMs(config::staleMs));
   blank();
-  now=2000;
+  now=4000;
   CHECK(rpm.ingest(frame(5000,now))==DecodeResult::Valid);
   dashboard.update(rpm,now,false,true,rpm.timeoutMs(config::staleMs)); blank();
   dashboard.update(rpm,now+100,true,false,rpm.timeoutMs(config::staleMs)); blank();

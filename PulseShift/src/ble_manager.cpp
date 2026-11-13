@@ -860,7 +860,8 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_ENROLL_OWNER: {
-      status = ConfigManager::instance().enrollOwner(pkt.payload, pkt.payloadLength, nowMs);
+      status = ConfigManager::instance().enrollOwner(pkt.payload, pkt.payloadLength, nowMs,
+                                                     pendingConfigCmd_.connId);
       if (status == BLE_CFG_STATUS_OK) {
         resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
       } else if (status == BLE_CFG_STATUS_UNAUTHORIZED) {
@@ -891,7 +892,8 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_AUTHENTICATE: {
-      status = ConfigManager::instance().authenticateChallenge(pkt.payload, pkt.payloadLength, pkt.sequence, nowMs);
+      status = ConfigManager::instance().authenticateChallenge(pkt.payload, pkt.payloadLength, pkt.sequence,
+                                                               nowMs, pendingConfigCmd_.connId);
       if (status != BLE_CFG_STATUS_OK) {
         resFlags |= BLE_CFG_RESULT_FLAG_AUTH_REQUIRED;
       }
