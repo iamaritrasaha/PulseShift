@@ -237,13 +237,17 @@ static void staged_transactions() {
   CHECK(cm.activeRevision() == rev0 + 1);
   CHECK(!cm.isStagedTransactionActive());
 
-  // Validation failure rolls back: staged threshold order conflict.
+  // Validation failure rolls back the apply but KEEPS the transaction open
+  // (the client may fix staged fields and retry, or abort explicitly).
   CHECK(cm.beginTransaction());
   CHECK(cm.setLedThreshold(1, 50, true) == BLE_CFG_STATUS_OK);
   CHECK(!cm.commitTransaction());
   CHECK(cm.active().rpmThresholds[1] == 4000);
   CHECK(cm.active().brightness == 77); // failed commit keeps previous state
+  CHECK(cm.isStagedTransactionActive());
+  cm.abortTransaction();
   CHECK(!cm.isStagedTransactionActive());
+  CHECK(cm.active().rpmThresholds[1] == 4000); // abort leaves active untouched
 
   CHECK(cm.restoreDefaults(0xA5, 0x5A)); // leave clean defaults
 }
