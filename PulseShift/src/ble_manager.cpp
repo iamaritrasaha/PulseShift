@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #if defined(ARDUINO)
   #include <Arduino.h>
+#elif defined(PULSESHIFT_TEST_BUILD)
+  #include <Arduino.h> // host test stubs provide Serial and millis()
 #endif
 
 #include "config.h"

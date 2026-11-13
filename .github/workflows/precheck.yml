@@ -8,9 +8,6 @@ on:
   push:
     branches:
       - "release/**"
-    paths:
-      - "PulseShift/src/led_effects.*"
-      - "test/test_led_effects.cpp"
 
 permissions:
   contents: read
