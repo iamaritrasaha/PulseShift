@@ -516,6 +516,35 @@ static void rpm_status_flags_reflect_rendering() {
   CHECK((rendering & ~BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED) == (base & ~BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED));
 }
 
+static void startup_animation_range_over_ble() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  auto& cm = ConfigManager::instance();
+
+  // Animations 4 (Center-Out) and 5 (Strobe Rush) ship with 2.2.1 and must be
+  // settable over BLE; anything above 5 stays INVALID_PARAM.
+  cm.triggerAuthWindow(200000);
+  const uint16_t dur = 2000;
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_STARTUP, {4, static_cast<uint8_t>(dur & 0xFF), static_cast<uint8_t>(dur >> 8)}, 150), 7);
+  drain(ble, cand, 200001);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(lastResult(ble).resultFlags & BLE_CFG_RESULT_FLAG_APPLIED);
+  CHECK(cm.active().startupAnimation == 4);
+
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_STARTUP, {5, static_cast<uint8_t>(dur & 0xFF), static_cast<uint8_t>(dur >> 8)}, 151), 7);
+  drain(ble, cand, 200002);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(cm.active().startupAnimation == 5);
+
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_STARTUP, {6, static_cast<uint8_t>(dur & 0xFF), static_cast<uint8_t>(dur >> 8)}, 152), 7);
+  drain(ble, cand, 200003);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  CHECK(cm.active().startupAnimation == 5);
+
+  // The extended active config must still pass schema-3 validation.
+  CHECK(ConfigManager::validateConfig(cm.active()));
+}
+
 int main() {
   read_queries_do_not_need_authorization();
   writes_require_authorization();
@@ -524,6 +553,7 @@ int main() {
   calibration_workflow_over_ble();
   device_commands();
   mobile_terminal_stage_and_led_test();
+  startup_animation_range_over_ble();
   diagnostics_blob_shape();
   reload_and_decoder_ext();
   malformed_and_duplicate_commands();

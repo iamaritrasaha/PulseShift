@@ -208,7 +208,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x12` | `SET_GLOBAL_RGB`| `[R: u8, G: u8, B: u8]` | Set uniform color across all 6 LEDs |
 | `0x13` | `SET_LED_RGB` | `[index: u8 (0..5), R, G, B]` | Set individual LED color |
 | `0x14` | `SET_EFFECT` | `[effectId: u8 (0..5), speed: u8 (0..100)]` | 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=Verified RPM Bar, **5=Provisional CAN RPM Preview (unverified)** |
-| `0x15` | `SET_STARTUP` | `[animId: u8 (0..3), durationMs: u16 LE]` | 0=None, 1=Sweep, 2=Wave, 3=Pulse |
+| `0x15` | `SET_STARTUP` | `[animId: u8 (0..5), durationMs: u16 LE]` | 0=None, 1=Sweep, 2=Wave, 3=Pulse, 4=CenterOut, 5=Strobe Rush |
 | `0x16` | `SET_LED_THRESHOLD`| `[index: u8 (0..5), rpm: u16 LE]` | Set threshold for LED index (must remain monotonic) |
 | `0x17` | `SET_SHIFT_WARNING`| `[warningRpm: u16 LE, patternId: u8]` | Pattern: 0=Flash (10 Hz), 1=Strobe (20 Hz), 2=Solid, 3=Off |
 | `0x18` | `SET_RPM_MULTIPLIER`| `[multX1000: u32 LE]` | Provisional multiplier (0.1..1000.0). **Invalidates calibration!** |
@@ -301,8 +301,8 @@ All 12 mandatory tags (`0x10` through `0x1B`) are always emitted; schema-3 tags 
 | `0x11` | Brightness | 1 | `[brightness: u8]` | Master brightness `0..255` |
 | `0x12` | Global Color | 3 | `[R, G, B]` | Primary single RGB color |
 | `0x13` | Per-LED Colors | 18 | `[6 * (R, G, B)]` | Individual RGB colors for LEDs 0..5 |
-| `0x14` | Effect & Speed | 2 | `[effectId: u8, speed: u8]` | Effect (0..4), Speed (0..100) |
-| `0x15` | Startup Animation | 3 | `[animId: u8, durationMs: u16 LE]` | Startup anim (0..3), duration in ms |
+| `0x14` | Effect & Speed | 2 | `[effectId: u8, speed: u8]` | Effect (0..5), Speed (0..100) |
+| `0x15` | Startup Animation | 3 | `[animId: u8, durationMs: u16 LE]` | Startup anim (0..5), duration in ms |
 | `0x16` | RPM Thresholds | 12 | `[6 * u16 LE]` | Monotonic thresholds for LEDs 0..5 |
 | `0x17` | Shift Warning | 3 | `[warningRpm: u16 LE, patternId: u8]`| Warning threshold and pattern (0..3, 3 = Off) |
 | `0x18` | RPM Multiplier | 4 | `[multX1000: u32 LE]` | Multiplier * 1000 (e.g. 40.0 -> 40000) |
