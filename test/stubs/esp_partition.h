@@ -12,6 +12,7 @@
 
 struct esp_partition_t {
   size_t size = 0;
+  char label[16] = "";
 };
 
 inline const esp_partition_t* esp_partition_find_first(uint32_t, uint32_t, const char*) {

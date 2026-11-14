@@ -1,6 +1,6 @@
 # PulseShift BLE Protocol Specification (v1 & v2)
 
-**Document Version:** 2.2.0
+**Document Version:** 2.3.0
 **Target Hardware:** ESP32 DevKit V1 (ESP32-D0WD-V3)
 **Companion App:** PulseShift Android App (`D:\Development\PulseShift\android`)
 **Firmware Library:** NimBLE-Arduino 2.3.8
@@ -135,14 +135,18 @@ transfer and disclose nothing.
 |---|---|---|---|
 | 0 | `version` | `uint8_t` | Protocol version = `2` |
 | 1 | `physicalLedCount`| `uint8_t` | Physical LED count = `6` |
-| 2..5 | `featureMask` | `uint32_t` | Feature bitmask (see below; firmware 2.2.0 = `0x7FFF`) |
+| 2..5 | `featureMask` | `uint32_t` | Feature bitmask (see below; firmware 2.3.0 includes bits 17..19) |
 | 6..9 | `currentRevision` | `uint32_t` | Monotonic active configuration revision counter |
 | 10 | `presetCapacity` | `uint8_t` | Hardware preset slots (`0` = smartphone-managed presets) |
 | 11 | `securityMode` | `uint8_t` | Security mode: `3` = Hybrid (Physical BOOT window presence OR Challenge-Response) |
 | 12 | `firmwareMajor` | `uint8_t` | Firmware version major = `2` |
-| 13 | `firmwareMinor` | `uint8_t` | Firmware version minor = `2` |
+| 13 | `firmwareMinor` | `uint8_t` | Firmware version minor = `3` |
 | 14 | `firmwarePatch` | `uint8_t` | Firmware version patch = `0` |
-| 15..19 | `reserved[5]` | `uint8_t[5]` | Reserved for future expansion; all zeros |
+| 15 | `maxStartupAnimId` | `uint8_t` | Maximum supported startup animation ID (`5` = Strobe Rush; `<= 3` on legacy) |
+| 16 | `maxEffectId` | `uint8_t` | Maximum supported effect ID (`5` = Provisional Preview) |
+| 17 | `otaActiveSlot` | `uint8_t` | Running OTA slot: `0` = app0, `1` = app1, `0xFF` = unknown/unsupported |
+| 18 | `protocolMinor` | `uint8_t` | Canonical protocol minor version (`3` for 2.3.0) |
+| 19 | `otaFlags` | `uint8_t` | Bit 0: stationary safety interlock, Bit 1: dual-slot rollback supported |
 
 #### Feature Mask Bits (`featureMask`)
 - `Bit 0` (`0x0001`): `BLE_FEAT_INDIVIDUAL_RGB`
@@ -162,6 +166,9 @@ transfer and disclose nothing.
 - `Bit 14` (`0x4000`): `BLE_FEAT_CAPTURE_EXPORT`
 - `Bit 15` (`0x8000`): `BLE_FEAT_CAPTURE_STAGE` (authenticated stage-label command)
 - `Bit 16` (`0x10000`): `BLE_FEAT_LED_BENCH_TEST` (authenticated 10-second synthetic test)
+- `Bit 17` (`0x20000`): `BLE_FEAT_EXT_STARTUP_ANIM` (startup animations 4 Center Out and 5 Strobe Rush)
+- `Bit 18` (`0x40000`): `BLE_FEAT_RANGE_DISCOVERY` (supports opcode 0x03 GET_ARG_RANGES)
+- `Bit 19` (`0x80000`): `BLE_FEAT_OTA_UPDATE` (supports dual-slot authenticated firmware OTA)
 
 ---
 
@@ -203,6 +210,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 |---|---|---|---|
 | `0x01` | `GET_CAPABILITIES` | None | Updates Capabilities characteristic |
 | `0x02` | `GET_SNAPSHOT` | None | Triggers complete config snapshot streaming on `0xd217` |
+| `0x03` | `GET_ARG_RANGES` | None | Range discovery (max brightness, LED count, effect count, anim count, max RPM) |
 | `0x10` | `SET_POWER` | `[power: u8 (0 or 1)]` | Master LED strip power switch |
 | `0x11` | `SET_BRIGHTNESS` | `[brightness: u8 (0..255)]` | Master LED brightness |
 | `0x12` | `SET_GLOBAL_RGB`| `[R: u8, G: u8, B: u8]` | Set uniform color across all 6 LEDs |
@@ -239,6 +247,12 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x53` | `SET_CAPTURE_RECORDING` | `[enable: u8]` | Start/stop flash recording; start is state-gated (damaged/preserved/full storage => `INVALID_STATE`) |
 | `0x54` | `SET_CAPTURE_STAGE` | `[stage: u8 (1..3)]` | Label subsequent CAN capture records: 1=KeyOn, 2=Idle, 3=RPM sweep. Does not change operation or synthesize CAN data. |
 | `0x55` | `SET_LED_TEST_RPM` | `[testRpm: u16 LE (0..20000), enable: u8 (0 or 1)]` | Authenticated, temporary 10-second synthetic six-LED bench test. `enable=0` stops it; independent of real CAN data. Does not persist or inject CAN frames. |
+| `0x60` | `OTA_BEGIN` | `[0xA5, 0x5C, size: u32 LE, shaPrefix: u8[4]]` | Begin authenticated dual-slot OTA update to inactive partition. Validates image size and stationary safety interlock. |
+| `0x61` | `OTA_DATA` | `[chunkIdx: u16 LE, dataLen: u8, data...]` | Stream chunked image data (up to 11 bytes/packet). Validates sequential chunk indexing. |
+| `0x62` | `OTA_END` | `[shaTail: u8[4], crc32: u32 LE]` | Conclude transfer, verify full-image FIPS 180-2 SHA-256 hash, set boot partition, schedule restart (1.5s delay). |
+| `0x63` | `OTA_ABORT` | None | Cancel active update, discard written data and return OTA engine to Idle state. |
+| `0x64` | `OTA_CONFIRM` | `[0xA5, 0x5C]` | Cancel bootloader rollback after successful boot self-test. |
+| `0x65` | `OTA_STATUS` | None | Query OTA engine state, active running slot, and written bytes. |
 
 ---
 
@@ -255,6 +269,8 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `6` | `BLE_CFG_STATUS_STORAGE_ERROR` | Flash NVS write failed |
 | `7` | `BLE_CFG_STATUS_VERSION_MISMATCH`| Protocol version mismatch |
 | `8` | `BLE_CFG_STATUS_VALIDATION_FAILED`| Configuration validation failed |
+| `9` | `BLE_CFG_STATUS_OTA_CHECKSUM_ERROR`| SHA-256 hash or CRC32 verification failed |
+| `10` | `BLE_CFG_STATUS_OTA_FLASH_ERROR`| Flash partition write or erase error |
 
 ---
 

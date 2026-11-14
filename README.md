@@ -39,11 +39,16 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 
 ## Compatibility and firmware update policy
 
-**Android and firmware are separate releases.** The Android app may change its screens, presets, labels and layout without reflashing the ESP32 when it continues using the BLE commands and capabilities the installed firmware already supports. The ESP32 operates autonomously after boot, retaining its last successfully saved configuration in NVS. A new application feature that requires a new BLE opcode, effect renderer or firmware behavior still needs a compatible firmware release. See [docs/BLE-PROTOCOL.md](docs/BLE-PROTOCOL.md) for the existing protocol.
+**Android and firmware are separate releases.** The Android app may change its screens, presets, labels and layout without repeatedly reflashing the ESP32 when it uses the versioned BLE protocol and capability discovery the installed firmware advertises. The ESP32 operates autonomously after boot, retaining its last successfully saved configuration in NVS. Protocol 2.3.0 adds capability discovery, argument range discovery (`0x03`), and dual-slot authenticated OTA updates (`0x60`-`0x65`). See [docs/BLE-PROTOCOL.md](docs/BLE-PROTOCOL.md) for the complete wire contract.
 
-**Current default lighting profile:** six LED activation thresholds at **1000, 2000, 3000, 4000, 5000, 6000 RPM**, with the **warning at 6500 RPM**. Those thresholds do **not** cap live RPM telemetry. Effect 5 is a provisional live CAN preview; effect 4 requires verified calibration. Existing devices retain saved NVS settings after firmware updates, so new compiled defaults do not automatically replace a previously saved profile. Shipped Android presets may default to 100% brightness (255/255); this does not silently overwrite existing device brightness.
+**Current default lighting profile:** six LED activation thresholds at **1000, 2000, 3000, 4000, 5000, 6000 RPM**, with the **warning at 6500 RPM**. Those thresholds do **not** cap live RPM telemetry. Effect 5 is a provisional live CAN preview; effect 4 requires verified calibration. Existing devices retain saved NVS settings after firmware updates, so new compiled defaults do not automatically replace a previously saved profile. Shipped Android presets default to 100% brightness (255/255); this does not silently overwrite existing device brightness.
 
-**Firmware OTA updates are not yet implemented or hardware-validated.** Having an OTA-capable partition layout is not, by itself, a functioning update mechanism. A future release must independently verify installed flash partitions, available image-slot size, power-loss safety, image authenticity, secure authorization, rollback support, and preservation of LittleFS captures and NVS credentials before enabling any update transport. Never assume that an app update can replace firmware. Do not change the partition table or erase flash while valued recordings are present; export and verify them first. Firmware updates and bench tests must be performed with the motorcycle parked and stable power supplied.
+**Safe dual-slot authenticated firmware OTA updates (protocol 2.3.0):**
+1. **Dual Partitions:** Uses the installed `app0` (1.25 MB) and `app1` (1.25 MB) layout. Updates always target the inactive slot without overwriting the running firmware or touching LittleFS CAN captures or NVS credentials.
+2. **Stationary Interlock:** Firmware updates are strictly blocked if engine RPM > 0 or if the vehicle is in motion. Update must be conducted with the motorcycle parked on a stable 5V power supply.
+3. **Cryptographic Validation:** Images are verified on the ESP32 using FIPS 180-2 SHA-256 and CRC32 checks. Corrupt, truncated or mismatched images are immediately rejected.
+4. **Automatic Rollback Safety:** Bootloader self-test (`ESP_OTA_IMG_PENDING_VERIFY`) validates startup before confirming. In the event of a boot failure, the ESP32 automatically rolls back to the previous working slot.
+5. **Emergency USB Recovery:** If power is severed during write or an unrecoverable partition fault occurs, USB flashing via Arduino IDE or esptool remains the documented fallback recovery method.
 
 > **Release gate:** A firmware build is not field-proven merely because CI passes. Real ESP32 + Android BLE authentication, configuration application, NVS persistence across power cycles, CAN receive-only operation, LED output and recovery behavior still require physical verification before declaring the firmware stable for long-term deployment.
 
@@ -53,13 +58,14 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 
 | Capability | Status |
 |---|---|
-| Firmware compilation (single production path) | ✅ Verified - GitHub Actions CI |
+| Firmware compilation (single production path) | ✅ Verified - Arduino CLI & GitHub Actions CI |
 | Physical CAN reception on motorcycle | ✅ **Verified** - 2025 Bajaj Pulsar NS125 ABS |
 | CAN recording to internal flash | ✅ Verified - 22,542 records, 0 corrupt |
 | CAN export via Serial Monitor | ✅ Demonstrated - paginated DUMP workflow |
 | CAN capture export over BLE (bounded pages) | ✅ Implemented - host-tested dispatcher, bench BLE validation pending |
 | BLE monitoring and streaming (protocol v1) | ✅ Implemented and software-tested; live Android RPM observations reported on the motorcycle |
-| BLE configuration and command protocol v2 (2.2.0) | ✅ Implemented and software-tested; complete real-device mutation, save and reconnect validation still required |
+| BLE configuration and command protocol v2 (2.3.0) | ✅ Implemented and host-tested (range discovery, extended animations, safe OTA) |
+| Safe dual-slot authenticated firmware OTA | ✅ Implemented and host-tested (dual A/B partitions, SHA-256 verification, stationary interlock) |
 | BLE owner enrollment and challenge-response security | ✅ Implemented and software-tested - physical BOOT window required |
 | Device commands (restart, reload, clear diagnostics, recording toggle) | ✅ Implemented and host-tested |
 | Firmware-driven calibration workflow | ✅ Implemented and host-tested - vehicle validation pending |
@@ -69,7 +75,7 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 | RPM conversion formula (multiplier 40.0) | ⚠️ Provisional - not independently verified |
 | Standalone provisional RPM LED preview (effect 5) | 🧪 Implemented - unverified estimate, physical LED test pending |
 | Verified RPM shift-light mode (effect 4) | 🔒 Disabled until independent calibration verification |
-| Android app | 🔗 Separate workspace (`D:\Development\PulseShift\android`) - compiles and passes unit tests with the 2.2.0 protocol |
+| Android app | 🔗 Separate workspace (`D:\Development\PulseShift\android`) - compiles and passes 100% unit tests with 2.3.0 protocol |
 
 **Verified capture details:**
 

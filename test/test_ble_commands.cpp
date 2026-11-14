@@ -3,6 +3,7 @@
 // device control commands, all through the real BleManager dispatcher.
 #include "ble_manager.h"
 #include "config_manager.h"
+#include "ota_manager.h"
 #include "rpm_candidate.h"
 #include "can_transport.h"
 #include "can_recorder.h"
@@ -545,6 +546,79 @@ static void startup_animation_range_over_ble() {
   CHECK(ConfigManager::validateConfig(cm.active()));
 }
 
+static void ota_and_capabilities_discovery_tests() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  auto& cm = ConfigManager::instance();
+  auto& ota = OtaManager::instance();
+  ota.resetForTest();
+
+  // 1. Argument ranges discovery is read-only and does not require auth
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_GET_ARG_RANGES, {}, 200), 10);
+  drain(ble, cand, 300000);
+  CHECK(lastResult(ble).respondedOpcode == BLE_CFG_OP_GET_ARG_RANGES);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(lastResult(ble).payloadLength == 9);
+  CHECK(lastResult(ble).payload[0] == 5); // maxEffectId
+  CHECK(lastResult(ble).payload[1] == 5); // maxStartupAnimId
+  CHECK(lastResult(ble).payload[2] == 0); // minBrightness
+  CHECK(lastResult(ble).payload[3] == 255); // maxBrightness
+  CHECK(lastResult(ble).payload[8] == 6); // physicalLedCount
+
+  // 2. OTA commands require authorization
+  cm.closeAuthWindow();
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_BEGIN, {0xA5, 0x5C, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 0}, 201), 42);
+  drain(ble, cand, 300001);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_UNAUTHORIZED);
+
+  // Authenticate session on conn 10 via physical window
+  cm.triggerAuthWindow(300002);
+
+  // 3. Rejection on wrong safety token (e.g. 0xA5, 0x5A instead of 0xA5, 0x5C)
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_BEGIN, {0xA5, 0x5A, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 0}, 202), 10);
+  drain(ble, cand, 300003);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+
+  // 4. Rejection on undersized image (< 64KB)
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_BEGIN, {0xA5, 0x5C, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0}, 203), 10);
+  drain(ble, cand, 300004);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+
+  // 5. Valid OTA Begin with 64KB image (65536 bytes)
+  const uint32_t imageSize = 65536;
+  uint8_t shaPrefix[4] = {0x12, 0x34, 0x56, 0x78};
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_BEGIN, {
+      0xA5, 0x5C,
+      static_cast<uint8_t>(imageSize & 0xFF),
+      static_cast<uint8_t>((imageSize >> 8) & 0xFF),
+      static_cast<uint8_t>((imageSize >> 16) & 0xFF),
+      static_cast<uint8_t>((imageSize >> 24) & 0xFF),
+      shaPrefix[0], shaPrefix[1], shaPrefix[2], shaPrefix[3]
+  }, 204), 10);
+  drain(ble, cand, 300005);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(lastResult(ble).payloadLength == 6);
+  CHECK(ota.state() == OtaEngineState::Active);
+
+  // 6. Abort OTA
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_ABORT, {}, 205), 10);
+  drain(ble, cand, 300006);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(ota.state() == OtaEngineState::Idle);
+
+  // 7. OTA Status query
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_STATUS, {}, 206), 10);
+  drain(ble, cand, 300007);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(lastResult(ble).payload[0] == static_cast<uint8_t>(OtaEngineState::Idle));
+
+  // 8. Confirm rollback cancellation
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_CONFIRM, {0xA5, 0x5C}, 207), 10);
+  drain(ble, cand, 300008);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(lastResult(ble).payloadLength == 1);
+}
+
 int main() {
   read_queries_do_not_need_authorization();
   writes_require_authorization();
@@ -554,6 +628,7 @@ int main() {
   device_commands();
   mobile_terminal_stage_and_led_test();
   startup_animation_range_over_ble();
+  ota_and_capabilities_discovery_tests();
   diagnostics_blob_shape();
   reload_and_decoder_ext();
   malformed_and_duplicate_commands();

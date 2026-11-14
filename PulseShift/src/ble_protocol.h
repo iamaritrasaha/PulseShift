@@ -107,15 +107,16 @@ struct BleLogChunkPacket {
 
 #define PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION 2
 
-// Firmware version reported in the Capabilities packet (schema 3)
+// Firmware version reported in the Capabilities packet (schema 3 / protocol 2.3.0)
 #define PULSESHIFT_FW_VERSION_MAJOR 2
-#define PULSESHIFT_FW_VERSION_MINOR 2
+#define PULSESHIFT_FW_VERSION_MINOR 3
 #define PULSESHIFT_FW_VERSION_PATCH 0
 
 // Configuration Opcodes
 enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_GET_CAPABILITIES    = 0x01,
   BLE_CFG_OP_GET_SNAPSHOT        = 0x02,
+  BLE_CFG_OP_GET_ARG_RANGES      = 0x03, // [read-only] query min/max supported ranges
   BLE_CFG_OP_SET_POWER           = 0x10,
   BLE_CFG_OP_SET_BRIGHTNESS      = 0x11,
   BLE_CFG_OP_SET_GLOBAL_RGB      = 0x12,
@@ -153,7 +154,14 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_CLEAR_DIAGNOSTICS   = 0x52, // [0xA5, 0x5A] explicit confirmation; clears diag log ONLY (captures untouched)
   BLE_CFG_OP_SET_CAPTURE_RECORDING = 0x53, // [enable u8] start/stop flash recording (auth required)
   BLE_CFG_OP_SET_CAPTURE_STAGE     = 0x54, // [stage u8 1..3] label subsequent capture records
-  BLE_CFG_OP_SET_LED_TEST_RPM      = 0x55  // [rpm u16LE, enable u8] 10s LED bench test
+  BLE_CFG_OP_SET_LED_TEST_RPM      = 0x55, // [rpm u16LE, enable u8] 10s LED bench test
+  // --- Secure Authenticated Dual-Slot Firmware OTA (protocol 2.3.0) ---
+  BLE_CFG_OP_OTA_BEGIN           = 0x60, // [0xA5, 0x5C, size_u32LE, sha256_prefix_4B]
+  BLE_CFG_OP_OTA_DATA            = 0x61, // [chunkIdx_u16LE, dataLen_u8, data...]
+  BLE_CFG_OP_OTA_END             = 0x62, // [sha256_tail_4B, crc32_u32LE]
+  BLE_CFG_OP_OTA_ABORT           = 0x63, // abort update, discard written data
+  BLE_CFG_OP_OTA_CONFIRM         = 0x64, // [0xA5, 0x5C] cancel rollback after post-reboot self-test
+  BLE_CFG_OP_OTA_STATUS          = 0x65  // query OTA engine state & active slot
 };
 
 // v1 Control extensions (CAN capture browsing, bounded + cancellable)
@@ -179,7 +187,9 @@ enum BleConfigStatusCode : uint8_t {
   BLE_CFG_STATUS_INVALID_STATE      = 5,
   BLE_CFG_STATUS_STORAGE_ERROR      = 6,
   BLE_CFG_STATUS_VERSION_MISMATCH   = 7,
-  BLE_CFG_STATUS_VALIDATION_FAILED  = 8
+  BLE_CFG_STATUS_VALIDATION_FAILED  = 8,
+  BLE_CFG_STATUS_OTA_CHECKSUM_ERROR = 9,
+  BLE_CFG_STATUS_OTA_FLASH_ERROR    = 10
 };
 
 // Configuration Result Flags
@@ -209,7 +219,11 @@ enum BleFeatureMaskBits : uint32_t {
   BLE_FEAT_DIAGNOSTICS_TLV  = (1u << 13), // GET_DIAGNOSTICS TLV blob
   BLE_FEAT_CAPTURE_EXPORT   = (1u << 14), // bounded CAN capture pages over BLE
   BLE_FEAT_CAPTURE_STAGE    = (1u << 15), // owner may set capture label via BLE
-  BLE_FEAT_LED_BENCH_TEST   = (1u << 16)  // synthetic LED test (not CAN data) via BLE
+  BLE_FEAT_LED_BENCH_TEST   = (1u << 16), // synthetic LED test (not CAN data) via BLE
+  // Protocol 2.3.0 extensions:
+  BLE_FEAT_EXT_STARTUP_ANIM = (1u << 17), // Animations 4 (Center-Out) & 5 (Strobe Rush) supported
+  BLE_FEAT_RANGE_DISCOVERY  = (1u << 18), // GET_ARG_RANGES opcode supported
+  BLE_FEAT_OTA_UPDATE       = (1u << 19)  // Dual-slot authenticated OTA engine supported
 };
 
 // BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires
@@ -306,10 +320,14 @@ struct BleCapabilitiesPacket {
   uint32_t currentRevision;        // Bytes 6-9: Current active configuration revision (little-endian)
   uint8_t  hardwarePresetCapacity; // Byte 10: Hardware preset storage capacity (0 = phone-managed)
   uint8_t  securityMode;           // Byte 11: Security / Provisioning mode
-  uint8_t  firmwareMajor;          // Byte 12: Firmware version major
-  uint8_t  firmwareMinor;          // Byte 13: Firmware version minor
-  uint8_t  firmwarePatch;          // Byte 14: Firmware version patch
-  uint8_t  reserved[5];            // Bytes 15-19: Reserved (0)
+  uint8_t  firmwareMajor;          // Byte 12: Firmware version major (2)
+  uint8_t  firmwareMinor;          // Byte 13: Firmware version minor (3)
+  uint8_t  firmwarePatch;          // Byte 14: Firmware version patch (0)
+  uint8_t  maxStartupAnimId;       // Byte 15: Maximum supported startup animation ID (5)
+  uint8_t  maxEffectId;            // Byte 16: Maximum supported effect ID (5)
+  uint8_t  otaActiveSlot;          // Byte 17: Active OTA slot (0 = app0, 1 = app1)
+  uint8_t  protocolMinor;          // Byte 18: Minor protocol revision (3)
+  uint8_t  otaFlags;               // Byte 19: Bit 0 = OTA available, Bit 1 = Rollback supported
 };
 
 #pragma pack(pop)

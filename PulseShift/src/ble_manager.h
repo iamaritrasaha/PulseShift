@@ -156,6 +156,7 @@ class BleManager {
   uint32_t logNotifyCount_ = 0;
   uint32_t configResultNotifyCount_ = 0;
   uint32_t configSnapshotNotifyCount_ = 0;
+  uint32_t otaRebootTimer_ = 0;
 
   // Bounded ring buffer for live log events (16 messages, max 128 chars each)
   static constexpr size_t LIVE_LOG_CAPACITY = 16;

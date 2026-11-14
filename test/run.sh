@@ -41,7 +41,7 @@ g++ $CXXFLAGS \
     PulseShift/src/ble_manager.cpp PulseShift/src/config_manager.cpp \
     PulseShift/src/rpm_candidate.cpp PulseShift/src/can_transport.cpp \
     PulseShift/src/frame_log.cpp PulseShift/src/can_recorder.cpp \
-    PulseShift/src/storage_manager.cpp \
+    PulseShift/src/storage_manager.cpp PulseShift/src/ota_manager.cpp \
     test/test_ble_commands.cpp -o "$BUILD_DIR/test_ble_commands"
 "$BUILD_DIR/test_ble_commands"
 

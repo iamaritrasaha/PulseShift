@@ -43,10 +43,12 @@
 #include "src/ble_manager.h"
 #include "src/config_manager.h"
 #include "src/can_transport.h"
+#include "src/ota_manager.h"
 
 #if defined(ARDUINO)
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include <esp_ota_ops.h>
 #endif
 
 namespace {
@@ -115,6 +117,30 @@ public:
 
     // Initialize BLE GATT Server (configuration & telemetry; optional to run).
     BleManager::instance().begin();
+
+    // Self-test verification on boot:
+    // If running from an OTA image pending verification, verify critical subsystems
+    // and cancel rollback to commit the slot permanently.
+#if defined(ARDUINO)
+    esp_ota_img_states_t ota_state;
+    const esp_partition_t *runningPart = esp_ota_get_running_partition();
+    if (runningPart && esp_ota_get_state_partition(runningPart, &ota_state) == ESP_OK) {
+      if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        const bool selfTestsPass = fsOk && ConfigManager::validateConfig(ConfigManager::instance().active()) && transport_.healthy();
+        if (selfTestsPass) {
+          esp_ota_mark_app_valid_cancel_rollback();
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.println("[OTA] Boot self-tests passed on pending partition. Rollback cancelled.");
+#endif
+        } else {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.println("[OTA CRITICAL] Self-test failed on pending partition! Executing rollback...");
+#endif
+          esp_ota_mark_app_invalid_rollback_and_reboot();
+        }
+      }
+    }
+#endif
   }
 
   void tick() {

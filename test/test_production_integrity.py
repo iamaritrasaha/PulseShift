@@ -127,15 +127,18 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
             "BLE_CFG_OP_CAL_COMPUTE", "BLE_CFG_OP_CAL_STATUS",
             "BLE_CFG_OP_GET_DIAGNOSTICS", "BLE_CFG_OP_RESTART_DEVICE",
             "BLE_CFG_OP_CLEAR_DIAGNOSTICS", "BLE_CFG_OP_SET_CAPTURE_RECORDING",
+            "BLE_CFG_OP_GET_ARG_RANGES",
+            "BLE_CFG_OP_OTA_BEGIN", "BLE_CFG_OP_OTA_DATA", "BLE_CFG_OP_OTA_END",
+            "BLE_CFG_OP_OTA_ABORT", "BLE_CFG_OP_OTA_CONFIRM", "BLE_CFG_OP_OTA_STATUS",
         ]
         for opcode in required_opcodes:
             self.assertIn(opcode, protocol, f"{opcode} must be declared in ble_protocol.h")
             self.assertIn(f"case {opcode}:", dispatch,
                           f"{opcode} must have a dispatch case in ble_manager.cpp")
 
-        # Firmware version must be 2.2.0 (this release).
+        # Firmware version must be 2.3.0 (this release with range discovery and dual-slot OTA).
         self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MAJOR 2")
-        self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MINOR 2")
+        self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MINOR 3")
 
     def test_bounded_command_queues_and_auth_binding(self):
         """Commands queue through a bounded ring; writes check the session's connection."""

@@ -10,6 +10,7 @@
 #include "storage_manager.h"
 #include "diag_logger.h"
 #include "config_manager.h"
+#include "ota_manager.h"
 #include <string.h>
 #include <stdio.h>
 #include <atomic>
@@ -339,13 +340,19 @@ void BleManager::updateCapabilitiesChar() {
                      BLE_FEAT_DECODER_EXT | BLE_FEAT_HYSTERESIS |
                      BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
                      BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
-                     BLE_FEAT_LED_BENCH_TEST;
+                     BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
+                     BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_OTA_UPDATE;
   caps.currentRevision = ConfigManager::instance().activeRevision();
   caps.hardwarePresetCapacity = 0; // Phone-managed presets
   caps.securityMode = ConfigManager::instance().securityMode();
   caps.firmwareMajor = PULSESHIFT_FW_VERSION_MAJOR;
   caps.firmwareMinor = PULSESHIFT_FW_VERSION_MINOR;
   caps.firmwarePatch = PULSESHIFT_FW_VERSION_PATCH;
+  caps.maxStartupAnimId = 5;
+  caps.maxEffectId = 5;
+  caps.otaActiveSlot = OtaManager::instance().activeRunningSlot();
+  caps.protocolMinor = 3;
+  caps.otaFlags = 0x03; // Bit 0 = Dual-slot OTA ready, Bit 1 = Rollback enabled
   s_pCapabilitiesChar->setValue(reinterpret_cast<const uint8_t*>(&caps), sizeof(caps));
 #endif
 }
@@ -546,6 +553,14 @@ void BleManager::poll(uint32_t nowMs,
         processLogQueue();
       }
     }
+  }
+
+  // 4. Pending OTA soft reboot countdown
+  if (otaRebootTimer_ != 0 && nowMs >= otaRebootTimer_) {
+    otaRebootTimer_ = 0;
+#if defined(ARDUINO)
+    esp_restart();
+#endif
   }
 }
 
@@ -1024,9 +1039,11 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   // connection (or the physical BOOT commissioning window).
   const bool isReadQuery = (pkt.opcode == BLE_CFG_OP_GET_CAPABILITIES ||
                             pkt.opcode == BLE_CFG_OP_GET_SNAPSHOT ||
+                            pkt.opcode == BLE_CFG_OP_GET_ARG_RANGES ||
                             pkt.opcode == BLE_CFG_OP_GET_DIAGNOSTICS ||
                             pkt.opcode == BLE_CFG_OP_CAL_STATUS ||
-                            pkt.opcode == BLE_CFG_OP_CAL_CAPTURE_STATUS);
+                            pkt.opcode == BLE_CFG_OP_CAL_CAPTURE_STATUS ||
+                            pkt.opcode == BLE_CFG_OP_OTA_STATUS);
   const bool isAuthFlow = (pkt.opcode == BLE_CFG_OP_AUTHENTICATE ||
                            pkt.opcode == BLE_CFG_OP_REQUEST_CHALLENGE ||
                            pkt.opcode == BLE_CFG_OP_ENROLL_OWNER);
@@ -1055,6 +1072,20 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       snapshotTotalChunks_ = static_cast<uint8_t>((snapshotLen_ + 13) / 14);
       snapshotChunkIdx_ = 0;
       snapshotActive_ = true;
+      break;
+    }
+
+    case BLE_CFG_OP_GET_ARG_RANGES: {
+      status = BLE_CFG_STATUS_OK;
+      resFlags = 0;
+      res.payload[0] = 5;    // maxEffectId (0..5)
+      res.payload[1] = 5;    // maxStartupAnimId (0..5)
+      res.payload[2] = 0;    // minBrightness
+      res.payload[3] = 255;  // maxBrightness
+      res.payload[4] = 0x20; res.payload[5] = 0x4E; // maxRpmThreshold = 20000 (u16 LE)
+      res.payload[6] = 0xD0; res.payload[7] = 0x07; // maxHysteresis = 2000 (u16 LE)
+      res.payload[8] = 6;    // physicalLedCount
+      res.payloadLength = 9;
       break;
     }
 
@@ -1566,6 +1597,119 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
         status = BLE_CFG_STATUS_OK;
         resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
       }
+      break;
+    }
+
+    // --- Secure Authenticated Dual-Slot Firmware OTA (protocol 2.3.0) ---
+    case BLE_CFG_OP_OTA_BEGIN: {
+      if (pkt.payloadLength < 10 || pkt.payload[0] != 0xA5 || pkt.payload[1] != 0x5C) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      const uint32_t totalSize = static_cast<uint32_t>(pkt.payload[2]) |
+                                 (static_cast<uint32_t>(pkt.payload[3]) << 8) |
+                                 (static_cast<uint32_t>(pkt.payload[4]) << 16) |
+                                 (static_cast<uint32_t>(pkt.payload[5]) << 24);
+      uint32_t sessionToken = 0;
+      uint8_t targetSlot = 0;
+      status = OtaManager::instance().startOta(totalSize, &pkt.payload[6], candidate, nowMs,
+                                              sessionToken, targetSlot);
+      if (status == BLE_CFG_STATUS_OK) {
+        res.payload[0] = static_cast<uint8_t>(sessionToken & 0xFF);
+        res.payload[1] = static_cast<uint8_t>((sessionToken >> 8) & 0xFF);
+        res.payload[2] = static_cast<uint8_t>((sessionToken >> 16) & 0xFF);
+        res.payload[3] = static_cast<uint8_t>((sessionToken >> 24) & 0xFF);
+        res.payload[4] = targetSlot;
+        res.payload[5] = 11; // Standard 20-byte payload data chunk capacity
+        res.payloadLength = 6;
+        resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_OTA_DATA: {
+      if (pkt.payloadLength < 3) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      const uint16_t chunkIdx = static_cast<uint16_t>(pkt.payload[0]) |
+                                (static_cast<uint16_t>(pkt.payload[1]) << 8);
+      const uint8_t dataLen = pkt.payload[2];
+      if (dataLen == 0 || (3 + dataLen) > pkt.payloadLength) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      uint32_t written = 0;
+      status = OtaManager::instance().writeChunk(chunkIdx, &pkt.payload[3], dataLen, written);
+      if (status == BLE_CFG_STATUS_OK) {
+        res.payload[0] = pkt.payload[0];
+        res.payload[1] = pkt.payload[1];
+        res.payload[2] = static_cast<uint8_t>(written & 0xFF);
+        res.payload[3] = static_cast<uint8_t>((written >> 8) & 0xFF);
+        res.payload[4] = static_cast<uint8_t>((written >> 16) & 0xFF);
+        res.payload[5] = static_cast<uint8_t>((written >> 24) & 0xFF);
+        res.payloadLength = 6;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_OTA_END: {
+      if (pkt.payloadLength < 8) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      const uint32_t crc32 = static_cast<uint32_t>(pkt.payload[4]) |
+                             (static_cast<uint32_t>(pkt.payload[5]) << 8) |
+                             (static_cast<uint32_t>(pkt.payload[6]) << 16) |
+                             (static_cast<uint32_t>(pkt.payload[7]) << 24);
+      uint8_t nextSlot = 0;
+      uint32_t rebootDelayMs = 1500;
+      status = OtaManager::instance().endOta(&pkt.payload[0], crc32, nextSlot, rebootDelayMs);
+      if (status == BLE_CFG_STATUS_OK) {
+        res.payload[0] = nextSlot;
+        res.payload[1] = static_cast<uint8_t>(rebootDelayMs & 0xFF);
+        res.payload[2] = static_cast<uint8_t>((rebootDelayMs >> 8) & 0xFF);
+        res.payload[3] = static_cast<uint8_t>((rebootDelayMs >> 16) & 0xFF);
+        res.payload[4] = static_cast<uint8_t>((rebootDelayMs >> 24) & 0xFF);
+        res.payloadLength = 5;
+        resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+        otaRebootTimer_ = nowMs + rebootDelayMs;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_OTA_ABORT: {
+      OtaManager::instance().abortOta();
+      status = BLE_CFG_STATUS_OK;
+      break;
+    }
+
+    case BLE_CFG_OP_OTA_CONFIRM: {
+      if (pkt.payloadLength < 2 || pkt.payload[0] != 0xA5 || pkt.payload[1] != 0x5C) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      uint8_t activeSlot = 0;
+      status = OtaManager::instance().confirmRollbackCancel(activeSlot);
+      if (status == BLE_CFG_STATUS_OK) {
+        res.payload[0] = activeSlot;
+        res.payloadLength = 1;
+        resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
+      }
+      break;
+    }
+
+    case BLE_CFG_OP_OTA_STATUS: {
+      status = BLE_CFG_STATUS_OK;
+      auto& ota = OtaManager::instance();
+      res.payload[0] = static_cast<uint8_t>(ota.state());
+      res.payload[1] = ota.activeRunningSlot();
+      const uint32_t bw = ota.bytesWritten();
+      res.payload[2] = static_cast<uint8_t>(bw & 0xFF);
+      res.payload[3] = static_cast<uint8_t>((bw >> 8) & 0xFF);
+      res.payload[4] = static_cast<uint8_t>((bw >> 16) & 0xFF);
+      res.payload[5] = static_cast<uint8_t>((bw >> 24) & 0xFF);
+      res.payloadLength = 6;
       break;
     }
 

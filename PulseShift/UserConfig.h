@@ -75,6 +75,11 @@
 #define PULSESHIFT_BLE_ENABLED 1
 #endif
 
+// DEFAULT: 1 (on). Enables authenticated dual-slot OTA firmware updates.
+#ifndef PULSESHIFT_OTA_ENABLED
+#define PULSESHIFT_OTA_ENABLED 1
+#endif
+
 // Export legacy names and reject old/new conflicts before validation.
 #define PULSESHIFT_CONFIG_VALUES_READY 1
 
