@@ -32,6 +32,7 @@ class CanTransport {
 
  private:
   void fault(const char* reason);
+  bool attemptBusOffRecovery(uint32_t now);
   bool installed_ = false, running_ = false, beginAttempted_ = false;
   uint32_t bitrate_ = 0, acceptedRx_ = 0;
   FrameLog* log_ = nullptr;
@@ -41,4 +42,14 @@ class CanTransport {
   uint32_t lastMissedCount_ = 0, lastOverrunCount_ = 0, lastBusErrorCount_ = 0;
   uint32_t lastRxMs_ = 0;
   bool wasActive_ = false;
+
+  // Bounded bus-off auto-recovery. A transient bus-off (e.g. a cranking
+  // voltage dip on the transceiver) used to leave the shift light dead until
+  // a manual power cycle; in listen-only mode re-entering the bus is safe —
+  // the controller cannot disturb it, and the verified physical TX air-gap
+  // (GPIO17 disconnected, CTX tied to 3V3) is untouched by recovery.
+  static constexpr uint8_t MAX_BUSOFF_RECOVERY_ATTEMPTS = 5;
+  bool busOffRecoveryPending_ = false;
+  uint32_t lastRecoveryAttemptMs_ = 0;
+  uint8_t busOffRecoveryAttempts_ = 0;
 };

@@ -3,6 +3,9 @@
 #include "diag_logger.h"
 #include <Arduino.h>
 #include <string.h>
+#if defined(ARDUINO)
+#include <esp_task_wdt.h>
+#endif
 
 uint16_t CanRecorder::computeCrc16(const uint8_t* data, size_t length) {
   uint16_t crc = 0xFFFF;
@@ -278,6 +281,10 @@ bool CanRecorder::verifyCaptureFile(const char* filePath, size_t expectedSize, b
     const size_t numRecords = dataLen / sizeof(CanLogRecord);
     CanLogRecord rec{};
     for (size_t i = 0; i < numRecords; ++i) {
+#if defined(ARDUINO)
+      // A ~1 MB verify pass can outlast the 5 s task watchdog; keep it fed.
+      if ((i & 0x3F) == 0) esp_task_wdt_reset();
+#endif
       if (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) != sizeof(rec)) {
         f.close();
         return false;
@@ -343,6 +350,11 @@ bool CanRecorder::truncateToSize(const char* path, size_t newSize) {
   size_t copied = 0;
   bool writeError = false;
   while (orig.available() && copied < newSize) {
+#if defined(ARDUINO)
+    // Copying up to ~1 MB to the temp file can outlast the 5 s task
+    // watchdog; keep the loop task subscribed-but-fed throughout.
+    if ((copied & 0x7FF) == 0) esp_task_wdt_reset();
+#endif
     size_t toRead = newSize - copied;
     if (toRead > sizeof(buf)) toRead = sizeof(buf);
     const size_t n = orig.read(buf, toRead);
@@ -475,6 +487,9 @@ void CanRecorder::pump(uint32_t now) {
   if (count_ >= 64 || (count_ > 0 && uint32_t(now - lastFlushMs_) >= 250)) {
     flush();
   }
+
+  // Advance the chunked serial DUMP ALL export (bounded work per tick).
+  pumpDumpAll();
 }
 
 void CanRecorder::flush() {
@@ -801,7 +816,11 @@ void CanRecorder::dumpAll() {
     f.close();
     return;
   }
+  f.close();
 
+  // Emit the preamble once, then stream records in bounded chunks from
+  // pump() so the loop task (and its watchdog) is never blocked for the
+  // whole export. 'DUMP CANCEL' aborts mid-stream.
   const uint32_t recs = (totalBytes - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
   Serial.printf("=== BEGIN PULSESHIFT RAW CAN CAPTURE [ALL: %lu RECORDS] ===\r\n", (unsigned long)recs);
   Serial.printf("[HEADER] magic=PULSECAP ver=%u recSize=%u sess=%lu boot=%lu bitrate=%lu startMs=%lu mode=%s vehicle=%s\r\n",
@@ -810,13 +829,50 @@ void CanRecorder::dumpAll() {
                 (unsigned long)hdr.startMs, hdr.mode, hdr.vehicle);
   Serial.println("timestamp_ms,can_id,extended,rtr,dlc,data,stage,crc_ok");
 
-  uint32_t validCount = 0;
-  uint32_t corruptCount = 0;
-  CanLogRecord rec{};
-  while (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) == sizeof(rec)) {
+  serialDumpAllActive_ = true;
+  serialDumpCursor_ = 0;
+  serialDumpValid_ = 0;
+  serialDumpCorrupt_ = 0;
+  pumpDumpAll();
+}
+
+void CanRecorder::pumpDumpAll() {
+  if (!serialDumpAllActive_) return;
+
+  auto& sm = StorageManager::instance();
+  File f = sm.open(CAPTURE_PATH, "r");
+  if (!f) {
+    serialDumpAllActive_ = false;
+    Serial.println("[DUMP ERROR] Capture file became unreadable; export aborted.");
+    return;
+  }
+
+  const size_t totalBytes = f.size();
+  const uint32_t recs = (totalBytes >= sizeof(CaptureHeader))
+                            ? ((totalBytes - sizeof(CaptureHeader)) / sizeof(CanLogRecord))
+                            : 0;
+  const size_t offset = sizeof(CaptureHeader) + (size_t(serialDumpCursor_) * sizeof(CanLogRecord));
+  f.seek(offset, SeekSet);
+
+  for (uint32_t i = 0; i < DUMP_ALL_CHUNK_RECORDS; ++i) {
+    CanLogRecord rec{};
+    if (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) != sizeof(rec)) {
+      // End of file (or a torn final record): finish the export.
+      f.close();
+      Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE expected=%lu exported=%lu valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
+                    (unsigned long)recs,
+                    (unsigned long)(serialDumpValid_ + serialDumpCorrupt_),
+                    (unsigned long)serialDumpValid_,
+                    (unsigned long)serialDumpCorrupt_,
+                    (unsigned long)totalBytes);
+      serialDumpAllActive_ = false;
+      serialDumpCursor_ = 0;
+      return;
+    }
+
     const uint16_t expected = computeCrc16(reinterpret_cast<const uint8_t*>(&rec), 18);
     const bool crcOk = (rec.checksum == expected);
-    if (crcOk) ++validCount; else ++corruptCount;
+    if (crcOk) ++serialDumpValid_; else ++serialDumpCorrupt_;
 
     const bool ext = (rec.id & 0x80000000UL) != 0;
     const bool rtr = (rec.id & 0x40000000UL) != 0;
@@ -839,17 +895,10 @@ void CanRecorder::dumpAll() {
                   hexData,
                   rec.stage,
                   crcOk ? 1 : 0);
+    ++serialDumpCursor_;
   }
 
   f.close();
-  dumpCursor_ = 0;
-  dumpCumValid_ = 0;
-  dumpCumCorrupt_ = 0;
-  dumpExportedCount_ = 0;
-  const uint32_t totalExported = validCount + corruptCount;
-  Serial.printf("=== END PULSESHIFT RAW CAN CAPTURE expected=%lu exported=%lu valid=%lu corrupt=%lu totalBytes=%lu ===\r\n",
-                (unsigned long)recs, (unsigned long)totalExported,
-                (unsigned long)validCount, (unsigned long)corruptCount, (unsigned long)totalBytes);
 }
 
 void CanRecorder::dumpStatus() {
@@ -864,6 +913,10 @@ void CanRecorder::dumpStatus() {
   Serial.printf("Export Cursor: Record %lu (Page %lu of %lu)\r\n",
                 (unsigned long)dumpCursor_, (unsigned long)currentPg, (unsigned long)pages);
   Serial.printf("Remaining to Export: %lu records\r\n", (unsigned long)remaining);
+  if (serialDumpAllActive_) {
+    Serial.printf("Chunked DUMP ALL in progress: %lu records exported so far (valid=%lu corrupt=%lu). Type 'DUMP CANCEL' to abort.\r\n",
+                  (unsigned long)serialDumpCursor_, (unsigned long)serialDumpValid_, (unsigned long)serialDumpCorrupt_);
+  }
   if (dumpExportedCount_ > 0) {
     Serial.printf("Exported So Far: %lu / %lu records (valid: %lu, corrupt: %lu)\r\n",
                   (unsigned long)dumpExportedCount_, (unsigned long)recs,
@@ -883,6 +936,12 @@ void CanRecorder::dumpCancel() {
   dumpCumValid_ = 0;
   dumpCumCorrupt_ = 0;
   dumpExportedCount_ = 0;
+  if (serialDumpAllActive_) {
+    serialDumpAllActive_ = false;
+    serialDumpCursor_ = 0;
+    Serial.println("[DUMP] Chunked full-capture export cancelled.");
+    return;
+  }
   Serial.println("[DUMP] Export cursor reset to beginning (Page 1).");
 }
 
@@ -918,8 +977,13 @@ void CanRecorder::clear() {
   dumpCumValid_ = 0;
   dumpCumCorrupt_ = 0;
   dumpExportedCount_ = 0;
+  serialDumpAllActive_ = false;
+  serialDumpCursor_ = 0;
+  serialDumpValid_ = 0;
+  serialDumpCorrupt_ = 0;
   bleActive_ = false;
   bleCursor_ = 0;
+  bleExportEnd();
   writeHeader();
   DiagLogger::instance().logEvent(DiagLevel::Info, "CAPTURE_CLEAR", "Capture cleared; fresh session started.");
 }
@@ -937,6 +1001,14 @@ bool CanRecorder::bleExportBegin(uint32_t startRecord) {
   if (recs == 0 || startRecord >= recs) {
     return false;
   }
+
+  bleExportEnd();
+  bleExportFile_ = sm.open(CAPTURE_PATH, "r");
+  bleExportFileOpen_ = static_cast<bool>(bleExportFile_);
+  if (!bleExportFileOpen_) {
+    return false;
+  }
+
   bleCursor_ = startRecord;
   bleActive_ = true;
   bleChecksumOk_ = true;
@@ -949,26 +1021,37 @@ bool CanRecorder::bleExportNext(CanLogRecord& out, uint32_t& recordIndex) {
   const uint32_t recs = totalRecords();
   if (bleCursor_ >= recs) {
     bleActive_ = false;
+    bleExportEnd();
     return false;
   }
 
-  File f = sm.open(CAPTURE_PATH, "r");
-  if (!f) {
-    bleActive_ = false;
-    return false;
+  if (!bleExportFileOpen_) {
+    bleExportFile_ = sm.open(CAPTURE_PATH, "r");
+    bleExportFileOpen_ = static_cast<bool>(bleExportFile_);
+    if (!bleExportFileOpen_) {
+      bleActive_ = false;
+      return false;
+    }
   }
+
   const size_t offset = sizeof(CaptureHeader) + (size_t(bleCursor_) * sizeof(CanLogRecord));
-  if (!f.seek(offset, SeekSet) ||
-      f.read(reinterpret_cast<uint8_t*>(&out), sizeof(out)) != sizeof(out)) {
-    f.close();
+  if (!bleExportFile_.seek(offset, SeekSet) ||
+      bleExportFile_.read(reinterpret_cast<uint8_t*>(&out), sizeof(out)) != sizeof(out)) {
+    bleExportEnd();
     bleActive_ = false;
     return false;
   }
-  f.close();
 
   recordIndex = bleCursor_;
   ++bleCursor_;
   const uint16_t expected = computeCrc16(reinterpret_cast<const uint8_t*>(&out), 18);
   if (out.checksum != expected) bleChecksumOk_ = false;
   return true;
+}
+
+void CanRecorder::bleExportEnd() {
+  if (bleExportFileOpen_) {
+    bleExportFile_.close();
+    bleExportFileOpen_ = false;
+  }
 }

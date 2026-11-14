@@ -91,7 +91,11 @@ class CanRecorder {
 
   void dumpPage(uint32_t pageIndex);
   void dumpNext();
+  // Starts a chunked full-capture export: state is carried across loop
+  // iterations by pump() so a 50,000-record capture can never block the loop
+  // task (and the task watchdog) for the whole stream.
   void dumpAll();
+  bool isDumpAllActive() const { return serialDumpAllActive_; }
   void dumpStatus();
   void dumpCancel();
   void dumpPageNumber(uint32_t pageNumber);
@@ -105,7 +109,8 @@ class CanRecorder {
   bool bleExportBegin(uint32_t startRecord);             // false: no readable capture
   bool bleExportNext(CanLogRecord& out, uint32_t& recordIndex);  // false: end of capture
   uint32_t bleExportCursor() const { return bleCursor_; }
-  void bleExportCancel() { bleActive_ = false; }
+  void bleExportCancel() { bleActive_ = false; bleExportEnd(); }
+  void bleExportEnd();                                   // close the cached read handle
   bool isBleExportActive() const { return bleActive_; }
   bool bleExportChecksumOk() const { return bleChecksumOk_; }
 
@@ -120,6 +125,7 @@ class CanRecorder {
   void writeHeader();
   bool truncateToSize(const char* path, size_t newSize);
   static bool verifyCaptureFile(const char* filePath, size_t expectedSize, bool checkRecords);
+  void pumpDumpAll();
 
   CanLogRecord ring_[RING_CAPACITY]{};
   uint16_t head_ = 0;
@@ -148,8 +154,18 @@ class CanRecorder {
   uint32_t droppedFrames_ = 0;
   uint32_t lastFlushMs_ = 0;
 
-  // BLE export cursor state
+  // Chunked serial DUMP ALL state (bounded work per loop iteration)
+  static constexpr uint32_t DUMP_ALL_CHUNK_RECORDS = 16;
+  bool serialDumpAllActive_ = false;
+  uint32_t serialDumpCursor_ = 0;
+  uint32_t serialDumpValid_ = 0;
+  uint32_t serialDumpCorrupt_ = 0;
+
+  // BLE export cursor state; the read handle stays open for the duration of
+  // one page stream instead of one open/close per record.
   bool bleActive_ = false;
   bool bleChecksumOk_ = true;
   uint32_t bleCursor_ = 0;
+  bool bleExportFileOpen_ = false;
+  File bleExportFile_{};
 };
