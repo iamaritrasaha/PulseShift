@@ -69,7 +69,12 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
    ```bash
    uv run --with cryptography python tools/sign_firmware.py verify \
      --input PulseShift_signed.bin \
-     --key tools/keys/pulseshift_ota_key.pem
+     --public-key tools/keys/pulseshift_ota_key.pem
+   # Note: --key is also accepted as a convenience alias.
+   # You may also verify directly against the uncompressed SEC1 hex string from ota_public_key.h:
+   uv run --with cryptography python tools/sign_firmware.py verify \
+     --input PulseShift_signed.bin \
+     --public-key 040072cffa71b451afe19b5472fe56220653ceb6ae1b534459f7be14ddc6939336cb0ea85068b48c51fda40f3af4725473085b51f1c4b1660e017fd1073ed1e13a
    ```
 
 ---
@@ -88,8 +93,20 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
   7. ESP32 reboots into `app1`. Boot status shows `ESP_OTA_IMG_PENDING_VERIFY`.
   8. Firmware self-tests execute successfully (LittleFS mount, NVS config, CAN listen-only, BLE advertising).
   9. Android reconnects, verifies running slot is `app1` and version matches target.
-  10. Android sends `OTA_CONFIRM`. ESP32 calls `esp_ota_mark_app_valid_cancel_rollback()`.
+  10. Android sends `OTA_CONFIRM` (or bench engineer types `OTA CONFIRM` in serial console). ESP32 calls `esp_ota_mark_app_valid_cancel_rollback()`, marks the partition valid, and cancels rollback.
 - **Pass Criteria:** Firmware is permanently confirmed in `app1`; subsequent manual power-cycle boots into `app1`.
+
+---
+
+### Scenario 1B: Rollback on Missing Confirmation or Timeout
+- **Objective:** Verify that if the companion app disconnects, crashes, or fails to confirm the update within 120 seconds, the firmware automatically rolls back to the prior known-good slot.
+- **Steps:**
+  1. Complete steps 1-8 of Scenario 1 (flashing `app1` and rebooting into `ESP_OTA_IMG_PENDING_VERIFY`).
+  2. Disconnect Android Bluetooth (or keep the companion app closed) and do not issue `OTA CONFIRM`.
+  3. Observe serial console: at exactly 120 seconds uptime, the operational grace period expires.
+  4. ESP32 logs `[OTA TIMEOUT] Operational confirmation not received within 120s! Rolling back to prior slot...` and invokes `esp_ota_mark_app_invalid_rollback_and_reboot()`.
+  5. The bootloader marks `app1` invalid and boots back into known-good `app0`.
+- **Pass Criteria:** Board recovers automatically to `app0` without operator intervention. Subsequent boots remain on `app0`.
 
 ---
 

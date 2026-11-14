@@ -81,11 +81,11 @@ g++ $CXXFLAGS \
 
 # OTA cryptographic verification and fault-injection tests
 g++ $CXXFLAGS \
-    -DPULSESHIFT_TEST_BUILD \
+    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_USE_MBEDTLS \
     -Itest/stubs -IPulseShift -IPulseShift/src \
     PulseShift/src/ota_manager.cpp PulseShift/src/can_transport.cpp \
     PulseShift/src/frame_log.cpp PulseShift/src/rpm_candidate.cpp \
-    test/test_ota_verification.cpp -o "$BUILD_DIR/test_ota_verification"
+    test/test_ota_verification.cpp -lmbedcrypto -o "$BUILD_DIR/test_ota_verification"
 "$BUILD_DIR/test_ota_verification"
 
 # Python integration tests

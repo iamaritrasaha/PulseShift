@@ -101,5 +101,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install host test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmbedtls-dev
+          pip install cryptography
+
       - name: Run host-side C++ tests and Python tests
         run: bash test/run.sh

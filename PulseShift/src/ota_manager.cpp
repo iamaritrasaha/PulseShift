@@ -9,6 +9,18 @@
 #include <esp_image_format.h>
 #include <mbedtls/ecdsa.h>
 #include <mbedtls/ecp.h>
+#elif defined(PULSESHIFT_USE_MBEDTLS)
+#include <mbedtls/ecdsa.h>
+#include <mbedtls/ecp.h>
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
+#elif defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt.lib")
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #else
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -102,13 +114,14 @@ static void sha256_transform(uint32_t state[8], const uint8_t data[64]) {
   state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
-// Cryptographic signature verification using mbedtls (ESP32) or test stub
+// Cryptographic signature verification using mbedtls (ESP32/Linux) or Windows CNG
 static bool verifyEcdsaP256Signature(const uint8_t* pubKeySec1, size_t pubKeyLen,
                                      const uint8_t* sha256Digest,
-                                     const uint8_t* rawSig, size_t sigLen,
-                                     bool mockPass) {
+                                     const uint8_t* rawSig, size_t sigLen) {
   if (pubKeyLen != 65 || sigLen != 64) return false;
-#if defined(ARDUINO)
+  if (pubKeySec1[0] != 0x04) return false;
+
+#if defined(ARDUINO) || defined(PULSESHIFT_USE_MBEDTLS)
   mbedtls_ecp_group grp;
   mbedtls_ecp_group_init(&grp);
   mbedtls_ecp_point Q;
@@ -134,9 +147,37 @@ static bool verifyEcdsaP256Signature(const uint8_t* pubKeySec1, size_t pubKeyLen
   mbedtls_ecp_point_free(&Q);
   mbedtls_ecp_group_free(&grp);
   return ok;
+#elif defined(_WIN32)
+  BCRYPT_ALG_HANDLE hAlg = NULL;
+  BCRYPT_KEY_HANDLE hKey = NULL;
+  bool ok = false;
+
+  if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0) == 0) {
+    struct {
+      BCRYPT_ECCKEY_BLOB hdr;
+      uint8_t x[32];
+      uint8_t y[32];
+    } blob;
+    blob.hdr.dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
+    blob.hdr.cbKey = 32;
+    memcpy(blob.x, pubKeySec1 + 1, 32);
+    memcpy(blob.y, pubKeySec1 + 33, 32);
+
+    if (BCryptImportKeyPair(hAlg, NULL, BCRYPT_ECCPUBLIC_BLOB, &hKey,
+                            reinterpret_cast<PUCHAR>(&blob), sizeof(blob), 0) == 0) {
+      NTSTATUS status = BCryptVerifySignature(hKey, NULL,
+                                              const_cast<PUCHAR>(sha256Digest), 32,
+                                              const_cast<PUCHAR>(rawSig), 64, 0);
+      if (status == 0) {
+        ok = true;
+      }
+      BCryptDestroyKey(hKey);
+    }
+    BCryptCloseAlgorithmProvider(hAlg, 0);
+  }
+  return ok;
 #else
-  (void)pubKeySec1; (void)sha256Digest; (void)rawSig;
-  return mockPass;
+  #error "No cryptographic ECDSA verifier available for this platform"
 #endif
 }
 
@@ -155,7 +196,7 @@ void OtaManager::resetForTest() {
   memset(sha256Prefix_, 0, sizeof(sha256Prefix_));
   memset(trailerBuffer_, 0, sizeof(trailerBuffer_));
   trailerBytesBuffered_ = 0;
-  mockSignaturePass_ = true;
+  rollbackConfirmed_ = false;
   initCrc32();
   initSha256();
 #if defined(ARDUINO)
@@ -426,7 +467,7 @@ BleConfigStatusCode OtaManager::endOta(const uint8_t sha256_tail[4], uint32_t ex
 
   // Step 4: Trusted digital signature verification (NIST P-256 ECDSA over full SHA-256)
   if (!verifyEcdsaP256Signature(PULSESHIFT_OTA_PUBLIC_KEY, sizeof(PULSESHIFT_OTA_PUBLIC_KEY),
-                                computedSha, trailer->signature, 64, mockSignaturePass_)) {
+                                computedSha, trailer->signature, 64)) {
     abortOta();
     return BLE_CFG_STATUS_OTA_CHECKSUM_ERROR;
   }
@@ -490,6 +531,7 @@ BleConfigStatusCode OtaManager::confirmRollbackCancel(uint8_t& outActiveSlot) {
     return BLE_CFG_STATUS_STORAGE_ERROR;
   }
 #endif
+  rollbackConfirmed_ = true;
   outActiveSlot = activeRunningSlot();
   return BLE_CFG_STATUS_OK;
 }

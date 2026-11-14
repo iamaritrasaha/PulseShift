@@ -16,20 +16,37 @@ enum class OtaEngineState : uint8_t {
 };
 
 // PulseShift Authenticated OTA Trailer (76 bytes appended to firmware binary)
-// Magic: "PSOT" (0x50, 0x53, 0x4F, 0x54)
-// Version: 1
-// Flags: 0
-// CRC32: 4 bytes (IEEE 802.3 of application binary)
-// SigLen: 2 bytes (64)
-// Signature: 64 bytes (NIST P-256 ECDSA raw r[32] || s[32])
+// Wire format: Little-endian fields with packed alignment
+// [0..3]:   Magic "PSOT" (0x50, 0x53, 0x4F, 0x54)
+// [4]:      Version (1)
+// [5]:      Flags (0, reserved)
+// [6..9]:   appCrc32 (Little-endian IEEE 802.3 CRC32 of application binary)
+// [10..11]: sigLen (Little-endian uint16_t, exactly 64)
+// [12..75]: signature (Raw NIST P-256 ECDSA r[32] || s[32], big-endian as standard)
+#if defined(__GNUC__) || defined(__clang__)
+#define PULSESHIFT_PACKED __attribute__((packed))
+#else
+#define PULSESHIFT_PACKED
+#endif
+
+#pragma pack(push, 1)
 struct OtaAuthTrailer {
-  uint8_t  magic[4];     // "PSOT"
-  uint8_t  version;      // 1
-  uint8_t  flags;        // 0
-  uint32_t appCrc32;     // Little-endian CRC32 of application binary
-  uint16_t sigLen;       // 64 bytes
-  uint8_t  signature[64];// Raw r[32] || s[32]
-};
+  uint8_t  magic[4];      // 0..3: "PSOT"
+  uint8_t  version;       // 4: 1
+  uint8_t  flags;         // 5: 0 (reserved)
+  uint32_t appCrc32;      // 6..9: Little-endian CRC32 of application binary
+  uint16_t sigLen;        // 10..11: 64 bytes
+  uint8_t  signature[64]; // 12..75: Raw r[32] || s[32]
+} PULSESHIFT_PACKED;
+#pragma pack(pop)
+
+static_assert(sizeof(OtaAuthTrailer) == 76, "OtaAuthTrailer must be exactly 76 bytes");
+static_assert(offsetof(OtaAuthTrailer, magic) == 0, "magic offset must be 0");
+static_assert(offsetof(OtaAuthTrailer, version) == 4, "version offset must be 4");
+static_assert(offsetof(OtaAuthTrailer, flags) == 5, "flags offset must be 5");
+static_assert(offsetof(OtaAuthTrailer, appCrc32) == 6, "appCrc32 offset must be 6");
+static_assert(offsetof(OtaAuthTrailer, sigLen) == 10, "sigLen offset must be 10");
+static_assert(offsetof(OtaAuthTrailer, signature) == 12, "signature offset must be 12");
 
 static constexpr size_t OTA_TRAILER_SIZE = sizeof(OtaAuthTrailer); // exactly 76 bytes
 
@@ -65,6 +82,7 @@ public:
 
   // Query whether rollback is possible from hardware bootloader state
   bool isRollbackPossible() const;
+  bool rollbackConfirmed() const { return rollbackConfirmed_; }
 
   // State inspection
   OtaEngineState state() const { return state_; }
@@ -83,7 +101,6 @@ public:
 
   // Test helpers
   void resetForTest();
-  void setMockSignaturePass(bool pass) { mockSignaturePass_ = pass; }
 
 private:
   OtaManager();
@@ -117,8 +134,7 @@ private:
   // Trailer buffering
   uint8_t trailerBuffer_[OTA_TRAILER_SIZE] = {0};
   size_t  trailerBytesBuffered_ = 0;
-
-  bool mockSignaturePass_ = true;
+  bool rollbackConfirmed_ = false;
 
 #if defined(ARDUINO)
   uint32_t otaHandle_ = 0;

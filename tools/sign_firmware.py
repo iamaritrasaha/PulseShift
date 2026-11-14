@@ -10,13 +10,25 @@ import argparse
 import os
 import sys
 import zlib
+import struct
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
 
 TRAILER_MAGIC = b"PSOT" # PulseShift OTA
 TRAILER_VERSION = 1
 TRAILER_SIZE = 76 # 4 magic + 1 ver + 1 flags + 4 crc32 + 2 sig_len + 64 sig
+
+# Explicitly packed wire format (little-endian, standard alignment, no padding):
+# < : Little-endian
+# 4s: Magic ("PSOT", 4 bytes)
+# B : Version (uint8_t, 1 byte)
+# B : Flags (uint8_t, 1 byte, reserved 0)
+# I : appCrc32 (uint32_t, 4 bytes, little-endian IEEE 802.3 CRC-32)
+# H : sigLen (uint16_t, 2 bytes, little-endian, exactly 64)
+# 64s: signature (raw NIST P-256 ECDSA r[32] || s[32], 64 bytes)
+TRAILER_STRUCT_FORMAT = "<4sBBIH64s"
+assert struct.calcsize(TRAILER_STRUCT_FORMAT) == TRAILER_SIZE, "Trailer format size mismatch"
 
 def generate_key(key_path: str, public_header_path: str = None):
     os.makedirs(os.path.dirname(os.path.abspath(key_path)), exist_ok=True)
@@ -84,34 +96,22 @@ def sign_binary(key_path: str, input_bin: str, output_bin: str):
     # Compute CRC32
     crc32_val = zlib.crc32(image_data) & 0xFFFFFFFF
 
-    # Compute SHA-256
+    # Compute SHA-256 digest over application payload
     digest = hashes.Hash(hashes.SHA256())
     digest.update(image_data)
     sha256_bytes = digest.finalize()
 
-    # Sign SHA-256 digest
-    der_signature = private_key.sign(sha256_bytes, ec.ECDSA(hashes.SHA256()))
+    # Sign SHA-256 digest using Prehashed SHA-256 (prevents double-hashing)
+    der_signature = private_key.sign(sha256_bytes, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
     r, s = decode_dss_signature(der_signature)
 
     r_bytes = r.to_bytes(32, byteorder="big")
     s_bytes = s.to_bytes(32, byteorder="big")
     raw_signature = r_bytes + s_bytes
 
-    # Build 76-byte trailer:
-    # 4 bytes magic: PSOT
-    # 1 byte ver: 1
-    # 1 byte flags: 0
-    # 4 bytes crc32 (little endian)
-    # 2 bytes sig_len (little endian, 64)
-    # 64 bytes raw sig (r[32] || s[32])
-    trailer = bytearray()
-    trailer.extend(TRAILER_MAGIC)
-    trailer.append(TRAILER_VERSION)
-    trailer.append(0) # flags
-    trailer.extend(crc32_val.to_bytes(4, byteorder="little"))
-    trailer.extend((64).to_bytes(2, byteorder="little"))
-    trailer.extend(raw_signature)
-
+    # Build explicitly packed 76-byte trailer matching C++ OtaAuthTrailer
+    trailer = struct.pack(TRAILER_STRUCT_FORMAT, TRAILER_MAGIC, TRAILER_VERSION, 0,
+                          crc32_val, 64, raw_signature)
     assert len(trailer) == TRAILER_SIZE, f"Trailer size mismatch: {len(trailer)} != {TRAILER_SIZE}"
 
     signed_data = image_data + trailer
@@ -131,12 +131,16 @@ def verify_binary(pubkey_input: str, input_bin: str):
         print(f"Error: Input binary not found at '{input_bin}'.", file=sys.stderr)
         sys.exit(1)
 
-    # Load public key
+    # Load public key (supports public key PEM, private key PEM from which public key is extracted, or raw hex)
+    public_key = None
     if os.path.exists(pubkey_input):
         with open(pubkey_input, "rb") as f:
             data = f.read()
             if b"BEGIN PUBLIC KEY" in data:
                 public_key = serialization.load_pem_public_key(data)
+            elif b"BEGIN PRIVATE KEY" in data or b"BEGIN EC PRIVATE KEY" in data:
+                priv = serialization.load_pem_private_key(data, password=None)
+                public_key = priv.public_key()
             else:
                 public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), data)
     else:
@@ -154,15 +158,19 @@ def verify_binary(pubkey_input: str, input_bin: str):
     trailer = file_data[-TRAILER_SIZE:]
     image_data = file_data[:-TRAILER_SIZE]
 
-    magic = trailer[:4]
+    magic, version, flags, crc32_expected, sig_len, raw_signature = struct.unpack(TRAILER_STRUCT_FORMAT, trailer)
+
     if magic != TRAILER_MAGIC:
         print(f"Error: Invalid trailer magic: {magic!r}. Expected {TRAILER_MAGIC!r}.", file=sys.stderr)
         sys.exit(1)
 
-    version = trailer[4]
-    crc32_expected = int.from_bytes(trailer[6:10], byteorder="little")
-    sig_len = int.from_bytes(trailer[10:12], byteorder="little")
-    raw_signature = trailer[12:12+sig_len]
+    if version != TRAILER_VERSION:
+        print(f"Error: Unsupported trailer version: {version}. Expected {TRAILER_VERSION}.", file=sys.stderr)
+        sys.exit(1)
+
+    if sig_len != 64:
+        print(f"Error: Invalid signature length in trailer: {sig_len}. Expected 64.", file=sys.stderr)
+        sys.exit(1)
 
     # Verify CRC32
     crc32_actual = zlib.crc32(image_data) & 0xFFFFFFFF
@@ -170,7 +178,7 @@ def verify_binary(pubkey_input: str, input_bin: str):
         print(f"FAILED: CRC32 mismatch! Expected 0x{crc32_expected:08X}, calculated 0x{crc32_actual:08X}.", file=sys.stderr)
         sys.exit(2)
 
-    # Verify SHA-256 and ECDSA
+    # Verify SHA-256 and ECDSA using Prehashed SHA-256
     r = int.from_bytes(raw_signature[:32], byteorder="big")
     s = int.from_bytes(raw_signature[32:64], byteorder="big")
     der_signature = encode_dss_signature(r, s)
@@ -180,7 +188,7 @@ def verify_binary(pubkey_input: str, input_bin: str):
     sha256_bytes = digest.finalize()
 
     try:
-        public_key.verify(der_signature, sha256_bytes, ec.ECDSA(hashes.SHA256()))
+        public_key.verify(der_signature, sha256_bytes, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
         print("VERIFICATION SUCCESS: Signature, CRC32, and SHA-256 are valid and trusted.")
         print(f"Payload Size: {len(image_data)} bytes")
         print(f"CRC32       : 0x{crc32_actual:08X}")
@@ -203,7 +211,9 @@ def main():
     sign_p.add_argument("--output", required=True, help="Output signed binary (.signed.bin)")
 
     verify_p = subparsers.add_parser("verify", help="Verify a signed firmware binary")
-    verify_p.add_argument("--public-key", required=True, help="Path to public key or 130-char hex string")
+    key_group = verify_p.add_mutually_exclusive_group(required=True)
+    key_group.add_argument("--public-key", help="Path to public key (or private key PEM) or 130-char hex string")
+    key_group.add_argument("--key", help="Path to key (alias for --public-key)")
     verify_p.add_argument("--input", required=True, help="Input signed binary")
 
     args = parser.parse_args()
@@ -212,7 +222,8 @@ def main():
     elif args.command == "sign":
         sign_binary(args.key, args.input, args.output)
     elif args.command == "verify":
-        verify_binary(args.public_key, args.input)
+        pubkey = args.public_key if args.public_key else args.key
+        verify_binary(pubkey, args.input)
 
 if __name__ == "__main__":
     main()
