@@ -26,7 +26,7 @@ class BleManager {
   bool begin();
   // rpmLightsRendering: true when the LED engine's previous frame was actually
   // driven by live RPM data (verified bar, provisional preview or the RPM
-  // warning overlay) — never by a decorative effect or the synthetic bench
+  // warning overlay) - never by a decorative effect or the synthetic bench
   // test. Consumed for the SHIFT_LIGHTS_ENABLED telemetry flag so the phone
   // sees what the strip is really doing.
   void poll(uint32_t nowMs,

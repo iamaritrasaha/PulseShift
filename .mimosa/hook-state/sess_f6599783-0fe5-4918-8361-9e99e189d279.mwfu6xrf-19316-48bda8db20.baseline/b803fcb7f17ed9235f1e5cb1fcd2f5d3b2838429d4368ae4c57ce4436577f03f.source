@@ -1,0 +1,105 @@
+name: Firmware CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  ESP32_FQBN: esp32:esp32:esp32
+
+jobs:
+  build:
+    name: Compile Arduino sketch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.1.1
+
+      - name: Cache Arduino packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/.cache/arduino
+          key: ${{ runner.os }}-arduino-cli-1.1.1-esp32-3.3.12-neopixel-1.12.3-nimble-2.3.8-v2
+
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls "$ESP32_INDEX_URL"
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+          arduino-cli lib update-index
+          arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
+          arduino-cli lib install --no-deps "NimBLE-Arduino@2.3.8"
+
+      - name: Compile - production firmware (default)
+        run: |
+          arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-path "$RUNNER_TEMP/build-production" \
+            PulseShift
+
+      - name: Compile - fully headless variant (serial diagnostics off)
+        run: |
+          mkdir -p "$RUNNER_TEMP/variants/headless"
+          cp -r PulseShift "$RUNNER_TEMP/variants/headless/PulseShift"
+          sed -i 's/#define PULSESHIFT_SERIAL_DIAGNOSTICS 1/#define PULSESHIFT_SERIAL_DIAGNOSTICS 0/' \
+            "$RUNNER_TEMP/variants/headless/PulseShift/UserConfig.h"
+          arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-path "$RUNNER_TEMP/build-headless" \
+            "$RUNNER_TEMP/variants/headless/PulseShift"
+
+      - name: Reject invalid user configuration
+        run: |
+          mkdir -p "$RUNNER_TEMP/variants/invalid"
+          cp -r PulseShift "$RUNNER_TEMP/variants/invalid/PulseShift"
+          sed -i 's/#define PULSESHIFT_LED_COUNT 6/#define PULSESHIFT_LED_COUNT 0/' \
+            "$RUNNER_TEMP/variants/invalid/PulseShift/UserConfig.h"
+          log="$RUNNER_TEMP/invalid-config.log"
+          if arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-path "$RUNNER_TEMP/build-invalid" \
+            "$RUNNER_TEMP/variants/invalid/PulseShift" > "$log" 2>&1; then
+            echo "Invalid config unexpectedly compiled" >&2
+            exit 1
+          fi
+          grep -F "PULSESHIFT_LED_COUNT must be between 1 and 6" "$log"
+
+      - name: Verify OLED dependencies removed
+        run: |
+          if grep -rEn "SSD1306|Adafruit_GFX" PulseShift/; then
+            echo "OLED dependencies must not be referenced in firmware sources" >&2
+            exit 1
+          fi
+
+  host-tests:
+    name: Host C++ unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run host-side C++ tests and Python tests
+        run: bash test/run.sh

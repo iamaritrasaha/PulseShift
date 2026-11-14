@@ -45,7 +45,7 @@ class CanTransport {
 
   // Bounded bus-off auto-recovery. A transient bus-off (e.g. a cranking
   // voltage dip on the transceiver) used to leave the shift light dead until
-  // a manual power cycle; in listen-only mode re-entering the bus is safe —
+  // a manual power cycle; in listen-only mode re-entering the bus is safe -
   // the controller cannot disturb it, and the verified physical TX air-gap
   // (GPIO17 disconnected, CTX tied to 3V3) is untouched by recovery.
   static constexpr uint8_t MAX_BUSOFF_RECOVERY_ATTEMPTS = 5;

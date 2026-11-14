@@ -179,7 +179,7 @@ public:
     // 5b. Service BLE GATT notifications, command queue and page streaming.
     //     RPM-driven rendering truth comes from the LED engine's current
     //     layer: the verified bar, the unverified provisional preview or the
-    //     RPM warning overlay — never decorative effects or the synthetic
+    //     RPM warning overlay, never decorative effects or the synthetic
     //     bench test.
     const LedActiveLayer ledLayer = ledController_.ledEffects().activeLayer();
     const bool rpmLightsRendering =

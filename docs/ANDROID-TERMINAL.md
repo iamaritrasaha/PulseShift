@@ -124,7 +124,7 @@ The firmware BLE dispatcher and host tests are implemented in this repository.
 The Android terminal (parser, dispatcher, screen) is implemented in the
 separate local app workspace and is covered by its own unit tests
 (command parsing, opcode 0x54/0x55 encoding, capability gating, formatter
-contracts). **On-device Android↔ESP32 testing remains pending** — every
+contracts). **On-device Android↔ESP32 testing remains pending** - every
 terminal command path is wired to the real BLE dispatcher, but none has been
 exercised against hardware yet; see the implementation report's hardware
 checklist before trusting any specific command on the bike.

@@ -62,7 +62,7 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 - `Bit 0` (`0x01`): `BLE_RPM_FLAG_CANDIDATE_FRESH` (Candidate frame received within the freshness timeout, default 250 ms)
 - `Bit 1` (`0x02`): `BLE_RPM_FLAG_CALIBRATION_VERIFIED` (Verification record bound to the current decoder fingerprint)
 - `Bit 2` (`0x04`): `BLE_RPM_FLAG_RPM_MAPPED` (The unified candidate decoder is the production RPM mapping; always set on 2.2.0+)
-- `Bit 3` (`0x08`): `BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED` (Set only while RPM-driven lighting is actually rendering from live CAN data: the verified bar (effect 4), the unverified provisional preview (effect 5) or their warning overlay. Clear during decorative effects 0–3, safeguard blanks and the synthetic bench test)
+- `Bit 3` (`0x08`): `BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED` (Set only while RPM-driven lighting is actually rendering from live CAN data: the verified bar (effect 4), the unverified provisional preview (effect 5) or their warning overlay. Clear during decorative effects 0-3, safeguard blanks and the synthetic bench test)
 - `Bit 4` (`0x10`): `BLE_RPM_FLAG_CAN_HEALTHY` (TWAI driver in running state)
 - `Bit 5` (`0x20`): `BLE_RPM_FLAG_TRAFFIC_ACTIVE` (CAN frames received in last 1000 ms)
 - `Bit 6` (`0x40`): `BLE_RPM_FLAG_RECORDING_ACTIVE` (Flash binary capture running)

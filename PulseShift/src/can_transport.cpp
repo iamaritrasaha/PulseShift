@@ -190,7 +190,7 @@ void CanTransport::poll(uint32_t now) {
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) { fault("alert read failed"); return; }
   alertsSeen_ |= alerts;
 
-  // Fatal hardware bus-off state — but recoverable: schedule bounded
+  // Fatal hardware bus-off state - but recoverable: schedule bounded
   // auto-recovery instead of requiring a manual power cycle.
   if (alerts & TWAI_ALERT_BUS_OFF) {
     busOffRecoveryPending_ = true;

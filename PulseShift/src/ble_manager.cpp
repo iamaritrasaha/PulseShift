@@ -557,7 +557,7 @@ void BleManager::drainControlQueue(uint32_t nowMs) {
     ctrlQueueTail_.store(static_cast<uint8_t>((tail + 1) % CTRL_QUEUE_CAPACITY), std::memory_order_release);
 
     // Data-bearing page fetches return the diagnostic log text and the RAW
-    // CAN capture records — vehicle telemetry. They require a session bound
+    // CAN capture records - vehicle telemetry. They require a session bound
     // to the requesting connection, exactly like mutating config commands.
     // Cancel opcodes stay unauthenticated: they only stop a stream the
     // requester may own and disclose nothing.
