@@ -103,6 +103,26 @@ void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg)
       logicalPixels_[i] = scaleColor(cfg.ledColors[i], factor);
     }
   }
+  // Animation 4: Center-Out (Staging Tree - expanding from center LEDs 2,3 outward to 0,5)
+  else if (cfg.startupAnimation == 4) {
+    const uint32_t stepDur = (dur > 3) ? (dur / 3) : 1;
+    const uint32_t step = (elapsed >= dur) ? 2 : (elapsed / stepDur);
+    for (uint8_t i = 0; i < LED_COUNT; ++i) {
+      bool active = false;
+      if (step == 0 && (i == 2 || i == 3)) active = true;
+      else if (step == 1 && (i >= 1 && i <= 4)) active = true;
+      else if (step >= 2) active = true;
+      logicalPixels_[i] = active ? cfg.ledColors[i] : RgbColor{0, 0, 0};
+    }
+  }
+  // Animation 5: Strobe Rush (F1 Grid Start - multi-burst sequence transitioning to full solid)
+  else if (cfg.startupAnimation == 5) {
+    const uint32_t flashPeriod = (dur > 6) ? (dur / 6) : 1;
+    const bool flashOn = (elapsed >= (dur * 2) / 3) || ((elapsed / flashPeriod) % 2 == 0);
+    for (uint8_t i = 0; i < LED_COUNT; ++i) {
+      logicalPixels_[i] = flashOn ? cfg.ledColors[i] : RgbColor{0, 0, 0};
+    }
+  }
 }
 
 void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) {

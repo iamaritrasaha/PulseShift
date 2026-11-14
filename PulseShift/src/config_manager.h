@@ -23,7 +23,7 @@ struct PulseShiftConfig {
   uint8_t  effect = 0;              // 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=Verified RPM, 5=Provisional preview (factory boot default)
   uint8_t  effectSpeed = 50;        // 0..100
   uint8_t  ledDirection = 0;       // 0=Normal, 1=Reversed
-  uint8_t  startupAnimation = 1;   // 0=None, 1=Sweep, 2=Wave, 3=Pulse
+  uint8_t  startupAnimation = 1;   // 0=None, 1=Sweep, 2=Wave, 3=Pulse, 4=CenterOut, 5=Strobe
   uint16_t startupDurationMs = 2000;
   uint16_t rpmThresholds[6] = {1000, 2000, 3000, 4000, 5000, 6000};
   uint16_t warningRpm = 6500;
