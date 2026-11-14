@@ -435,6 +435,56 @@ static void change_detection_flags() {
   CHECK(!e.update(4000, rev, LiveRpmSnapshot{}, input));
 }
 
+static void startup_animations_center_out_and_strobe() {
+  // Animation 4: Center-Out staging tree (center pair first, then outward).
+  LedEffectEngine e;
+  e.reset(0);
+  PulseShiftConfig cfg{};
+  cfg.brightness = 255;
+  cfg.startupAnimation = 4;
+  cfg.startupDurationMs = 3000;
+  cfg.ledColors[0] = RgbColor{10, 0, 0};
+  cfg.ledColors[1] = RgbColor{0, 10, 0};
+  cfg.ledColors[2] = RgbColor{0, 0, 10};
+  cfg.ledColors[3] = RgbColor{0, 0, 10};
+  cfg.ledColors[4] = RgbColor{0, 10, 0};
+  cfg.ledColors[5] = RgbColor{10, 0, 0};
+  LedFrameInput input;
+
+  e.update(100, cfg, LiveRpmSnapshot{}, input);
+  CHECK(e.activeLayer() == LedActiveLayer::Startup);
+  CHECK((e.getPixel(2) == RgbColor{0, 0, 10}));
+  CHECK((e.getPixel(3) == RgbColor{0, 0, 10}));
+  CHECK((e.getPixel(0) == RgbColor{0, 0, 0}));
+  CHECK((e.getPixel(5) == RgbColor{0, 0, 0}));
+
+  e.update(1500, cfg, LiveRpmSnapshot{}, input);
+  CHECK((e.getPixel(1) == RgbColor{0, 10, 0}));
+  CHECK((e.getPixel(4) == RgbColor{0, 10, 0}));
+  CHECK((e.getPixel(0) == RgbColor{0, 0, 0}));
+
+  // Animation 5: Strobe Rush flashes the whole strip, then ends solid.
+  LedEffectEngine s;
+  s.reset(0);
+  PulseShiftConfig scfg{};
+  scfg.brightness = 255;
+  scfg.startupAnimation = 5;
+  scfg.startupDurationMs = 3000;
+  for (uint8_t i = 0; i < 6; ++i) scfg.ledColors[i] = RgbColor{50, 60, 70};
+
+  s.update(100, scfg, LiveRpmSnapshot{}, input);
+  CHECK(s.activeLayer() == LedActiveLayer::Startup);
+  CHECK((s.getPixel(0) == RgbColor{50, 60, 70})); // first burst lit
+  s.update(700, scfg, LiveRpmSnapshot{}, input);  // second 500 ms slot: dark
+  CHECK((s.getPixel(0) == RgbColor{0, 0, 0}));
+  s.update(2200, scfg, LiveRpmSnapshot{}, input); // >= 2/3 of duration: solid
+  CHECK((s.getPixel(5) == RgbColor{50, 60, 70}));
+  s.update(3200, scfg, LiveRpmSnapshot{}, input);
+  CHECK(s.isStartupComplete());
+  CHECK(s.activeLayer() == LedActiveLayer::Decorative);
+  CHECK((s.getPixel(0) == RgbColor{50, 60, 70}));
+}
+
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
@@ -444,6 +494,7 @@ int main() {
   preview_indicators_visible_without_can();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
+  startup_animations_center_out_and_strobe();
   rpm_bar_latches_and_hysteresis();
   warning_patterns();
   warning_hysteresis_no_chatter();
