@@ -207,7 +207,7 @@ class BleManager {
   // Configuration V2 Command Queue (bounded SPSC ring; when full the incoming
   // command is dropped and counted for diagnostics).
   struct PendingConfigCmd {
-    BleConfigCommandPacket packet{};
+    BleConfigExtCommandPacket packet{};
     uint16_t connId = 0;
   };
   static constexpr size_t CONFIG_QUEUE_CAPACITY = 4;

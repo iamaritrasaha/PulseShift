@@ -36,13 +36,13 @@ g++ $CXXFLAGS \
 # BLE v2 command dispatch tests through the real BleManager dispatcher
 # (auth binding, staged transactions, calibration workflow, device commands).
 g++ $CXXFLAGS \
-    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_SERIAL_DIAGNOSTICS=1 \
+    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_SERIAL_DIAGNOSTICS=1 -DPULSESHIFT_USE_MBEDTLS \
     -Itest/stubs -IPulseShift -IPulseShift/src \
     PulseShift/src/ble_manager.cpp PulseShift/src/config_manager.cpp \
     PulseShift/src/rpm_candidate.cpp PulseShift/src/can_transport.cpp \
     PulseShift/src/frame_log.cpp PulseShift/src/can_recorder.cpp \
     PulseShift/src/storage_manager.cpp PulseShift/src/ota_manager.cpp \
-    test/test_ble_commands.cpp -o "$BUILD_DIR/test_ble_commands"
+    test/test_ble_commands.cpp -lmbedcrypto -o "$BUILD_DIR/test_ble_commands"
 "$BUILD_DIR/test_ble_commands"
 
 # Candidate 0x301 monitor tests
@@ -78,6 +78,15 @@ g++ $CXXFLAGS \
     PulseShift/src/can_transport.cpp PulseShift/src/frame_log.cpp \
     test/test_transport.cpp -o "$BUILD_DIR/test_transport"
 "$BUILD_DIR/test_transport"
+
+# OTA cryptographic verification and fault-injection tests
+g++ $CXXFLAGS \
+    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_USE_MBEDTLS \
+    -Itest/stubs -IPulseShift -IPulseShift/src \
+    PulseShift/src/ota_manager.cpp PulseShift/src/can_transport.cpp \
+    PulseShift/src/frame_log.cpp PulseShift/src/rpm_candidate.cpp \
+    test/test_ota_verification.cpp -lmbedcrypto -o "$BUILD_DIR/test_ota_verification"
+"$BUILD_DIR/test_ota_verification"
 
 # Python integration tests
 python3 -m unittest discover -s test -p 'test_*.py'

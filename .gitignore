@@ -19,6 +19,12 @@ __pycache__/
 *.obj
 *.exe
 
+# Cryptographic Keys (Strictly local/offline - NEVER commit to git)
+*.pem
+*.key
+*.priv
+tools/keys/
+
 # Release ZIP artifacts (built on CI)
 PulseShift-Arduino-v*.zip
 PulseShift-Arduino-v*.sha256

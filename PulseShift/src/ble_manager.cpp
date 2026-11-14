@@ -184,9 +184,10 @@ class BleConfigCmdCallbacksImpl : public NimBLECharacteristicCallbacks {
     const size_t len = val.size();
 
     auto& mgr = BleManager::instance();
-    if (len >= 6 && len <= sizeof(BleConfigCommandPacket)) {
-      BleConfigCommandPacket pkt{};
+    if (len >= 6 && len <= sizeof(BleConfigExtCommandPacket)) {
+      BleConfigExtCommandPacket pkt{};
       memcpy(&pkt, data, len);
+      pkt.payloadLength = static_cast<uint8_t>(len - 6);
       // Bounded SPSC ring: NimBLE task produces, main loop consumes. When the
       // ring is full the incoming command is counted and dropped (never
       // silently overwritten mid-processing).
@@ -352,7 +353,11 @@ void BleManager::updateCapabilitiesChar() {
   caps.maxEffectId = 5;
   caps.otaActiveSlot = OtaManager::instance().activeRunningSlot();
   caps.protocolMinor = 3;
-  caps.otaFlags = 0x03; // Bit 0 = Dual-slot OTA ready, Bit 1 = Rollback enabled
+  uint8_t otaFlags = 0x02; // Bit 1 = Dual-slot OTA partition layout detected
+  if (OtaManager::instance().isRollbackPossible()) {
+    otaFlags |= 0x01; // Bit 0 = Rollback supported and verified possible
+  }
+  caps.otaFlags = otaFlags;
   s_pCapabilitiesChar->setValue(reinterpret_cast<const uint8_t*>(&caps), sizeof(caps));
 #endif
 }
@@ -362,6 +367,7 @@ bool BleManager::begin() {
 
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   NimBLEDevice::init("PulseShift");
+  NimBLEDevice::setMTU(512); // Negotiate MTU up to 512 for high-throughput OTA
   NimBLEDevice::setPower(ESP_PWR_LVL_P9); // Maximum transmit power (+9dBm)
 
   s_pServer = NimBLEDevice::createServer();
@@ -997,7 +1003,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   const uint8_t tail = configQueueTail_.load(std::memory_order_relaxed);
   const PendingConfigCmd queued = configQueue_[tail];
   configQueueTail_.store(static_cast<uint8_t>((tail + 1) % CONFIG_QUEUE_CAPACITY), std::memory_order_release);
-  const BleConfigCommandPacket pkt = queued.packet;
+  const BleConfigExtCommandPacket pkt = queued.packet;
   const uint16_t connId = queued.connId;
 
   BleConfigResultPacket res{};
@@ -1018,9 +1024,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     return;
   }
 
-  // Payload length must fit the 14-byte command payload array; a larger
-  // declared length is malformed and can never reference existing arguments.
-  if (pkt.payloadLength > sizeof(pkt.payload)) {
+  // Non-OTA command payload length must not exceed 14 bytes (legacy BLE 20-byte packet frame).
+  // Only high-throughput OTA data frames may carry extended payloads.
+  const size_t maxAllowedPayload = (pkt.opcode == BLE_CFG_OP_OTA_DATA) ? sizeof(pkt.payload) : 14;
+  if (pkt.payloadLength > maxAllowedPayload) {
     reject(BLE_CFG_STATUS_INVALID_PARAM, 0);
     return;
   }
@@ -1612,7 +1619,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
                                  (static_cast<uint32_t>(pkt.payload[5]) << 24);
       uint32_t sessionToken = 0;
       uint8_t targetSlot = 0;
-      status = OtaManager::instance().startOta(totalSize, &pkt.payload[6], candidate, nowMs,
+      status = OtaManager::instance().startOta(totalSize, &pkt.payload[6], candidate, transport, nowMs,
                                               sessionToken, targetSlot);
       if (status == BLE_CFG_STATUS_OK) {
         res.payload[0] = static_cast<uint8_t>(sessionToken & 0xFF);
@@ -1750,7 +1757,12 @@ void BleManager::testEnqueueCommand(const BleConfigCommandPacket& pkt, uint16_t 
   const uint8_t head = configQueueHead_.load(std::memory_order_relaxed);
   const uint8_t next = static_cast<uint8_t>((head + 1) % CONFIG_QUEUE_CAPACITY);
   if (next != configQueueTail_.load(std::memory_order_acquire)) {
-    configQueue_[head].packet = pkt;
+    configQueue_[head].packet.version = pkt.version;
+    configQueue_[head].packet.opcode = pkt.opcode;
+    configQueue_[head].packet.sequence = pkt.sequence;
+    configQueue_[head].packet.payloadLength = pkt.payloadLength;
+    configQueue_[head].packet.flags = pkt.flags;
+    memcpy(configQueue_[head].packet.payload, pkt.payload, sizeof(pkt.payload));
     configQueue_[head].connId = connId;
     configQueueHead_.store(next, std::memory_order_release);
   }

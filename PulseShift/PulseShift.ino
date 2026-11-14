@@ -120,17 +120,26 @@ public:
 
     // Self-test verification on boot:
     // If running from an OTA image pending verification, verify critical subsystems
-    // and cancel rollback to commit the slot permanently.
+    // and validate rollback handling.
 #if defined(ARDUINO)
     esp_ota_img_states_t ota_state;
     const esp_partition_t *runningPart = esp_ota_get_running_partition();
     if (runningPart && esp_ota_get_state_partition(runningPart, &ota_state) == ESP_OK) {
       if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
-        const bool selfTestsPass = fsOk && ConfigManager::validateConfig(ConfigManager::instance().active()) && transport_.healthy();
-        if (selfTestsPass) {
-          esp_ota_mark_app_valid_cancel_rollback();
+#if defined(PULSESHIFT_TEST_FORCE_BOOT_FAIL)
+        // Intentional boot failure injection for hardware rollback verification
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-          Serial.println("[OTA] Boot self-tests passed on pending partition. Rollback cancelled.");
+        Serial.println("[OTA FAULT INJECTION] Intentional boot failure injected! Executing rollback...");
+#endif
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+#else
+        const bool selfTestsPass = fsOk &&
+                                   ConfigManager::validateConfig(ConfigManager::instance().active()) &&
+                                   transport_.healthy() &&
+                                   BleManager::instance().isAdvertising();
+        if (selfTestsPass) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.println("[OTA] Boot self-tests passed on pending partition. Partition awaiting Android confirmation.");
 #endif
         } else {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -138,6 +147,7 @@ public:
 #endif
           esp_ota_mark_app_invalid_rollback_and_reboot();
         }
+#endif
       }
     }
 #endif
@@ -145,6 +155,26 @@ public:
 
   void tick() {
     const uint32_t now = millis();
+
+#if defined(ARDUINO)
+    // Rollback confirmation timeout: If booting from an OTA partition pending
+    // verification and no authenticated companion confirmation (or serial OTA CONFIRM)
+    // is received within 120 seconds, the new build is deemed unverified and the device
+    // automatically rolls back to the prior known-good firmware slot.
+    if (!OtaManager::instance().rollbackConfirmed() && !bootVerificationTimeoutHandled_ && now >= 120000) {
+      bootVerificationTimeoutHandled_ = true;
+      esp_ota_img_states_t ota_state;
+      const esp_partition_t *runningPart = esp_ota_get_running_partition();
+      if (runningPart && esp_ota_get_state_partition(runningPart, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.println("[OTA TIMEOUT] Operational confirmation not received within 120s! Rolling back to prior slot...");
+#endif
+          esp_ota_mark_app_invalid_rollback_and_reboot();
+        }
+      }
+    }
+#endif
 
     // 0. Poll persistent configuration manager (auth window, staged transaction timeouts)
     ConfigManager::instance().poll(now);
@@ -547,6 +577,29 @@ private:
       Serial.println("[OK] Storage cleared. Fresh capture session initialized.");
     } else if (strcasecmp(cmd, "CLEAR") == 0) {
       Serial.println("[WARNING] To confirm clearing all stored offline logs and capture, type: CLEAR YES");
+    } else if (strcasecmp(cmd, "OTA CONFIRM") == 0) {
+#if defined(ARDUINO)
+      esp_ota_img_states_t ota_state;
+      const esp_partition_t *runningPart = esp_ota_get_running_partition();
+      if (runningPart && esp_ota_get_state_partition(runningPart, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+          uint8_t activeSlot = 0;
+          if (OtaManager::instance().confirmRollbackCancel(activeSlot) == BLE_CFG_STATUS_OK) {
+            Serial.printf("[OTA] Operational confirmation verified for slot %u! Rollback cancelled; firmware marked valid.\r\n", (unsigned)activeSlot);
+          } else {
+            Serial.println("[OTA] Operational confirmation failed to cancel rollback.");
+          }
+        } else {
+          Serial.println("[OTA] Firmware is not pending verification.");
+        }
+      } else {
+        Serial.println("[OTA] Unable to query running partition state.");
+      }
+#else
+      uint8_t activeSlot = 0;
+      OtaManager::instance().confirmRollbackCancel(activeSlot);
+      Serial.println("[OTA] Operational confirmation simulated.");
+#endif
     } else {
       Serial.println("[ERROR] Unknown command. Type 'HELP' for available commands.");
     }
@@ -582,6 +635,7 @@ private:
     Serial.println("  STREAM OFF      : Disable live streaming (default: concise summaries only)");
     Serial.println("  CLEAR           : Request erasing stored diagnostic logs and CAN capture");
     Serial.println("  CLEAR YES       : Confirm erase and start a fresh capture session");
+    Serial.println("  OTA CONFIRM     : Mark newly booted OTA firmware valid and cancel rollback");
   }
 
   void printStatus() {
@@ -783,6 +837,7 @@ private:
   bool rpmMonitorStreaming_ = false;
   uint32_t lastRpmMonitorPrint_ = 0;
   uint32_t rpmTestStartMs_ = 0;
+  bool bootVerificationTimeoutHandled_ = false;
 };
 
 Application app;
