@@ -25,8 +25,8 @@ struct PulseShiftConfig {
   uint8_t  ledDirection = 0;       // 0=Normal, 1=Reversed
   uint8_t  startupAnimation = 1;   // 0=None, 1=Sweep, 2=Wave, 3=Pulse
   uint16_t startupDurationMs = 2000;
-  uint16_t rpmThresholds[6] = {3000, 4000, 5000, 6000, 7000, 8000};
-  uint16_t warningRpm = 8500;
+  uint16_t rpmThresholds[6] = {1000, 2000, 3000, 4000, 5000, 6000};
+  uint16_t warningRpm = 6500;
   uint8_t  warningPatternId = 0;   // 0=Flash, 1=Strobe, 2=Solid, 3=Off
   RgbColor warningColor = {255, 0, 0};
   uint16_t rpmHysteresis = 150;    // threshold hysteresis (falling RPM), 0..2000

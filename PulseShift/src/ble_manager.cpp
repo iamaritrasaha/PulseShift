@@ -1316,9 +1316,15 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       if (pkt.payloadLength < 2) {
         status = BLE_CFG_STATUS_INVALID_PARAM;
       } else {
-        bool ok = ConfigManager::instance().restoreDefaults(pkt.payload[0], pkt.payload[1]);
-        status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_INVALID_PARAM;
-        if (ok) {
+        bool nvsSaved = false;
+        const bool ok = ConfigManager::instance().restoreDefaults(pkt.payload[0], pkt.payload[1], &nvsSaved);
+        if (!ok) {
+          status = BLE_CFG_STATUS_INVALID_PARAM;
+        } else if (!nvsSaved) {
+          status = BLE_CFG_STATUS_STORAGE_ERROR;
+          resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+        } else {
+          status = BLE_CFG_STATUS_OK;
           resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
           // Lighting preferences were reset; the decoder pipeline is rebuilt
           // from the (reset) configuration. Owner credentials are preserved.

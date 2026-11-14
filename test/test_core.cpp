@@ -244,12 +244,12 @@ static void staged_transactions() {
   CHECK(cm.beginTransaction());
   CHECK(cm.setLedThreshold(1, 50, true) == BLE_CFG_STATUS_OK);
   CHECK(!cm.commitTransaction());
-  CHECK(cm.active().rpmThresholds[1] == 4000);
+  CHECK(cm.active().rpmThresholds[1] == 2000);
   CHECK(cm.active().brightness == 77); // failed commit keeps previous state
   CHECK(cm.isStagedTransactionActive());
   cm.abortTransaction();
   CHECK(!cm.isStagedTransactionActive());
-  CHECK(cm.active().rpmThresholds[1] == 4000); // abort leaves active untouched
+  CHECK(cm.active().rpmThresholds[1] == 2000); // abort leaves active untouched
 
   CHECK(cm.restoreDefaults(0xA5, 0x5A)); // leave clean defaults
 }
