@@ -35,3 +35,4 @@ PulseShift-Arduino-v*.sha256
 
 # macOS metadata
 .DS_Store
+".mimosa/"  
