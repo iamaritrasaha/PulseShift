@@ -26,6 +26,10 @@
 #include "esp_partition.h"
 #endif
 
+#ifndef ESP_IMAGE_HEADER_MAGIC
+#define ESP_IMAGE_HEADER_MAGIC 0xE9
+#endif
+
 // IEEE 802.3 CRC32 implementation
 static uint32_t crc32_update(uint32_t crc, const uint8_t* data, size_t len) {
   crc = ~crc;
@@ -363,9 +367,9 @@ BleConfigStatusCode OtaManager::writeChunk(uint16_t chunkIndex, const uint8_t* d
     return BLE_CFG_STATUS_VALIDATION_FAILED;
   }
 
-  // Inspect image header magic on first chunk
+  // Inspect image header magic on first chunk (Espressif ESP_IMAGE_HEADER_MAGIC = 0xE9)
   if (bytesWritten_ == 0) {
-    if (len < 1 || data[0] != 0xE7) {
+    if (len < 1 || data[0] != ESP_IMAGE_HEADER_MAGIC) {
       abortOta();
       return BLE_CFG_STATUS_VALIDATION_FAILED;
     }

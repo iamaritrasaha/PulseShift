@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 TRAILER_MAGIC = b"PSOT" # PulseShift OTA
 TRAILER_VERSION = 1
 TRAILER_SIZE = 76 # 4 magic + 1 ver + 1 flags + 4 crc32 + 2 sig_len + 64 sig
+ESP_IMAGE_HEADER_MAGIC = 0xE9 # Espressif standard image header magic byte
 
 # Explicitly packed wire format (little-endian, standard alignment, no padding):
 # < : Little-endian
@@ -89,9 +90,11 @@ def sign_binary(key_path: str, input_bin: str, output_bin: str):
     with open(input_bin, "rb") as f:
         image_data = f.read()
 
-    # Safety: check image magic
-    if len(image_data) < 1 or image_data[0] != 0xE7:
-        print(f"Warning: Binary magic byte is 0x{image_data[0]:02X}, expected 0xE7 (ESP32 image).", file=sys.stderr)
+    # Safety: enforce Espressif ESP_IMAGE_HEADER_MAGIC (0xE9)
+    if len(image_data) < 1 or image_data[0] != ESP_IMAGE_HEADER_MAGIC:
+        magic_val = image_data[0] if image_data else 0
+        print(f"Error: Invalid binary magic byte 0x{magic_val:02X}. Expected 0x{ESP_IMAGE_HEADER_MAGIC:02X} (ESP32 image header).", file=sys.stderr)
+        sys.exit(1)
 
     # Compute CRC32
     crc32_val = zlib.crc32(image_data) & 0xFFFFFFFF
@@ -170,6 +173,12 @@ def verify_binary(pubkey_input: str, input_bin: str):
 
     if sig_len != 64:
         print(f"Error: Invalid signature length in trailer: {sig_len}. Expected 64.", file=sys.stderr)
+        sys.exit(1)
+
+    # Verify ESP32 image header magic
+    if len(image_data) < 1 or image_data[0] != ESP_IMAGE_HEADER_MAGIC:
+        magic_val = image_data[0] if image_data else 0
+        print(f"Error: Invalid binary magic byte 0x{magic_val:02X}. Expected 0x{ESP_IMAGE_HEADER_MAGIC:02X} (ESP32 image header).", file=sys.stderr)
         sys.exit(1)
 
     # Verify CRC32
