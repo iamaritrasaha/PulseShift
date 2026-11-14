@@ -73,7 +73,7 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
 
     def test_end_to_end_signing_and_verification(self):
         """Sign a binary with sign_firmware and verify using public PEM, private PEM, and hex string."""
-        raw_payload = bytes([0xE7] + [((i * 7 + 13) & 0xFF) for i in range(1, 1024)])
+        raw_payload = bytes([0xE9] + [((i * 7 + 13) & 0xFF) for i in range(1, 1024)])
         input_bin = os.path.join(self.temp_dir.name, "test.bin")
         output_bin = os.path.join(self.temp_dir.name, "test.signed.bin")
 
@@ -100,9 +100,33 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
         self.assertEqual(len(hex_key), 130)
         sign_firmware.verify_binary(hex_key, output_bin)
 
+    def test_fault_injection_invalid_esp32_header_magic(self):
+        """Image without Espressif ESP_IMAGE_HEADER_MAGIC (0xE9) is rejected."""
+        # 1. Test rejection of old erroneous magic 0xE7
+        bad_payload_e7 = bytes([0xE7] + [0x42] * 200)
+        input_bin = os.path.join(self.temp_dir.name, "bad_magic_e7.bin")
+        output_bin = os.path.join(self.temp_dir.name, "bad_magic_e7.signed.bin")
+        with open(input_bin, "wb") as f:
+            f.write(bad_payload_e7)
+
+        with self.assertRaises(SystemExit) as cm:
+            sign_firmware.sign_binary(self.priv_pem_path, input_bin, output_bin)
+        self.assertEqual(cm.exception.code, 1)
+
+        # 2. Test rejection of 0x00 magic
+        bad_payload_00 = bytes([0x00] + [0x42] * 200)
+        input_bin_00 = os.path.join(self.temp_dir.name, "bad_magic_00.bin")
+        output_bin_00 = os.path.join(self.temp_dir.name, "bad_magic_00.signed.bin")
+        with open(input_bin_00, "wb") as f:
+            f.write(bad_payload_00)
+
+        with self.assertRaises(SystemExit) as cm:
+            sign_firmware.sign_binary(self.priv_pem_path, input_bin_00, output_bin_00)
+        self.assertEqual(cm.exception.code, 1)
+
     def test_fault_injection_tampered_payload_crc_mismatch(self):
         """Tampering with image payload causes CRC32 mismatch error."""
-        raw_payload = bytes([0xE7] + [((i * 3 + 5) & 0xFF) for i in range(1, 512)])
+        raw_payload = bytes([0xE9] + [((i * 3 + 5) & 0xFF) for i in range(1, 512)])
         input_bin = os.path.join(self.temp_dir.name, "crc_test.bin")
         output_bin = os.path.join(self.temp_dir.name, "crc_test.signed.bin")
 
@@ -125,7 +149,7 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
 
     def test_fault_injection_tampered_signature(self):
         """Tampering with signature in trailer causes cryptographic verification failure."""
-        raw_payload = bytes([0xE7] + [((i * 11 + 3) & 0xFF) for i in range(1, 512)])
+        raw_payload = bytes([0xE9] + [((i * 11 + 3) & 0xFF) for i in range(1, 512)])
         input_bin = os.path.join(self.temp_dir.name, "sig_test.bin")
         output_bin = os.path.join(self.temp_dir.name, "sig_test.signed.bin")
 
@@ -147,7 +171,7 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
 
     def test_fault_injection_wrong_key(self):
         """Verification with an untrusted / different public key fails."""
-        raw_payload = bytes([0xE7] + [0x42] * 200)
+        raw_payload = bytes([0xE9] + [0x42] * 200)
         input_bin = os.path.join(self.temp_dir.name, "wrong_key.bin")
         output_bin = os.path.join(self.temp_dir.name, "wrong_key.signed.bin")
 
@@ -171,7 +195,7 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
 
     def test_fault_injection_bad_trailer_magic(self):
         """Invalid trailer magic is rejected."""
-        raw_payload = bytes([0xE7] + [0x11] * 100)
+        raw_payload = bytes([0xE9] + [0x11] * 100)
         input_bin = os.path.join(self.temp_dir.name, "bad_magic.bin")
         output_bin = os.path.join(self.temp_dir.name, "bad_magic.signed.bin")
 
@@ -190,7 +214,7 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
 
     def test_fault_injection_bad_trailer_version(self):
         """Unsupported trailer version is rejected."""
-        raw_payload = bytes([0xE7] + [0x22] * 100)
+        raw_payload = bytes([0xE9] + [0x22] * 100)
         input_bin = os.path.join(self.temp_dir.name, "bad_ver.bin")
         output_bin = os.path.join(self.temp_dir.name, "bad_ver.signed.bin")
 
@@ -209,7 +233,7 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
 
     def test_fault_injection_bad_sig_len(self):
         """Invalid signature length in trailer is rejected."""
-        raw_payload = bytes([0xE7] + [0x33] * 100)
+        raw_payload = bytes([0xE9] + [0x33] * 100)
         input_bin = os.path.join(self.temp_dir.name, "bad_siglen.bin")
         output_bin = os.path.join(self.temp_dir.name, "bad_siglen.signed.bin")
 
@@ -242,18 +266,18 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
         pub_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), bytes(hex_bytes))
 
         # Reconstruct the 65536-byte deterministic test payload from test_ota_verification.cpp
-        payload = bytearray([0xE7] + [((i * 7 + 13) & 0xFF) for i in range(1, 65536)])
-        expected_crc = 0x1A16BFDD
+        payload = bytearray([0xE9] + [((i * 7 + 13) & 0xFF) for i in range(1, 65536)])
+        expected_crc = 0x9BA054C9
         actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
         self.assertEqual(actual_crc, expected_crc)
 
         digest = hashlib.sha256(payload).digest()
-        self.assertEqual(digest.hex(), "cb2996e8f34edf6fd62fd9eda9f432e414e5f665d98afa4d152c2bf2af87603f")
+        self.assertEqual(digest.hex(), "7c17146cfc62aebe04f2e705c60a9eb09f8c86c05b61f9c1044fad1d9dd07d13")
 
         # VALID_TEST_SIG from test_ota_verification.cpp
         valid_test_sig_hex = (
-            "64fc36ebed08014d991b2a5622c693d0d1c7a8127c735787ad24986a210d2f9f"
-            "e60bf09778db9ada1f3c8bbbab270477324d60e54d70526ee99d1b4004ab9bda"
+            "5cc6e275516be9d3c2a4aa3a78f1b3524fb366af1de716d6f9bf190554c74c21"
+            "f2ce122ab228340fdcd7393be56966a05f962d5bae8e8fc02a78b4bfd8ba57aa"
         )
         raw_sig = bytes.fromhex(valid_test_sig_hex)
         self.assertEqual(len(raw_sig), 64)
