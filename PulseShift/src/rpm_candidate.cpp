@@ -79,8 +79,11 @@ void RpmCandidateMonitor::applyDecoderSettings(const RpmDecoderSettings& s, uint
     maxObservedRaw_ = 0;
     memset(lastFrameData_, 0, sizeof(lastFrameData_));
     lastFrameDlc_ = 0;
+    lastUpdateMs_ = nowMs;
   }
-  lastUpdateMs_ = nowMs;
+  // A multiplier/offset-only change keeps the previous raw sample and its
+  // timestamp: it is honestly re-scaled, but it must NOT appear fresh for
+  // another window when no frame has actually arrived.
   receivedCount_ = 0;
   rejectedCount_ = 0;
   invalidSamples_ = 0;
@@ -168,6 +171,11 @@ bool RpmCandidateMonitor::ingest(const CanFrame& frame, uint32_t nowMs) {
   }
 
   rawValue16_ = extracted;
+  // Count a signal dropout: this frame arrives after the freshness window
+  // already expired, so RPM rendering would have been blanked in between.
+  if (hasUpdate_ && uint32_t(nowMs - lastUpdateMs_) > freshnessTimeoutMs_) {
+    ++staleTransitions_;
+  }
   lastUpdateMs_ = nowMs;
   hasUpdate_ = true;
   lastFrameDlc_ = frame.dlc;
@@ -245,7 +253,10 @@ LiveRpmSnapshot RpmCandidateMonitor::snapshot(uint32_t nowMs) const {
   s.extended = settings_.extended;
   s.calibrationVerified = calibrationVerified_;
   s.calibrationFingerprint = decoderFingerprint();
-  s.calibrationMatchesSettings = true;  // mirror is refreshed from ConfigManager by the application
+  // Honest value: the mirror is bound to the current decoder fingerprint by
+  // syncDecoderToMonitor (re-binding requires an exact match), so the flag
+  // already encodes "verified AND bound to these settings".
+  s.calibrationMatchesSettings = calibrationVerified_;
   s.acceptedFrames = receivedCount_;
   s.rejectedFrames = rejectedCount_;
   s.invalidSamples = invalidSamples_;

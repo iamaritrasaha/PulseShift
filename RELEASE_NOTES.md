@@ -1,5 +1,15 @@
 # PulseShift Firmware Release Notes
 
+## Unreleased - Reliability audit fixes
+
+- **Security (HIGH)**: v1 control page fetches (`GET_LOG_PAGE` `0x10`, `GET_CAPTURE_PAGE` `0x12`) now require an authenticated owner session bound to the requesting connection — previously any BLE client in range could stream the raw CAN capture and diagnostic log. Cancel opcodes stay open; unauthenticated requests get an error chunk and a diagnostic event. Documented in `docs/BLE-PROTOCOL.md` §3.4.
+- **Fixed**: BLE capture page export never started — `bleExportBegin()` had no caller, so `GET_CAPTURE_PAGE` always answered with an empty end-of-capture page. The page request now activates the recorder's export cursor; the read handle is also held per page instead of per record.
+- `SHIFT_LIGHTS_ENABLED` (RPM packet bit 3) now reports what the LED engine is actually rendering from live CAN data (verified bar, provisional preview or the warning overlay) instead of mirroring the calibration flag: the phone can no longer report shift lighting disabled while the preview drives the strip, nor enabled while a decorative effect renders.
+- Serial `DUMP ALL` streams in bounded chunks from the main loop instead of blocking for minutes: a full-flash export can no longer trip the 5 s task watchdog and panic-reboot mid-export. `DUMP CANCEL` aborts mid-stream; long flash verify/truncate loops feed the watchdog.
+- Bounded bus-off auto-recovery (1→16 s exponential backoff, 5 attempts): a transient bus-off no longer leaves the shift light dead until a manual power cycle. Listen-only re-entry is safe; the physical TX air-gap is untouched.
+- Hardening: config/control command queues are flushed on disconnect (connection-handle reuse can no longer execute a departed client's commands), declared command payload lengths over 14 bytes are rejected with `INVALID_PARAM`, `staleTransitions` counts real signal dropouts, decoder changes no longer extend the freshness window without a new frame, and the queue-overflow comment now matches the drop-newest policy.
+- Host tests extended: auth-gated page fetches, disconnect queue flush, payload-length rejection, RPM status-flag rendering semantics and the bus-off recovery schedule.
+
 ## Unreleased - Preview diagnostics and config synchronization fixes
 
 - Fixed the provisional RPM preview's missing-CAN safeguard hiding the boot sweep and physical BOOT owner enrollment pulse. Only non-RPM indicators bypass the unverified candidate gate; live RPM bars still blank when stale/invalid.
