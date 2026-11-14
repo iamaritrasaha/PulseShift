@@ -109,13 +109,13 @@ void ConfigManager::applySafeDefaults(PulseShiftConfig& cfg) {
   cfg.ledDirection = 0; // Normal
   cfg.startupAnimation = 1; // Sweep
   cfg.startupDurationMs = 2000;
-  cfg.rpmThresholds[0] = 3000;
-  cfg.rpmThresholds[1] = 4000;
-  cfg.rpmThresholds[2] = 5000;
-  cfg.rpmThresholds[3] = 6000;
-  cfg.rpmThresholds[4] = 7000;
-  cfg.rpmThresholds[5] = 8000;
-  cfg.warningRpm = 8500;
+  cfg.rpmThresholds[0] = 1000;
+  cfg.rpmThresholds[1] = 2000;
+  cfg.rpmThresholds[2] = 3000;
+  cfg.rpmThresholds[3] = 4000;
+  cfg.rpmThresholds[4] = 5000;
+  cfg.rpmThresholds[5] = 6000;
+  cfg.warningRpm = 6500;
   cfg.warningPatternId = 0; // Flash
   cfg.warningColor = RgbColor{255, 0, 0};
   cfg.rpmHysteresis = 150;
@@ -1063,16 +1063,20 @@ BleConfigStatusCode ConfigManager::enrollOwner(const uint8_t* secret, size_t len
   // Persist to NVS
 #if defined(ARDUINO) && !defined(PULSESHIFT_TEST_BUILD)
   Preferences secPrefs;
-  if (secPrefs.begin(NVS_SEC_NAMESPACE, false)) {
-    OwnerSecurityBlob secBlob{};
-    secBlob.magic = NVS_SEC_MAGIC;
-    secBlob.isEnrolled = 1;
-    memcpy(secBlob.ownerSecret, ownerSecret_, OWNER_SECRET_LEN);
-    secBlob.enrollTimestamp = nowMs;
-    secBlob.crc32 = computeCrc32(reinterpret_cast<const uint8_t*>(&secBlob),
-                                 sizeof(secBlob) - sizeof(uint32_t));
-    secPrefs.putBytes(NVS_KEY_CREDS, &secBlob, sizeof(secBlob));
-    secPrefs.end();
+  if (!secPrefs.begin(NVS_SEC_NAMESPACE, false)) {
+    return BLE_CFG_STATUS_STORAGE_ERROR;
+  }
+  OwnerSecurityBlob secBlob{};
+  secBlob.magic = NVS_SEC_MAGIC;
+  secBlob.isEnrolled = 1;
+  memcpy(secBlob.ownerSecret, ownerSecret_, OWNER_SECRET_LEN);
+  secBlob.enrollTimestamp = nowMs;
+  secBlob.crc32 = computeCrc32(reinterpret_cast<const uint8_t*>(&secBlob),
+                               sizeof(secBlob) - sizeof(uint32_t));
+  const size_t written = secPrefs.putBytes(NVS_KEY_CREDS, &secBlob, sizeof(secBlob));
+  secPrefs.end();
+  if (written != sizeof(secBlob)) {
+    return BLE_CFG_STATUS_STORAGE_ERROR;
   }
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
   Serial.println("[SECURITY] New owner enrolled and credentials persisted to NVS.");

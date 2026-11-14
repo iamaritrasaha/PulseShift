@@ -112,15 +112,14 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
       logicalPixels_[i] = cfg.ledColors[i];
     }
   }
-  // Effect 1: Breathing (Soft sine-wave rise and fall)
+  // Effect 1: Breathing (Perceptually smooth sinusoidal pulse)
   else if (cfg.effect == 1) {
-    // Speed: 0..100 maps to breathing period 4000ms .. 800ms
-    const uint32_t period = 4000 - (cfg.effectSpeed * 32);
-    const float phase = (nowMs % period) * 6.28318f / period;
+    const uint32_t period = (cfg.effectSpeed > 0) ? (4000 - (cfg.effectSpeed * 32)) : 4000;
+    const float phase = (period > 0) ? ((nowMs % period) * 6.2831853f / period) : 0.0f;
     const float sinVal = (sinf(phase) + 1.0f) * 0.45f + 0.1f; // 0.1 .. 1.0
     const uint8_t factor = static_cast<uint8_t>(sinVal * 255.0f);
     for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      logicalPixels_[i] = scaleColor(cfg.ledColors[i], factor);
+      logicalPixels_[i] = scaleColorGamma(cfg.ledColors[i], factor);
     }
   }
   // Effect 2: Rainbow (Smooth full-spectrum HSV color wave)
@@ -133,17 +132,24 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
       logicalPixels_[i] = hsvToRgb(hue, 255, 255);
     }
   }
-  // Effect 3: Color Chase (High-velocity runner traversing LEDs)
+  // Effect 3: Color Chase (Smooth runner traversing LEDs with anti-aliasing)
   else if (cfg.effect == 3) {
-    const uint32_t stepMs = 350 - (cfg.effectSpeed * 3); // 350ms down to 50ms per step
-    const uint32_t head = (nowMs / stepMs) % LED_COUNT;
+    const uint32_t stepMs = (cfg.effectSpeed <= 100) ? (350 - (cfg.effectSpeed * 3)) : 50;
+    const uint32_t totalDur = (stepMs > 0) ? (stepMs * LED_COUNT) : 300;
+    const float pos = (totalDur > 0 && stepMs > 0) ? (static_cast<float>(nowMs % totalDur) / static_cast<float>(stepMs)) : 0.0f;
     for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      if (i == head) {
-        logicalPixels_[i] = cfg.ledColors[i];
-      } else {
-        const uint8_t prev = (head > 0) ? (head - 1) : (LED_COUNT - 1);
-        logicalPixels_[i] = (i == prev) ? scaleColor(cfg.ledColors[i], 80) : RgbColor{0, 0, 0};
+      float dist = fabsf(static_cast<float>(i) - pos);
+      if (dist > static_cast<float>(LED_COUNT) / 2.0f) {
+        dist = static_cast<float>(LED_COUNT) - dist;
       }
+      float intensity = 0.0f;
+      if (dist < 1.0f) {
+        intensity = 1.0f - (dist * 0.7f);
+      } else if (dist < 1.6f) {
+        intensity = 0.3f * (1.6f - dist) / 0.6f;
+      }
+      const uint8_t factor = static_cast<uint8_t>(intensity * 255.0f);
+      logicalPixels_[i] = (factor > 0) ? scaleColorGamma(cfg.ledColors[i], factor) : RgbColor{0, 0, 0};
     }
   }
   else {

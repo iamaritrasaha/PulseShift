@@ -7,7 +7,8 @@
 #include "storage_manager.h"
 
 // 20-byte packed CAN log record with CRC16
-struct __attribute__((packed)) CanLogRecord {
+#pragma pack(push, 1)
+struct CanLogRecord {
   uint32_t timestampMs; // Relative ms from boot
   uint32_t id;          // bit 31: extended, bit 30: remote, bits 0-28: CAN arbitration ID
   uint8_t dlc;          // 0..8
@@ -17,7 +18,7 @@ struct __attribute__((packed)) CanLogRecord {
 };
 
 // 76-byte header written at the start of a capture file
-struct __attribute__((packed)) CaptureHeader {
+struct CaptureHeader {
   char magic[8];          // "PULSECAP"
   uint16_t headerVersion; // 1
   uint16_t recordSize;    // 20
@@ -28,6 +29,7 @@ struct __attribute__((packed)) CaptureHeader {
   char mode[16];          // Mode name (e.g. "CAN_CAPTURE")
   char vehicle[32];       // Vehicle descriptor
 };
+#pragma pack(pop)
 
 class CanRecorder {
  public:
