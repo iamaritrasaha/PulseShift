@@ -120,17 +120,26 @@ public:
 
     // Self-test verification on boot:
     // If running from an OTA image pending verification, verify critical subsystems
-    // and cancel rollback to commit the slot permanently.
+    // and validate rollback handling.
 #if defined(ARDUINO)
     esp_ota_img_states_t ota_state;
     const esp_partition_t *runningPart = esp_ota_get_running_partition();
     if (runningPart && esp_ota_get_state_partition(runningPart, &ota_state) == ESP_OK) {
       if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
-        const bool selfTestsPass = fsOk && ConfigManager::validateConfig(ConfigManager::instance().active()) && transport_.healthy();
-        if (selfTestsPass) {
-          esp_ota_mark_app_valid_cancel_rollback();
+#if defined(PULSESHIFT_TEST_FORCE_BOOT_FAIL)
+        // Intentional boot failure injection for hardware rollback verification
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-          Serial.println("[OTA] Boot self-tests passed on pending partition. Rollback cancelled.");
+        Serial.println("[OTA FAULT INJECTION] Intentional boot failure injected! Executing rollback...");
+#endif
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+#else
+        const bool selfTestsPass = fsOk &&
+                                   ConfigManager::validateConfig(ConfigManager::instance().active()) &&
+                                   transport_.healthy() &&
+                                   BleManager::instance().isAdvertising();
+        if (selfTestsPass) {
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.println("[OTA] Boot self-tests passed on pending partition. Partition awaiting Android confirmation.");
 #endif
         } else {
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -138,6 +147,7 @@ public:
 #endif
           esp_ota_mark_app_invalid_rollback_and_reboot();
         }
+#endif
       }
     }
 #endif
@@ -145,6 +155,22 @@ public:
 
   void tick() {
     const uint32_t now = millis();
+
+#if defined(ARDUINO)
+    if (!bootCommitted_ && now >= 45000) {
+      bootCommitted_ = true;
+      esp_ota_img_states_t ota_state;
+      const esp_partition_t *runningPart = esp_ota_get_running_partition();
+      if (runningPart && esp_ota_get_state_partition(runningPart, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+          esp_ota_mark_app_valid_cancel_rollback();
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          Serial.println("[OTA] Operational grace period elapsed. Rollback cancelled.");
+#endif
+        }
+      }
+    }
+#endif
 
     // 0. Poll persistent configuration manager (auth window, staged transaction timeouts)
     ConfigManager::instance().poll(now);
@@ -783,6 +809,7 @@ private:
   bool rpmMonitorStreaming_ = false;
   uint32_t lastRpmMonitorPrint_ = 0;
   uint32_t rpmTestStartMs_ = 0;
+  bool bootCommitted_ = false;
 };
 
 Application app;

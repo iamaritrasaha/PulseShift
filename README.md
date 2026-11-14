@@ -45,12 +45,12 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 
 **Safe dual-slot authenticated firmware OTA updates (protocol 2.3.0):**
 1. **Dual Partitions:** Uses the installed `app0` (1.25 MB) and `app1` (1.25 MB) layout. Updates always target the inactive slot without overwriting the running firmware or touching LittleFS CAN captures or NVS credentials.
-2. **Stationary Interlock:** Firmware updates are strictly blocked if engine RPM > 0 or if the vehicle is in motion. Update must be conducted with the motorcycle parked on a stable 5V power supply.
-3. **Cryptographic Validation:** Images are verified on the ESP32 using FIPS 180-2 SHA-256 and CRC32 checks. Corrupt, truncated or mismatched images are immediately rejected.
+2. **Stationary Interlock:** Firmware updates are strictly blocked if engine RPM > 0 or if active CAN bus traffic has been received within the last 3000 ms. Update must be conducted with the motorcycle parked on a stable 5V power supply.
+3. **Cryptographic Validation:** Images are signed with NIST P-256 ECDSA and authenticated on the ESP32 with complete FIPS 180-2 SHA-256 digests and running CRC32 checks via a 76-byte `PSOT` trailer. Corrupt, truncated, unsigned or improperly signed images are immediately rejected without touching running firmware.
 4. **Automatic Rollback Safety:** Bootloader self-test (`ESP_OTA_IMG_PENDING_VERIFY`) validates startup before confirming. In the event of a boot failure, the ESP32 automatically rolls back to the previous working slot.
-5. **Emergency USB Recovery:** If power is severed during write or an unrecoverable partition fault occurs, USB flashing via Arduino IDE or esptool remains the documented fallback recovery method.
+5. **Universal USB Fallback Recovery:** If power is severed during write or an unrecoverable partition fault occurs, complete 4-artifact USB flashing (`bootloader.bin`, `partitions.bin`, `boot_app0.bin`, and application binary) via `esptool.py` or clean erase/reflash via Arduino IDE restores the device to a pristine state. Writing only the application image at `0x10000` is explicitly documented as non-universal for damaged partition tables or bootloaders. See [docs/OTA-BENCH-TEST-PLAN.md](docs/OTA-BENCH-TEST-PLAN.md).
 
-> **Release gate:** A firmware build is not field-proven merely because CI passes. Real ESP32 + Android BLE authentication, configuration application, NVS persistence across power cycles, CAN receive-only operation, LED output and recovery behavior still require physical verification before declaring the firmware stable for long-term deployment.
+> **Release gate:** A firmware build is not field-proven merely because CI passes. Real ESP32 + Android BLE authentication, configuration application, NVS persistence across power cycles, CAN receive-only operation, LED output, automatic rollback, and power-interruption recovery require physical verification as specified in [docs/OTA-BENCH-TEST-PLAN.md](docs/OTA-BENCH-TEST-PLAN.md) before declaring the firmware stable for long-term deployment.
 
 ---
 
@@ -65,7 +65,7 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 | CAN capture export over BLE (bounded pages) | ✅ Implemented - host-tested dispatcher, bench BLE validation pending |
 | BLE monitoring and streaming (protocol v1) | ✅ Implemented and software-tested; live Android RPM observations reported on the motorcycle |
 | BLE configuration and command protocol v2 (2.3.0) | ✅ Implemented and host-tested (range discovery, extended animations, safe OTA) |
-| Safe dual-slot authenticated firmware OTA | ✅ Implemented and host-tested (dual A/B partitions, SHA-256 verification, stationary interlock) |
+| Safe dual-slot authenticated firmware OTA | ✅ Implemented and host-tested (dual A/B partitions, ECDSA P-256 signatures, SHA-256, automatic rollback; bench test plan in docs/OTA-BENCH-TEST-PLAN.md) |
 | BLE owner enrollment and challenge-response security | ✅ Implemented and software-tested - physical BOOT window required |
 | Device commands (restart, reload, clear diagnostics, recording toggle) | ✅ Implemented and host-tested |
 | Firmware-driven calibration workflow | ✅ Implemented and host-tested - vehicle validation pending |
@@ -905,7 +905,37 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 
 ---
 
-## 16. Firmware Project Structure
+## 16. Universal USB Emergency Recovery
+
+> [!WARNING]
+> Flashing only the application binary at `0x10000` is **not** a universal recovery procedure. If a power cut or crash damages the bootloader, partition table (`0x8000`), or OTA metadata (`0xe000`), an application-only flash will leave the device in an unbootable state.
+
+If the ESP32 is unresponsive, in a boot loop, or has corrupted flash metadata, use one of the two guaranteed recovery methods:
+
+### Method A: Full 4-Artifact Flash (Preserves Flash Partitions)
+Flash all 4 core components using `esptool.py`:
+```bash
+esptool.py --chip esp32 --port <PORT> --baud 921600 write_flash \
+  0x1000  bootloader.bin \
+  0x8000  partitions.bin \
+  0xe000  boot_app0.bin \
+  0x10000 PulseShift.ino.bin
+```
+
+### Method B: Full Flash Erase and Factory Reflash (Clean Slate)
+When partition metadata or LittleFS filesystems are severely corrupted:
+1. Erase the entire 4 MB SPI flash chip:
+   ```bash
+   esptool.py --chip esp32 --port <PORT> erase_flash
+   ```
+2. Reflash the project through the Arduino IDE (Ctrl+U) or via the 4-artifact command above.
+3. Open Serial Monitor at 115200 baud. Confirm clean LittleFS mounting and default NVS profile initialization.
+
+See [docs/OTA-BENCH-TEST-PLAN.md](docs/OTA-BENCH-TEST-PLAN.md) for the complete fault-injection and recovery matrix.
+
+---
+
+## 17. Firmware Project Structure
 
 ```text
 PulseShift-Firmware/
@@ -947,7 +977,7 @@ PulseShift-Firmware/
 
 ---
 
-## 17. Tests and Verification
+## 18. Tests and Verification
 
 ### GitHub Actions CI
 
@@ -994,7 +1024,7 @@ The host-side test suite (run on Ubuntu in CI) validates:
 
 ---
 
-## 18. Safety and Technical References
+## 19. Safety and Technical References
 
 ### Critical electrical rules - summary
 
@@ -1011,6 +1041,7 @@ The host-side test suite (run on Ubuntu in CI) validates:
 | Document | Contents |
 |---|---|
 | [docs/HARDWARE.md](docs/HARDWARE.md) | Complete electrical specifications, automotive protection, power architecture, pre-connection checklist, signal path detail |
+| [docs/OTA-BENCH-TEST-PLAN.md](docs/OTA-BENCH-TEST-PLAN.md) | OTA hardware bench-test plan, cryptographic signing, bootloader rollback, failure injection, and recovery matrix |
 | [docs/TESTING.md](docs/TESTING.md) | Test suite reference, serial command verification, automated regression tests |
 | [docs/VERIFICATION.md](docs/VERIFICATION.md) | Historical development snapshot (October 2026) |
 | [docs/CAN-INVESTIGATION.md](docs/CAN-INVESTIGATION.md) | Historical TWAI simulator investigation notes |

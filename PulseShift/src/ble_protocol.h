@@ -250,7 +250,7 @@ enum BleWarningPattern : uint8_t {
   BLE_WARN_PATTERN_OFF       = 3  // Shift alert off
 };
 
-// Binary Command Packet Header (UUID: ...d215, max 20 bytes)
+// Binary Command Packet Header (UUID: ...d215, standard 20 bytes)
 struct BleConfigCommandPacket {
   uint8_t  version;          // Offset 0: Protocol version = 2
   uint8_t  opcode;           // Offset 1: Opcode (BleConfigOpcode)
@@ -258,6 +258,16 @@ struct BleConfigCommandPacket {
   uint8_t  payloadLength;    // Offset 4: Payload length (0..14)
   uint8_t  flags;            // Offset 5: Flags (Bit 0 = staged)
   uint8_t  payload[14];      // Offset 6-19: Command arguments
+};
+
+// Extended command packet for MTU-negotiated high-speed data transfers (up to 244 bytes)
+struct BleConfigExtCommandPacket {
+  uint8_t  version;          // Offset 0: Protocol version = 2
+  uint8_t  opcode;           // Offset 1: Opcode (BleConfigOpcode)
+  uint16_t sequence;         // Offset 2-3: Request sequence (little-endian)
+  uint8_t  payloadLength;    // Offset 4: Payload length (0..238)
+  uint8_t  flags;            // Offset 5: Flags
+  uint8_t  payload[238];     // Offset 6-243: Payload
 };
 
 // Binary Command Result Packet (UUID: ...d216, exactly 20 bytes)

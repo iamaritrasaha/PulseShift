@@ -66,3 +66,7 @@ inline esp_err_t esp_ota_get_state_partition(const esp_partition_t*, esp_ota_img
 inline esp_err_t esp_ota_mark_app_invalid_rollback_and_reboot() {
   return ESP_OK;
 }
+
+inline bool esp_ota_check_rollback_is_possible() {
+  return true;
+}
