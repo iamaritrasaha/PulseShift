@@ -37,6 +37,18 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 
 ---
 
+## Compatibility and firmware update policy
+
+**Android and firmware are separate releases.** The Android app may change its screens, presets, labels and layout without reflashing the ESP32 when it continues using the BLE commands and capabilities the installed firmware already supports. The ESP32 operates autonomously after boot, retaining its last successfully saved configuration in NVS. A new application feature that requires a new BLE opcode, effect renderer or firmware behavior still needs a compatible firmware release. See [docs/BLE-PROTOCOL.md](docs/BLE-PROTOCOL.md) for the existing protocol.
+
+**Current default lighting profile:** six LED activation thresholds at **1000, 2000, 3000, 4000, 5000, 6000 RPM**, with the **warning at 6500 RPM**. Those thresholds do **not** cap live RPM telemetry. Effect 5 is a provisional live CAN preview; effect 4 requires verified calibration. Existing devices retain saved NVS settings after firmware updates, so new compiled defaults do not automatically replace a previously saved profile. Shipped Android presets may default to 100% brightness (255/255); this does not silently overwrite existing device brightness.
+
+**Firmware OTA updates are not yet implemented or hardware-validated.** Having an OTA-capable partition layout is not, by itself, a functioning update mechanism. A future release must independently verify installed flash partitions, available image-slot size, power-loss safety, image authenticity, secure authorization, rollback support, and preservation of LittleFS captures and NVS credentials before enabling any update transport. Never assume that an app update can replace firmware. Do not change the partition table or erase flash while valued recordings are present; export and verify them first. Firmware updates and bench tests must be performed with the motorcycle parked and stable power supplied.
+
+> **Release gate:** A firmware build is not field-proven merely because CI passes. Real ESP32 + Android BLE authentication, configuration application, NVS persistence across power cycles, CAN receive-only operation, LED output and recovery behavior still require physical verification before declaring the firmware stable for long-term deployment.
+
+---
+
 ## 1. Project Status
 
 | Capability | Status |
@@ -46,8 +58,8 @@ PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Ar
 | CAN recording to internal flash | ✅ Verified - 22,542 records, 0 corrupt |
 | CAN export via Serial Monitor | ✅ Demonstrated - paginated DUMP workflow |
 | CAN capture export over BLE (bounded pages) | ✅ Implemented - host-tested dispatcher, bench BLE validation pending |
-| BLE monitoring and streaming (protocol v1) | ✅ Implemented and software-tested - bench BLE only, not vehicle-validated |
-| BLE configuration and command protocol v2 (2.2.0) | ✅ Implemented and software-tested - bench BLE only, not vehicle-validated |
+| BLE monitoring and streaming (protocol v1) | ✅ Implemented and software-tested; live Android RPM observations reported on the motorcycle |
+| BLE configuration and command protocol v2 (2.2.0) | ✅ Implemented and software-tested; complete real-device mutation, save and reconnect validation still required |
 | BLE owner enrollment and challenge-response security | ✅ Implemented and software-tested - physical BOOT window required |
 | Device commands (restart, reload, clear diagnostics, recording toggle) | ✅ Implemented and host-tested |
 | Firmware-driven calibration workflow | ✅ Implemented and host-tested - vehicle validation pending |
@@ -336,9 +348,8 @@ If the Serial Monitor is blank, check that the baud rate is set to 115200 and th
 On a fresh configuration, firmware starts in **effect 5: provisional RPM preview**.
 The ESP32 directly decodes motorcycle CAN ID `0x301`, byte 0, with the
 unverified formula `RPM ~= raw * 40.0`, and renders the six saved thresholds
-(default 3000, 4000, 5000, 6000, 7000, 8000 RPM; warning at 8500).
-At estimated idle 1400-1600 RPM, **zero RPM LEDs** are expected. As the
-raw value increases, the bar advances. The independent calibrated RPM mode
+(default 1000, 2000, 3000, 4000, 5000, 6000 RPM; warning at 6500).
+At a fresh estimated 1400-1600 RPM, the first RPM LED should be active with the default thresholds. As the raw value increases, the bar advances. This is a provisional display, not a verified tachometer. The independent calibrated RPM mode
 (effect 4) still needs reference measurement and an explicit calibration record.
 
 Neither Android nor USB is needed at runtime once firmware is flashed and
@@ -402,7 +413,8 @@ Try different values to see the full LED progression:
 | `RPM TEST 1000` | 1 | Green |
 | `RPM TEST 3000` | 1-3 | Green |
 | `RPM TEST 5000` | 1-5 | Green through orange |
-| `RPM TEST 6000` | All 6 | Flashing red shift alert |
+| `RPM TEST 6000` | All 6 | All six threshold LEDs active (warning begins at 6500) |
+| `RPM TEST 6500` | All 6 / warning overlay | Flashing red warning with default warning pattern |
 
 > [!NOTE]
 > `RPM TEST` only controls the LEDs - it does not inject fake CAN frames or affect the recording. CAN recording continues normally in the background. The notice indicates that the **verified RPM mode** remains gated; the separate provisional CAN preview is allowed to show a live unverified estimate.
