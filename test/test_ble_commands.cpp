@@ -448,18 +448,20 @@ static void v1_page_fetches_require_authorization() {
   cm.closeAuthWindow();
 
   // Unauthenticated page fetches must NOT start a page (vehicle telemetry).
+  // Connection 42 never enrolled or authenticated in any test; conn 99 owns
+  // a live session from enroll_then_session_is_connection_bound.
   CHECK(!ble.testHistPageActive());
-  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_LOG_PAGE, 0, 99);
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_LOG_PAGE, 0, 42);
   ble.testDrainCtrlCommands(101000);
   CHECK(!ble.testHistPageActive());
 
   CHECK(!ble.testCapturePageActive());
-  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 99);
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 42);
   ble.testDrainCtrlCommands(101100);
   CHECK(!ble.testCapturePageActive());
 
   // Cancels stay unauthenticated and must not open a page either.
-  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_CANCEL_LOGS, 0, 99);
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_CANCEL_LOGS, 0, 42);
   ble.testDrainCtrlCommands(101200);
   CHECK(!ble.testHistPageActive());
 
