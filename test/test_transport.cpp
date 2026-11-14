@@ -51,7 +51,7 @@ int main() {
     can.poll(1600);CHECK(!can.healthy() && starts==beforeStarts);  // backoff not elapsed (590 ms)
     can.poll(2100);CHECK(can.healthy());                           // attempt 1: recovery + start
     CHECK(!can.receive(frame,2150));
-    available=true;next.identifier=0x456;next.data_length_code=1;next.data[0]=0x7F;
+    available=true;next.identifier=0x456;next.data_length_code=1;next.data[0]=0x7F;next.rtr=false;
     CHECK(can.receive(frame,2200));CHECK(frame.data[0]==0x7F);     // receiving again
     // A second bus-off also recovers: the attempt budget resets on success.
     alerts=TWAI_ALERT_BUS_OFF;can.poll(2300);CHECK(!can.healthy());
