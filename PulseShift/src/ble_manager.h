@@ -24,10 +24,23 @@ class BleManager {
   static BleManager& instance();
 
   bool begin();
+  // rpmLightsRendering: true when the LED engine's previous frame was actually
+  // driven by live RPM data (verified bar, provisional preview or the RPM
+  // warning overlay) — never by a decorative effect or the synthetic bench
+  // test. Consumed for the SHIFT_LIGHTS_ENABLED telemetry flag so the phone
+  // sees what the strip is really doing.
   void poll(uint32_t nowMs,
             RpmCandidateMonitor& candidate,
             const CanTransport& transport,
-            const CanRecorder& recorder);
+            const CanRecorder& recorder,
+            bool rpmLightsRendering = false);
+
+  // Pure flag computation shared by the notification path and host tests.
+  static uint8_t computeRpmStatusFlags(const RpmCandidateMonitor& candidate,
+                                       const CanTransport& transport,
+                                       const CanRecorder& recorder,
+                                       uint32_t nowMs,
+                                       bool rpmLightsRendering);
 
   bool isClientConnected() const;
   bool isRpmSubscribed() const;
@@ -54,6 +67,7 @@ class BleManager {
 
   // Enqueue a live diagnostic log event to be broadcast over BLE (if subscribed)
   void queueLiveLog(const char* text);
+  void queueLiveLog(const char* text, uint8_t logFlags); // e.g. BLE_LOG_FLAG_ERROR
 
   // Status diagnostics
   uint32_t notifyCount() const { return notifyCount_; }
@@ -74,6 +88,10 @@ class BleManager {
   // callback fills, drain them through the real dispatcher, and read back the
   // result packets captured by the host (non-NimBLE) sendResult path.
   void testEnqueueCommand(const BleConfigCommandPacket& pkt, uint16_t connId);
+  // Inject a v1 control request (log/capture page fetch or cancel) the same
+  // way the NimBLE write callback would, then run the real drain loop.
+  void testEnqueueCtrlCommand(uint8_t opcode, uint32_t offset, uint16_t connId);
+  void testDrainCtrlCommands(uint32_t nowMs) { drainControlQueue(nowMs); }
   void testDrainCommands(uint32_t nowMs, RpmCandidateMonitor& candidate,
                          const CanTransport& transport, const CanRecorder& recorder) {
     while (configQueueTail_.load(std::memory_order_acquire) != configQueueHead_.load(std::memory_order_acquire)) {
@@ -84,6 +102,10 @@ class BleManager {
   const BleConfigResultPacket& testResult(size_t index) const { return testResults_[index]; }
   size_t testPendingSnapshotLen() const { return snapshotLen_; }
   const uint8_t* testPendingSnapshotData() const { return snapshotBuf_; }
+  bool testHistPageActive() const { return histPageActive_; }
+  bool testCapturePageActive() const { return capturePageActive_; }
+  size_t testLiveLogCount() const { return liveLogCount_; }
+  const char* testLiveLogText(uint8_t index) const { return liveLogRing_[(liveLogTail_ + index) % LIVE_LOG_CAPACITY]; }
 #endif
 
  private:
@@ -93,12 +115,14 @@ class BleManager {
   void sendRpmNotification(uint32_t nowMs,
                            const RpmCandidateMonitor& candidate,
                            const CanTransport& transport,
-                           const CanRecorder& recorder);
+                           const CanRecorder& recorder,
+                           bool rpmLightsRendering);
 
   void sendHealthNotification(const CanTransport& transport,
                               const CanRecorder& recorder);
 
   void processLogQueue();
+  void drainControlQueue(uint32_t nowMs);
   void processHistoricalPageRead();
   void processCapturePage();
   void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate,
@@ -137,6 +161,7 @@ class BleManager {
   static constexpr size_t LIVE_LOG_CAPACITY = 16;
   static constexpr size_t LIVE_LOG_MAX_LEN = 128;
   char liveLogRing_[LIVE_LOG_CAPACITY][LIVE_LOG_MAX_LEN]{};
+  uint8_t liveLogFlags_[LIVE_LOG_CAPACITY]{}; // BleLogFlags per queued message
   uint8_t liveLogHead_ = 0;
   uint8_t liveLogTail_ = 0;
   uint8_t liveLogCount_ = 0;
@@ -163,6 +188,7 @@ class BleManager {
   struct PendingCtrlCmd {
     uint8_t opcode = 0;
     uint32_t offset = 0;
+    uint16_t connId = 0; // authorizing connection for data-bearing page fetches
   };
   static constexpr size_t CTRL_QUEUE_CAPACITY = 4;
   PendingCtrlCmd ctrlQueue_[CTRL_QUEUE_CAPACITY]{};
@@ -177,8 +203,8 @@ class BleManager {
   bool histFinished_ = false;
   bool histCancelRequested_ = false;
 
-  // Configuration V2 Command Queue (bounded SPSC ring; overflow drops the
-  // oldest unprocessed command and is counted for diagnostics).
+  // Configuration V2 Command Queue (bounded SPSC ring; when full the incoming
+  // command is dropped and counted for diagnostics).
   struct PendingConfigCmd {
     BleConfigCommandPacket packet{};
     uint16_t connId = 0;

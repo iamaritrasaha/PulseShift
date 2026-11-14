@@ -164,8 +164,30 @@ public:
     CanRecorder::instance().pump(now);
     DiagLogger::instance().pump(now);
 
-    // 5b. Service BLE GATT notifications, command queue and page streaming
-    BleManager::instance().poll(now, candidateMonitor_, transport_, CanRecorder::instance());
+    // 6. Refresh the unified LED controller from the authoritative RPM snapshot
+    //    BEFORE BLE telemetry so the SHIFT_LIGHTS_ENABLED flag reports the
+    //    frame the strip is actually showing this tick.
+    logger_.pump();
+    const auto rpmSnap = candidateMonitor_.snapshot(now);
+    ledController_.update(rpmSnap, now, transport_.healthy());
+
+    // Handle shift-light bench test timeout (rollover-safe)
+    if (ledController_.isTestRpmActive() && uint32_t(now - rpmTestStartMs_) >= 10000) {
+      ledController_.setTestRpm(0, false);
+    }
+
+    // 5b. Service BLE GATT notifications, command queue and page streaming.
+    //     RPM-driven rendering truth comes from the LED engine's current
+    //     layer: the verified bar, the unverified provisional preview or the
+    //     RPM warning overlay — never decorative effects or the synthetic
+    //     bench test.
+    const LedActiveLayer ledLayer = ledController_.ledEffects().activeLayer();
+    const bool rpmLightsRendering =
+        ledLayer == LedActiveLayer::RpmBar ||
+        ledLayer == LedActiveLayer::ProvisionalRpm ||
+        ledLayer == LedActiveLayer::Warning;
+    BleManager::instance().poll(now, candidateMonitor_, transport_, CanRecorder::instance(),
+                                rpmLightsRendering);
 
     // A terminal-style Android app can request the same 10-second LED bench
     // test as Serial, but only through an authenticated BLE v2 command.
@@ -174,16 +196,6 @@ public:
     if (BleManager::instance().takeBenchTestRequest(requestedTestRpm, requestedTestActive)) {
       ledController_.setTestRpm(requestedTestRpm, requestedTestActive);
       rpmTestStartMs_ = now;
-    }
-
-    // 6. Refresh the unified LED controller from the authoritative RPM snapshot
-    logger_.pump();
-    const auto rpmSnap = candidateMonitor_.snapshot(now);
-    ledController_.update(rpmSnap, now, transport_.healthy());
-
-    // Handle shift-light bench test timeout (rollover-safe)
-    if (ledController_.isTestRpmActive() && uint32_t(now - rpmTestStartMs_) >= 10000) {
-      ledController_.setTestRpm(0, false);
     }
 
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -532,7 +544,7 @@ private:
     Serial.println("  RPM TEST OFF    : Turn off shift-light bench test");
     Serial.println("  DUMP            : Export recorded CAN frames in 500-record pages");
     Serial.println("  DUMP NEXT       : Export next 500-record page");
-    Serial.println("  DUMP ALL        : Export all records continuously without pagination");
+    Serial.println("  DUMP ALL        : Stream all records in bounded chunks ('DUMP CANCEL' aborts)");
     Serial.println("  DUMP STATUS     : Show current export progress and page count");
     Serial.println("  DUMP CANCEL     : Reset export cursor to page 1");
     Serial.println("  DUMP PAGE <n>   : Export specific page number n");
