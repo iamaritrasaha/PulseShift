@@ -679,7 +679,7 @@ void BleManager::sendRpmNotification(uint32_t nowMs,
   ++notifyCount_;
   ++rpmNotifyCount_;
 #else
-  (void)nowMs; (void)candidate; (void)transport; (void)recorder;
+  (void)nowMs; (void)candidate; (void)transport; (void)recorder; (void)rpmLightsRendering;
 #endif
 }
 
