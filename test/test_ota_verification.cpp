@@ -143,7 +143,6 @@ int main() {
 
     // Stream image in 128-byte chunks (efficient MTU)
     constexpr size_t CHUNK_SIZE = 128;
-    const size_t totalChunks = (img.size() + CHUNK_SIZE - 1) / CHUNK_SIZE;
     uint16_t chunkIdx = 0;
     for (size_t offset = 0; offset < img.size(); offset += CHUNK_SIZE) {
       const size_t len = (offset + CHUNK_SIZE <= img.size()) ? CHUNK_SIZE : (img.size() - offset);
