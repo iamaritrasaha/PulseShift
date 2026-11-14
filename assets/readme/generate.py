@@ -125,7 +125,11 @@ class Svg:
 
     def save(self):
         content = '\n'.join(self.parts + ['</svg>']) + '\n'
-        # Validate XML structure
+        # Validate XML structure. Entity expansion (billion-laughs style) is
+        # rejected up front: generated diagrams must not declare DOCTYPE or
+        # ENTITY constructs at all.
+        if '<!DOCTYPE' in content or '<!ENTITY' in content:
+            raise ValueError(f"{self.name}: DOCTYPE/ENTITY declarations are not allowed")
         ET.fromstring(content)
         # Verify no em-dash or en-dash characters are present
         assert '\u2014' not in content, f"Em-dash detected in {self.name}"
