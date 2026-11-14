@@ -443,6 +443,10 @@ static void v1_page_fetches_require_authorization() {
   RpmCandidateMonitor cand;
   auto& cm = ConfigManager::instance();
 
+  // Earlier tests open auth windows; guarantee a closed window so the
+  // unauthorized-fetch checks actually exercise the session-bound path.
+  cm.closeAuthWindow();
+
   // Unauthenticated page fetches must NOT start a page (vehicle telemetry).
   CHECK(!ble.testHistPageActive());
   ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_LOG_PAGE, 0, 99);
