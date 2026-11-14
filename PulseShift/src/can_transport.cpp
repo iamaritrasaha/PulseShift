@@ -82,7 +82,9 @@ void CanTransport::fault(const char* reason) {
 #endif
     (void)err;
   }
-  running_ = false; // Manual reboot required. No automatic recovery loop.
+  // Manual reboot remains the fallback for non-bus-off faults (init/wiring
+  // problems are unlikely to clear on their own). Bus-off recovers below.
+  running_ = false;
 
   DiagLogger::instance().logCanHalted(reason);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -90,6 +92,61 @@ void CanTransport::fault(const char* reason) {
   else Serial.printf("CAN HALTED: %s\r\n", reason);
   diagnostics();
 #endif
+}
+
+// ESP-IDF bus-off protocol: initiate recovery, the controller leaves BUS_OFF
+// after transmitting 128 recessive bits (sub-millisecond at 500 kbps), then
+// twai_start() re-enters the bus. Listen-only mode plus the physical TX
+// air-gap make this harmless to the vehicle.
+bool CanTransport::attemptBusOffRecovery(uint32_t now) {
+  if (!busOffRecoveryPending_ || !beginAttempted_) return false;
+
+  // Exponential backoff: 1 s, 2 s, 4 s, 8 s, 16 s. After
+  // MAX_BUSOFF_RECOVERY_ATTEMPTS failed cycles the fault is latched again and
+  // only a manual reboot (or a fresh bus-off event) retried.
+  const uint32_t backoff =
+      1000u << (busOffRecoveryAttempts_ < 4 ? busOffRecoveryAttempts_ : 4);
+  if (uint32_t(now - lastRecoveryAttemptMs_) < backoff) return false;
+  lastRecoveryAttemptMs_ = now;
+
+  const uint32_t attemptNo = static_cast<uint32_t>(busOffRecoveryAttempts_) + 1;
+
+  // While the controller is still leaving bus-off, kick recovery each cycle
+  // and wait; once it reports a startable state, try to re-enter the bus.
+  twai_status_info_t status{};
+  const bool statusOk = (twai_get_status_info(&status) == ESP_OK);
+  const bool inBusOff = statusOk &&
+                        (status.state == TWAI_STATE_BUS_OFF ||
+                         status.state == TWAI_STATE_RECOVERING);
+  if (inBusOff) {
+    (void)twai_initiate_recovery(); // best effort; progress is re-checked next cycle
+  } else {
+    const auto err = twai_start();
+    if (err == ESP_OK) {
+      running_ = true;
+      busOffRecoveryPending_ = false;
+      busOffRecoveryAttempts_ = 0;
+      DiagLogger::instance().logEvent(DiagLevel::Info, "CAN_BUSOFF_RECOVERED",
+                                      "Controller restarted after bus-off (listen-only).");
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+      if (log_) log_->status("CAN RECOVERED: bus-off auto-restart OK");
+      else Serial.println("CAN RECOVERED: bus-off auto-restart OK");
+#endif
+      return true;
+    }
+    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_BUSOFF_RECOVERY",
+                                    "restart failed: %s (attempt %u/%u)",
+                                    esp_err_to_name(err), (unsigned long)attemptNo,
+                                    static_cast<unsigned>(MAX_BUSOFF_RECOVERY_ATTEMPTS));
+  }
+
+  if (++busOffRecoveryAttempts_ >= MAX_BUSOFF_RECOVERY_ATTEMPTS) {
+    busOffRecoveryPending_ = false;
+    DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_BUSOFF_RECOVERY_GAVE_UP",
+                                    "Recovery abandoned after %u attempts; manual reboot required.",
+                                    static_cast<unsigned>(busOffRecoveryAttempts_));
+  }
+  return false;
 }
 
 void CanTransport::diagnostics() const {
@@ -123,15 +180,21 @@ void CanTransport::diagnostics() const {
 }
 
 void CanTransport::poll(uint32_t now) {
-  if (!running_) return;
+  if (!running_) {
+    attemptBusOffRecovery(now);
+    return;
+  }
 
   uint32_t alerts = 0;
   auto err = twai_read_alerts(&alerts, 0);
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) { fault("alert read failed"); return; }
   alertsSeen_ |= alerts;
 
-  // Fatal hardware bus-off state
+  // Fatal hardware bus-off state - but recoverable: schedule bounded
+  // auto-recovery instead of requiring a manual power cycle.
   if (alerts & TWAI_ALERT_BUS_OFF) {
+    busOffRecoveryPending_ = true;
+    lastRecoveryAttemptMs_ = now; // first attempt one backoff period from now
     fault("bus-off detected");
     return;
   }

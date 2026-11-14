@@ -26,6 +26,7 @@ int twai_stop() { return ESP_OK; }
 int twai_read_alerts(uint32_t* alerts, uint32_t) { *alerts = 0; return ESP_OK; }
 int twai_get_status_info(twai_status_info_t* s) { s->state = TWAI_STATE_RUNNING; return ESP_OK; }
 int twai_receive(twai_message_t*, uint32_t) { return ESP_ERR_TIMEOUT; }
+int twai_initiate_recovery() { return ESP_OK; }
 
 #define CHECK(x) do {++checks;if(!(x)){std::fprintf(stderr,"BLE CMD FAIL %d: %s\n",__LINE__,#x);std::exit(1);}}while(0)
 static unsigned checks=0;
@@ -421,6 +422,100 @@ static void malformed_and_duplicate_commands() {
   CHECK(ble.testResultCount() >= 4); // at most CONFIG_QUEUE_CAPACITY commands processed
 }
 
+static void payload_length_over_14_is_rejected() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  auto& cm = ConfigManager::instance();
+
+  // A declared payload length beyond the 14-byte command payload array is
+  // malformed regardless of authorization state; reject with INVALID_PARAM.
+  auto bad = makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {77}, 130);
+  bad.payloadLength = 15;
+  ble.testEnqueueCommand(bad, 5);
+  drain(ble, cand, 100000);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  CHECK(lastResult(ble).respondedOpcode == BLE_CFG_OP_SET_BRIGHTNESS);
+  CHECK(cm.active().brightness != 77);
+}
+
+static void v1_page_fetches_require_authorization() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  auto& cm = ConfigManager::instance();
+
+  // Earlier tests open auth windows; guarantee a closed window so the
+  // unauthorized-fetch checks actually exercise the session-bound path.
+  cm.closeAuthWindow();
+
+  // Unauthenticated page fetches must NOT start a page (vehicle telemetry).
+  // Connection 42 never enrolled or authenticated in any test; conn 99 owns
+  // a live session from enroll_then_session_is_connection_bound.
+  CHECK(!ble.testHistPageActive());
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_LOG_PAGE, 0, 42);
+  ble.testDrainCtrlCommands(101000);
+  CHECK(!ble.testHistPageActive());
+
+  CHECK(!ble.testCapturePageActive());
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 42);
+  ble.testDrainCtrlCommands(101100);
+  CHECK(!ble.testCapturePageActive());
+
+  // Cancels stay unauthenticated and must not open a page either.
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_CANCEL_LOGS, 0, 42);
+  ble.testDrainCtrlCommands(101200);
+  CHECK(!ble.testHistPageActive());
+
+  // After owner enrollment binds a session to the connection, page fetches
+  // from THAT connection start the page stream.
+  cm.triggerAuthWindow(101300);
+  std::vector<uint8_t> secret = {9,8,7,6,5,4,3,2,1,0,1,2};
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_ENROLL_OWNER, secret, 131), 7);
+  drain(ble, cand, 101400);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_LOG_PAGE, 0, 7);
+  ble.testDrainCtrlCommands(101500);
+  CHECK(ble.testHistPageActive());
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_CANCEL_LOGS, 0, 7);
+  ble.testDrainCtrlCommands(101600);
+  CHECK(!ble.testHistPageActive());
+}
+
+static void disconnect_flushes_queued_commands() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  auto& cm = ConfigManager::instance();
+
+  // Queue two unauthorized writes WITHOUT draining, then disconnect. The
+  // departed connection's commands must be discarded, not executed later
+  // under a reused connection handle.
+  const size_t resultsBefore = ble.testResultCount();
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {11}, 140), 5);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {12}, 141), 5);
+  ble.onClientDisconnected();
+  drain(ble, cand, 102000);
+  CHECK(ble.testResultCount() == resultsBefore);
+  CHECK(cm.active().brightness != 11 && cm.active().brightness != 12);
+}
+
+static void rpm_status_flags_reflect_rendering() {
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000); // unconfigured => not healthy
+  CanRecorder& recorder = CanRecorder::instance();
+
+  const uint8_t base = BleManager::computeRpmStatusFlags(cand, transport, recorder, 5000, false);
+  CHECK(base & BLE_RPM_FLAG_RPM_MAPPED);      // unified decoder is the production mapping
+  CHECK(!(base & BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED));
+  CHECK(!(base & BLE_RPM_FLAG_CAN_HEALTHY));
+  CHECK(!(base & BLE_RPM_FLAG_CANDIDATE_FRESH));
+
+  const uint8_t rendering =
+      BleManager::computeRpmStatusFlags(cand, transport, recorder, 5000, true);
+  CHECK(rendering & BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED);
+  CHECK((rendering & ~BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED) == (base & ~BLE_RPM_FLAG_SHIFT_LIGHTS_ENABLED));
+}
+
 int main() {
   read_queries_do_not_need_authorization();
   writes_require_authorization();
@@ -432,6 +527,10 @@ int main() {
   diagnostics_blob_shape();
   reload_and_decoder_ext();
   malformed_and_duplicate_commands();
+  payload_length_over_14_is_rejected();
+  v1_page_fetches_require_authorization();
+  disconnect_flushes_queued_commands();
+  rpm_status_flags_reflect_rendering();
   std::printf("PASS BLE v2 command dispatch, auth binding, calibration, device ops: %u checks\n", checks);
   return 0;
 }

@@ -259,6 +259,32 @@ void test_extended_can_id_support() {
   pass("extended 29-bit CAN ID candidate frame support");
 }
 
+void test_stale_dropout_counting() {
+  RpmCandidateMonitor mon;
+  CanFrame f = make301Frame(37);
+
+  CHECK(mon.ingest(f, 1000));
+  auto snap = mon.snapshot(1100);
+  CHECK(snap.staleTransitions == 0); // continuous fresh signal
+
+  // A frame arriving after the freshness window expired marks one dropout.
+  CHECK(mon.ingest(f, 1500));
+  snap = mon.snapshot(1510);
+  CHECK(snap.staleTransitions == 1);
+
+  // Rapid frames add no further dropouts.
+  CHECK(mon.ingest(f, 1520));
+  CHECK(mon.ingest(f, 1540));
+  snap = mon.snapshot(1550);
+  CHECK(snap.staleTransitions == 1);
+
+  // A second gap counts again.
+  CHECK(mon.ingest(f, 3000));
+  snap = mon.snapshot(3010);
+  CHECK(snap.staleTransitions == 2);
+  pass("staleTransitions counts real signal dropouts");
+}
+
 } // namespace
 
 int main() {
@@ -271,6 +297,7 @@ int main() {
   test_bounds_and_nan_safety();
   test_extended_can_id_support();
   test_status_and_stream_formatting();
+  test_stale_dropout_counting();
 
   std::printf("ALL PASS: %u cases, %u assertions\n", cases, assertions);
   return 0;

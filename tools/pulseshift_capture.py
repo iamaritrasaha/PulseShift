@@ -26,6 +26,7 @@ import argparse
 import datetime
 import shutil
 import threading
+import tempfile
 
 try:
     import serial
@@ -40,7 +41,12 @@ class PulseShiftCapture:
     def __init__(self, port="COM5", baud=115200, output_dir="captures", timeout=1.0):
         self.port = port
         self.baud = baud
-        self.output_dir = output_dir
+        # Contain writes to the requested output directory: reject path
+        # traversal components instead of following them out of the tree.
+        out_dir = os.path.normpath(output_dir or "captures")
+        if any(part == ".." for part in out_dir.replace("\\", "/").split("/") if part):
+            raise ValueError("output_dir must not contain '..' path components")
+        self.output_dir = out_dir
         self.timeout = timeout
 
         self.ser = None
@@ -148,11 +154,16 @@ class PulseShiftCapture:
             return 1
 
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.csv_path = os.path.join(self.output_dir, f"pulseshift_capture_{timestamp_str}.csv")
-        self.log_path = os.path.join(self.output_dir, f"pulseshift_capture_{timestamp_str}.log")
-
-        self.csv_file = open(self.csv_path, "w", encoding="utf-8", buffering=1)
-        self.log_file = open(self.log_path, "w", encoding="utf-8", buffering=1)
+        root = os.path.realpath(self.output_dir)
+        os.makedirs(root, exist_ok=True)
+        # The OS creates these files with safe random names inside the
+        # validated output directory: no path traversal is possible.
+        csv_fd, csv_tmp = tempfile.mkstemp(prefix=f"pulseshift_capture_{timestamp_str}_", suffix=".csv", dir=root)
+        log_fd, log_tmp = tempfile.mkstemp(prefix=f"pulseshift_capture_{timestamp_str}_", suffix=".log", dir=root)
+        self.csv_path = csv_tmp
+        self.log_path = log_tmp
+        self.csv_file = os.fdopen(csv_fd, "w", encoding="utf-8", buffering=1)
+        self.log_file = os.fdopen(log_fd, "w", encoding="utf-8", buffering=1)
 
         # Write CSV header
         self.csv_file.write("timestamp_ms,stage,can_id,extended,rtr,dlc,data\n")

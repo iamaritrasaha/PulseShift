@@ -1,0 +1,66 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      ESP32_FQBN: esp32:esp32:esp32
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.1.1
+
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls "$ESP32_INDEX_URL"
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+          arduino-cli lib update-index
+          arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
+          arduino-cli lib install --no-deps "NimBLE-Arduino@2.3.8"
+
+      - name: Compile and verify sketch
+        run: |
+          arduino-cli compile \
+            --fqbn "$ESP32_FQBN" \
+            --build-path "$RUNNER_TEMP/build-release" \
+            PulseShift
+
+      - name: Package Arduino sketch ZIP
+        run: |
+          TAG="${{ github.ref_name }}"
+          ZIP="PulseShift-Arduino-$TAG.zip"
+          zip -r "$RUNNER_TEMP/$ZIP" PulseShift/
+          sha256sum "$RUNNER_TEMP/$ZIP" > "$RUNNER_TEMP/$ZIP.sha256"
+          echo "ZIP=$RUNNER_TEMP/$ZIP" >> "$GITHUB_ENV"
+          echo "SHA=$RUNNER_TEMP/$ZIP.sha256" >> "$GITHUB_ENV"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ZIP }}
+            ${{ env.SHA }}
+          draft: true
+          generate_release_notes: true

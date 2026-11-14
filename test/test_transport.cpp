@@ -13,7 +13,7 @@ twai_status_info_t status;
 twai_message_t next;
 bool available=false;
 uint32_t alerts=0;
-int installResult=ESP_OK,rxResult=ESP_OK,alertResult=ESP_OK;
+int installResult=ESP_OK,rxResult=ESP_OK,alertResult=ESP_OK,initiateResult=ESP_OK,startResult=ESP_OK;
 int gpio_reset_pin(gpio_num_t p){CHECK(p==17);routing.push_back(1);return ESP_OK;}
 int gpio_set_direction(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_MODE_INPUT);routing.push_back(2);return ESP_OK;}
 int gpio_set_pull_mode(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_PULLUP_ONLY);routing.push_back(3);return ESP_OK;}
@@ -23,12 +23,13 @@ int twai_driver_install(const twai_general_config_t* g,const twai_timing_config_
   CHECK(!(g->alerts_enabled & (TWAI_ALERT_TX_SUCCESS|TWAI_ALERT_TX_FAILED|TWAI_ALERT_TX_IDLE)));
   return installResult;
 }
-int twai_start(){CHECK(routing==std::vector<int>({1,2,3}));++starts;status.state=TWAI_STATE_RUNNING;return ESP_OK;}
+int twai_start(){CHECK(routing==std::vector<int>({1,2,3}));++starts;status.state=startResult==ESP_OK?TWAI_STATE_RUNNING:TWAI_STATE_STOPPED;return startResult;}
 int twai_stop(){++stops;status.state=TWAI_STATE_STOPPED;return ESP_OK;}
+int twai_initiate_recovery(){status.state=TWAI_STATE_STOPPED;return initiateResult;}
 int twai_read_alerts(uint32_t* a,uint32_t timeout){CHECK(timeout==0);*a=alerts;alerts=0;return alertResult;}
 int twai_get_status_info(twai_status_info_t* s){*s=status;return ESP_OK;}
 int twai_receive(twai_message_t* f,uint32_t timeout){CHECK(timeout==0);if(rxResult!=ESP_OK)return rxResult;if(!available)return ESP_ERR_TIMEOUT;*f=next;available=false;return ESP_OK;}
-void reset() { routing.clear();status={};next={};available=false;alerts=0;installResult=rxResult=alertResult=ESP_OK;Serial.output.clear();Serial.capacity=0; }
+void reset() { routing.clear();status={};next={};available=false;alerts=0;installResult=rxResult=alertResult=initiateResult=startResult=ESP_OK;Serial.output.clear();Serial.capacity=0; }
 int main() {
   reset();FrameLog disabledLog;CanTransport disabled(0,&disabledLog);
   CHECK(!disabled.configured() && !disabled.begin());CHECK(installs==0);
@@ -44,9 +45,30 @@ int main() {
     alerts=TWAI_ALERT_RX_QUEUE_FULL;can.poll(1005);CHECK(can.healthy()); // Non-fatal RX overflow continues receiving
     alerts=TWAI_ALERT_RX_FIFO_OVERRUN;can.poll(1008);CHECK(can.healthy()); // Non-fatal FIFO overrun continues receiving
     const auto before=stops;alerts=TWAI_ALERT_BUS_OFF;can.poll(1010);CHECK(!can.healthy() && stops==before+1);
-    for(unsigned i=0;i<1000;++i) { can.poll(2000+i); }
-    CHECK(stops==before+1);
-    CHECK(!can.receive(frame,3000));CHECK(!can.begin() && stops==before+1);
+    // Bounded bus-off auto-recovery (listen-only re-entry is safe):
+    CHECK(!can.receive(frame,1500));                               // still dead before backoff
+    const auto beforeStarts=starts;
+    can.poll(1600);CHECK(!can.healthy() && starts==beforeStarts);  // backoff not elapsed (590 ms)
+    can.poll(2100);CHECK(can.healthy());                           // attempt 1: recovery + start
+    CHECK(!can.receive(frame,2150));
+    available=true;next.identifier=0x456;next.data_length_code=1;next.data[0]=0x7F;next.rtr=false;
+    CHECK(can.receive(frame,2200));CHECK(frame.data[0]==0x7F);     // receiving again
+    // A second bus-off also recovers: the attempt budget resets on success.
+    alerts=TWAI_ALERT_BUS_OFF;can.poll(2300);CHECK(!can.healthy());
+    can.poll(3400);CHECK(can.healthy());                           // 1 s backoff after reset
+    // Persistent start failure exhausts the bounded budget: backoff doubles
+    // from the last attempt (1 s, 2 s, 4 s, 8 s, 16 s), then gives up.
+    alerts=TWAI_ALERT_BUS_OFF;can.poll(3500);CHECK(!can.healthy());
+    startResult=ESP_FAIL;
+    can.poll(4600);CHECK(!can.healthy());                          // attempt 1 fails
+    can.poll(5000);CHECK(!can.healthy());                          // still within 2 s backoff
+    can.poll(9500);CHECK(!can.healthy());                          // attempt 2 fails
+    can.poll(17500);CHECK(!can.healthy());                         // attempt 3 fails
+    can.poll(29500);CHECK(!can.healthy());                         // attempt 4 fails
+    can.poll(45500);CHECK(!can.healthy());                         // attempt 5 fails => abandoned
+    const auto afterGiveUp=starts;
+    can.poll(60000);CHECK(!can.healthy() && starts==afterGiveUp);  // no further attempts
+    CHECK(!can.receive(frame,60500));CHECK(!can.begin() && stops==before+3);
     // No UART space: polling/status must return and record loss rather than write.
     Serial.output.clear();can.diagnostics();CHECK(Serial.output.empty());
     Serial.capacity=4096;for(unsigned i=0;i<64;++i)log.pump();

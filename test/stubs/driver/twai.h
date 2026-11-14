@@ -7,7 +7,7 @@ using esp_err_t=int;
 constexpr int ESP_OK=0, ESP_ERR_TIMEOUT=263, ESP_FAIL=-1;
 inline const char* esp_err_to_name(int e) { return e==ESP_OK?"ESP_OK":e==ESP_ERR_TIMEOUT?"ESP_ERR_TIMEOUT":"ESP_FAIL"; }
 enum twai_mode_t { TWAI_MODE_NORMAL, TWAI_MODE_NO_ACK, TWAI_MODE_LISTEN_ONLY };
-enum twai_state_t { TWAI_STATE_STOPPED, TWAI_STATE_RUNNING, TWAI_STATE_BUS_OFF };
+enum twai_state_t { TWAI_STATE_STOPPED, TWAI_STATE_RUNNING, TWAI_STATE_BUS_OFF, TWAI_STATE_RECOVERING };
 constexpr uint32_t TWAI_ALERT_BUS_ERROR=1, TWAI_ALERT_BUS_OFF=2, TWAI_ALERT_RX_QUEUE_FULL=4,
  TWAI_ALERT_RX_FIFO_OVERRUN=8, TWAI_ALERT_RX_DATA=16, TWAI_ALERT_TX_SUCCESS=32,
  TWAI_ALERT_TX_FAILED=64, TWAI_ALERT_TX_IDLE=128, TWAI_ALERT_ERR_PASS=256, TWAI_ALERT_ABOVE_ERR_WARN=512;
@@ -29,6 +29,7 @@ struct twai_status_info_t {
 int twai_driver_install(const twai_general_config_t*,const twai_timing_config_t*,const twai_filter_config_t*);
 int twai_start();
 int twai_stop();
+int twai_initiate_recovery();
 int twai_read_alerts(uint32_t*,uint32_t);
 int twai_get_status_info(twai_status_info_t*);
 int twai_receive(twai_message_t*,uint32_t);

@@ -213,8 +213,12 @@ enum BleFeatureMaskBits : uint32_t {
 };
 
 // BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires
-// the verification record to be BOUND to the current decoder fingerprint;
-// Bit 3 is only set when RPM-driven lighting is actually rendering.
+// the verification record to be BOUND to the current decoder fingerprint.
+// Bit 3 (SHIFT_LIGHTS_ENABLED) is set only while RPM-driven lighting is
+// actually rendering from LIVE CAN data: the verified bar (effect 4), the
+// unverified provisional preview (effect 5) or their warning overlay. It is
+// clear during decorative effects 0-3, safeguard blanks, the synthetic LED
+// bench test, and whenever RPM lighting is not qualifying.
 
 // Provisioning / Security Modes
 enum BleSecurityMode : uint8_t {
