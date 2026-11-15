@@ -610,7 +610,10 @@ static void ota_and_capabilities_discovery_tests() {
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_STATUS, {}, 206), 10);
   drain(ble, cand, 300007);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
+  CHECK(lastResult(ble).payloadLength == 8); // OTA_STATUS exposes bootloader state
   CHECK(lastResult(ble).payload[0] == static_cast<uint8_t>(OtaEngineState::Idle));
+  CHECK(lastResult(ble).payload[6] == 0xFF); // Unknown in host, real ESP-IDF queried on hardware
+  CHECK(lastResult(ble).payload[7] == 1); // Host has a rollback candidate
 
   // 8. Confirm rollback cancellation
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_CONFIRM, {0xA5, 0x5C}, 207), 10);
