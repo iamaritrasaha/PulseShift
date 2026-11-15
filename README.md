@@ -6,6 +6,12 @@
 
 **ESP32 motorcycle shift-light and CAN bus acquisition firmware.**
 
+**Connecting the hardware to a motorcycle?** Read the
+[15 November 2026 bike deployment and field-safety checklist](docs/BIKE-DEPLOYMENT-READINESS.md)
+before supplying vehicle power. This explains the read-only CAN connection, the
+preserved recording, the logger's non-destructive archive, and which physical
+tests are still unavailable without LEDs or the Android app.
+
 PulseShift turns an ESP32 DevKit V1 into a standalone passive CAN (Controller Area Network) diagnostic logger and progressive shift-light display for motorcycles. It boots directly into one production operating path - listen-only CAN monitoring, the unified RPM decoder, six-LED rendering and flash capture - streams live telemetry over BLE, and is fully configured from the Android app without ever transmitting a single bit onto the motorcycle's network. No PC, USB connection or internet is required after flashing.
 
 > [!IMPORTANT]
