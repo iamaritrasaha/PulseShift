@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "storage_manager.h"
+#include "diag_log_quota.h"
 
 enum class DiagLevel : uint8_t {
   Info = 0,
@@ -15,7 +16,7 @@ enum class DiagLevel : uint8_t {
 class DiagLogger {
  public:
   static constexpr const char* LOG_PATH = "/diag.log";
-  static constexpr size_t MAX_LOG_SIZE = 131072; // 128 KB max diagnostic log
+  static constexpr size_t MAX_LOG_SIZE = PULSESHIFT_MAX_DIAGNOSTIC_LOG_BYTES; // 128 KB max diagnostic log
   static constexpr size_t BUFFER_SIZE = 1024;    // 1 KB write buffer
 
   static DiagLogger& instance() {

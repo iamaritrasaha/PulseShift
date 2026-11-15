@@ -77,7 +77,16 @@ void DiagLogger::logEvent(DiagLevel level, const char* tag, const char* format, 
                          (unsigned long)millis(), (unsigned long)bootCount_,
                          (unsigned long)sessionId_, levelToName(level), tag, msg);
   if (n > 0) {
-    writeBuffered(line, size_t(n));
+    // snprintf returns the *would-have-written* length on truncation.
+    // Never read beyond line[] when a long diagnostic message is formatted.
+    size_t written = static_cast<size_t>(n);
+    if (written >= sizeof(line)) {
+      written = sizeof(line) - 1;
+      line[written - 2] = '\r';
+      line[written - 1] = '\n';
+      line[written] = '\0';
+    }
+    writeBuffered(line, written);
     BleManager::instance().queueLiveLog(line);
   }
 
@@ -133,13 +142,19 @@ void DiagLogger::writeBuffered(const char* str, size_t len) {
 
   // If single string exceeds buffer size, write directly
   if (len >= BUFFER_SIZE) {
-    if (StorageManager::instance().isMounted() && !StorageManager::instance().isStorageFull()) {
+    auto& sm = StorageManager::instance();
+    if (sm.isMounted() && !sm.isStorageFull() && !logFull_) {
       checkRotate();
-      File f = StorageManager::instance().open(LOG_PATH, "a");
-      if (f) {
-        f.write(reinterpret_cast<const uint8_t*>(str), len);
-        f.flush();
-        f.close();
+      const size_t stored = sm.exists(LOG_PATH) ? sm.size(LOG_PATH) : 0;
+      if (!logFull_ && diagnosticLogAppendFits(stored, len, MAX_LOG_SIZE)) {
+        File f = sm.open(LOG_PATH, "a");
+        if (f) {
+          f.write(reinterpret_cast<const uint8_t*>(str), len);
+          f.flush();
+          f.close();
+        }
+      } else {
+        logFull_ = true; // No partial write: preserve existing log.
       }
     }
     return;
@@ -185,6 +200,15 @@ void DiagLogger::flush() {
 
   checkRotate();
   if (logFull_) {
+    bufferPos_ = 0;
+    return;
+  }
+
+  const size_t stored = sm.exists(LOG_PATH) ? sm.size(LOG_PATH) : 0;
+  if (!diagnosticLogAppendFits(stored, bufferPos_, MAX_LOG_SIZE)) {
+    // The existing file may already exceed the old limit. Keep it intact,
+    // stop accepting new writes and never silently truncate diagnostic data.
+    logFull_ = true;
     bufferPos_ = 0;
     return;
   }
