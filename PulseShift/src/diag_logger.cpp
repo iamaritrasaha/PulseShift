@@ -201,7 +201,9 @@ void DiagLogger::checkRotate(size_t pendingBytes) {
 
   // A single rename (not copy/delete) leaves the complete previous log
   // available for later export; an existing archive is NEVER replaced.
-  if (sm.exists(ARCHIVE_LOG_PATH) ||
+  if (!diagnosticLogCanArchive(stored, pendingBytes, MAX_LOG_SIZE,
+                               sm.exists(ARCHIVE_LOG_PATH), freeBytes,
+                               StorageManager::MIN_FREE_BYTES) ||
       !sm.rename(LOG_PATH, ARCHIVE_LOG_PATH)) {
     logFull_ = true;
     return;
