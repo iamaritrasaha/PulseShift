@@ -16,6 +16,8 @@ enum class DiagLevel : uint8_t {
 class DiagLogger {
  public:
   static constexpr const char* LOG_PATH = "/diag.log";
+  // A single previously full log can be preserved without deleting history.
+  static constexpr const char* ARCHIVE_LOG_PATH = "/diag-prev.log";
   static constexpr size_t MAX_LOG_SIZE = PULSESHIFT_MAX_DIAGNOSTIC_LOG_BYTES; // 128 KB max diagnostic log
   static constexpr size_t BUFFER_SIZE = 1024;    // 1 KB write buffer
 
@@ -67,7 +69,7 @@ class DiagLogger {
   ~DiagLogger() = default;
 
   void writeBuffered(const char* str, size_t len);
-  void checkRotate();
+  void checkRotate(size_t pendingBytes = 0);
 
   uint32_t bootCount_ = 0;
   uint32_t sessionId_ = 0;
