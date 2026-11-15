@@ -7,7 +7,7 @@
 #include "led_color.h"
 #include "rpm_candidate.h"
 #include "config_manager.h"
-#include "diag_logger.h"
+#include "diag_log_quota.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -270,7 +270,7 @@ static void restore_defaults_preserves_shape() {
 }
 
 static void diagnostic_log_quota() {
-  constexpr size_t cap = DiagLogger::MAX_LOG_SIZE;
+  constexpr size_t cap = PULSESHIFT_MAX_DIAGNOSTIC_LOG_BYTES;
   CHECK(diagnosticLogAppendFits(0, 0, cap));
   CHECK(diagnosticLogAppendFits(0, cap, cap));
   CHECK(!diagnosticLogAppendFits(0, cap + 1, cap));
