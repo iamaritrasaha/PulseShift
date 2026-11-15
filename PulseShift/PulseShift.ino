@@ -411,10 +411,15 @@ private:
 #endif
     } else if (evt == ButtonHandler::Event::LongPress) {
       const bool rec = !CanRecorder::instance().isRecording();
-      CanRecorder::instance().setRecording(rec);
-      ledController_.triggerButtonFeedback(now);
+      const bool applied = CanRecorder::instance().setRecording(rec);
+      if (applied) ledController_.triggerButtonFeedback(now);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-      Serial.printf("[BUTTON] Recording %s\r\n", rec ? "RESUMED" : "PAUSED");
+      if (applied) {
+        Serial.printf("[BUTTON] Recording %s\r\n", rec ? "RESUMED" : "PAUSED");
+      } else {
+        Serial.println("[BUTTON] Recording cannot resume: check preserved capture, storage mount, quota or write errors.");
+        Serial.println("[BUTTON] Existing flash data was NOT changed. Use DUMP STATUS before any CLEAR YES.");
+      }
 #endif
     }
   }
@@ -571,8 +576,11 @@ private:
       } else if (CanRecorder::instance().isStorageFull()) {
         Serial.println("[CAPTURE] Cannot resume: storage is full. Type 'DUMP' to export, or 'CLEAR YES' to wipe.");
       } else {
-        CanRecorder::instance().setRecording(true);
-        Serial.println("[CAPTURE] Recording resumed.");
+        if (CanRecorder::instance().setRecording(true)) {
+          Serial.println("[CAPTURE] Recording resumed.");
+        } else {
+          Serial.println("[CAPTURE] Resume denied: storage unavailable or previous write error. No data changed.");
+        }
       }
     } else if (strcmp(cmd, "1") == 0 || strncasecmp(cmd, "STAGE 1", 7) == 0 || strcasecmp(cmd, "STAGE 1") == 0) {
       setStage(CanRecorder::STAGE_KEY_ON_ENGINE_OFF);
