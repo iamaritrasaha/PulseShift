@@ -411,10 +411,15 @@ private:
 #endif
     } else if (evt == ButtonHandler::Event::LongPress) {
       const bool rec = !CanRecorder::instance().isRecording();
-      CanRecorder::instance().setRecording(rec);
-      ledController_.triggerButtonFeedback(now);
+      const bool applied = CanRecorder::instance().setRecording(rec);
+      if (applied) ledController_.triggerButtonFeedback(now);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-      Serial.printf("[BUTTON] Recording %s\r\n", rec ? "RESUMED" : "PAUSED");
+      if (applied) {
+        Serial.printf("[BUTTON] Recording %s\r\n", rec ? "RESUMED" : "PAUSED");
+      } else {
+        Serial.println("[BUTTON] Recording cannot resume: check preserved capture, storage mount, quota or write errors.");
+        Serial.println("[BUTTON] Existing flash data was NOT changed. Use DUMP STATUS before any CLEAR YES.");
+      }
 #endif
     }
   }
@@ -571,8 +576,11 @@ private:
       } else if (CanRecorder::instance().isStorageFull()) {
         Serial.println("[CAPTURE] Cannot resume: storage is full. Type 'DUMP' to export, or 'CLEAR YES' to wipe.");
       } else {
-        CanRecorder::instance().setRecording(true);
-        Serial.println("[CAPTURE] Recording resumed.");
+        if (CanRecorder::instance().setRecording(true)) {
+          Serial.println("[CAPTURE] Recording resumed.");
+        } else {
+          Serial.println("[CAPTURE] Resume denied: storage unavailable or previous write error. No data changed.");
+        }
       }
     } else if (strcmp(cmd, "1") == 0 || strncasecmp(cmd, "STAGE 1", 7) == 0 || strcasecmp(cmd, "STAGE 1") == 0) {
       setStage(CanRecorder::STAGE_KEY_ON_ENGINE_OFF);
@@ -589,9 +597,10 @@ private:
     } else if (strcasecmp(cmd, "CLEAR YES") == 0) {
       DiagLogger::instance().clear();
       CanRecorder::instance().clear();
-      Serial.println("[OK] Storage cleared. Fresh capture session initialized.");
+      Serial.println("[OK] CAN capture and current diagnostic log cleared; fresh capture session initialized.");
+      Serial.println("[OK] Archived previous diagnostic log, if present, was retained.");
     } else if (strcasecmp(cmd, "CLEAR") == 0) {
-      Serial.println("[WARNING] To confirm clearing all stored offline logs and capture, type: CLEAR YES");
+      Serial.println("[WARNING] CLEAR YES erases the on-device CAN capture and current log. Archived previous log is retained.");
     } else if (strcasecmp(cmd, "OTA STATUS") == 0) {
 #if defined(ARDUINO)
       const esp_partition_t *running = esp_ota_get_running_partition();
@@ -699,8 +708,9 @@ private:
 #endif
     Serial.printf("Operating Mode: %s\r\n", config::modeName);
     Serial.printf("Target Vehicle: %s\r\n", config::vehicle);
-    Serial.printf("Transceiver: %s (Passive listen-only; GPIO%d disconnected, CTX to 3V3 directly)\r\n",
+    Serial.printf("Transceiver: %s (TWAI listen-only, TX GPIO%d software muted)\r\n",
                   config::transceiver, config::txPin);
+    Serial.println("Physical installation MUST be checked: GPIO17 disconnected, transceiver CTX/TXD tied to 3V3.");
     Serial.printf("Uptime: %lu ms | Boot Count: %lu | Last Reset Reason: %s\r\n",
                   (unsigned long)now, (unsigned long)sm.bootCount(), diag.resetReasonString());
 
@@ -713,8 +723,12 @@ private:
                   sm.isStorageFull() ? "YES" : "NO",
                   rec.isFlashPreserved() ? "YES" : "NO",
                   rec.isDamagedRecording() ? "YES" : "NO");
-    Serial.printf("Diagnostic Log Size: %lu bytes (Max: %lu)\r\n",
-                  (unsigned long)sm.size(DiagLogger::LOG_PATH), (unsigned long)DiagLogger::MAX_LOG_SIZE);
+    Serial.printf("Diagnostic Log Size: %lu bytes (Max: %lu) | Logger: %s\r\n",
+                  (unsigned long)sm.size(DiagLogger::LOG_PATH), (unsigned long)DiagLogger::MAX_LOG_SIZE,
+                  diag.isLogFull() ? "FULL (new events not saved)" : "READY");
+    Serial.printf("Archived Diagnostic Log: %s (%lu bytes; preserved, readable by LOGS)\r\n",
+                  sm.exists(DiagLogger::ARCHIVE_LOG_PATH) ? "YES" : "NO",
+                  (unsigned long)sm.size(DiagLogger::ARCHIVE_LOG_PATH));
     Serial.printf("CAN Capture File Size: %lu bytes (Max: %lu)\r\n",
                   (unsigned long)rec.currentFileSize(), (unsigned long)CanRecorder::MAX_CAPTURE_SIZE);
 

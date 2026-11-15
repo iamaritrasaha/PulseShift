@@ -8,6 +8,7 @@
 #include "rpm_candidate.h"
 #include "config_manager.h"
 #include "diag_log_quota.h"
+#include "capture_resume_guard.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -269,6 +270,16 @@ static void restore_defaults_preserves_shape() {
   CHECK(cm.setEffect(4, 50, false) == BLE_CFG_STATUS_INVALID_STATE);
 }
 
+static void capture_resume_guard() {
+  CHECK(canResumeCanRecording(true, true, false, false, false, false));
+  CHECK(!canResumeCanRecording(false, true, false, false, false, false));
+  CHECK(!canResumeCanRecording(true, false, false, false, false, false));
+  CHECK(!canResumeCanRecording(true, true, true, false, false, false));
+  CHECK(!canResumeCanRecording(true, true, false, true, false, false));
+  CHECK(!canResumeCanRecording(true, true, false, false, true, false));
+  CHECK(!canResumeCanRecording(true, true, false, false, false, true));
+}
+
 static void diagnostic_log_quota() {
   constexpr size_t cap = PULSESHIFT_MAX_DIAGNOSTIC_LOG_BYTES;
   CHECK(diagnosticLogAppendFits(0, 0, cap));
@@ -279,6 +290,14 @@ static void diagnostic_log_quota() {
   CHECK(!diagnosticLogAppendFits(cap, 1, cap));
   CHECK(!diagnosticLogAppendFits(cap + 482, 0, cap)); // existing field report
   CHECK(!diagnosticLogAppendFits(SIZE_MAX, SIZE_MAX, cap)); // no wraparound
+  // The field board had a 131554-byte existing log and ample spare LittleFS.
+  CHECK(diagnosticLogCanArchive(131554, 0, cap, false, 827392, 32768));
+  // An old archive is never overwritten and the original remains intact.
+  CHECK(!diagnosticLogCanArchive(131554, 0, cap, true, 827392, 32768));
+  CHECK(!diagnosticLogCanArchive(cap - 10, 10, cap, false, 827392, 32768));
+  CHECK(diagnosticLogCanArchive(cap - 10, 11, cap, false, 827392, 32768));
+  CHECK(!diagnosticLogCanArchive(cap, 50, cap, false, 32768, 32768));
+  CHECK(!diagnosticLogCanArchive(cap, 500, cap, false, 32900, 32768));
 }
 
 static void candidate_monitor_staleness() {
@@ -314,6 +333,7 @@ int main() {
   restore_defaults_preserves_shape();
   candidate_monitor_staleness();
   diagnostic_log_quota();
+  capture_resume_guard();
   std::printf("PASS config state machine, calibration binding, serialization, pacing: %u checks\n", checks);
   return 0;
 }
