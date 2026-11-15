@@ -16,6 +16,7 @@
 #include <atomic>
 #if defined(ARDUINO)
 #include <esp_system.h>
+#include <esp_ota_ops.h>
 #endif
 
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
@@ -1716,7 +1717,20 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       res.payload[3] = static_cast<uint8_t>((bw >> 8) & 0xFF);
       res.payload[4] = static_cast<uint8_t>((bw >> 16) & 0xFF);
       res.payload[5] = static_cast<uint8_t>((bw >> 24) & 0xFF);
-      res.payloadLength = 6;
+      // Optional v2.3+ extension: byte 6 is ESP-IDF OTA image state
+      // (0xFF if unavailable), byte 7 indicates a valid rollback candidate.
+      // Older clients ignore these two trailing bytes.
+      uint8_t partitionState = 0xFF;
+#if defined(ARDUINO)
+      const esp_partition_t* running = esp_ota_get_running_partition();
+      esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+      if (running && esp_ota_get_state_partition(running, &state) == ESP_OK) {
+        partitionState = static_cast<uint8_t>(state);
+      }
+#endif
+      res.payload[6] = partitionState;
+      res.payload[7] = ota.isRollbackPossible() ? 1 : 0;
+      res.payloadLength = 8;
       break;
     }
 

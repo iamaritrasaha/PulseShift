@@ -530,8 +530,18 @@ void OtaManager::abortOta() {
 
 BleConfigStatusCode OtaManager::confirmRollbackCancel(uint8_t& outActiveSlot) {
 #if defined(ARDUINO)
-  esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
-  if (err != ESP_OK) {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  esp_ota_img_states_t otaState = ESP_OTA_IMG_UNDEFINED;
+  if (!running || esp_ota_get_state_partition(running, &otaState) != ESP_OK) {
+    return BLE_CFG_STATUS_INVALID_STATE;
+  }
+  // Idempotent if confirmation succeeded but the BLE ACK was lost.
+  // UNDEFINED is NOT success: it can indicate a rollback-disabled bootloader.
+  if (otaState != ESP_OTA_IMG_PENDING_VERIFY && otaState != ESP_OTA_IMG_VALID) {
+    return BLE_CFG_STATUS_INVALID_STATE;
+  }
+  if (otaState == ESP_OTA_IMG_PENDING_VERIFY &&
+      esp_ota_mark_app_valid_cancel_rollback() != ESP_OK) {
     return BLE_CFG_STATUS_STORAGE_ERROR;
   }
 #endif
