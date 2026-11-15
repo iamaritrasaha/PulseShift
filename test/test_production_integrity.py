@@ -175,12 +175,18 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
         """Verify diag_logger does not circularly wipe /diag.log when capacity is reached."""
         content = self.read(os.path.join(REPO_ROOT, "PulseShift", "src", "diag_logger.cpp"))
 
-        # checkRotate must set logFull_ and not remove LOG_PATH
-        self.assertNotIn(
-            'sm.remove(LOG_PATH);',
-            content.split('void DiagLogger::checkRotate()')[1].split('void DiagLogger::flush()')[0],
-            "checkRotate must never wipe or delete LOG_PATH when capacity is reached."
+        # Accept the parameterized quota-aware signature while asserting
+        # that neither current nor archived logs are ever removed at rollover.
+        match = re.search(
+            r"void DiagLogger::checkRotate\\([^)]*\\)\\s*\\{",
+            content
         )
+        self.assertIsNotNone(match, "Quota-aware checkRotate implementation missing")
+        rotate = content[match.end():].split("void DiagLogger::flush()")[0]
+        self.assertNotIn("sm.remove(LOG_PATH);", rotate)
+        self.assertNotIn("sm.remove(ARCHIVE_LOG_PATH);", rotate)
+        self.assertIn("diagnosticLogCanArchive(", rotate)
+        self.assertIn("sm.rename(LOG_PATH, ARCHIVE_LOG_PATH)", rotate)
 
     def test_capture_tool_import_and_disk_safety(self):
         """Verify pulseshift_capture.py imports, creates output dirs, and enforces safety headroom."""
