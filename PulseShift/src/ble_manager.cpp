@@ -1572,9 +1572,12 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
             !StorageManager::instance().isMounted() || StorageManager::instance().mountFailed()) {
           status = BLE_CFG_STATUS_INVALID_STATE;
         } else {
-          rec.setRecording(true);
-          status = BLE_CFG_STATUS_OK;
-          resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+          if (rec.setRecording(true)) {
+            status = BLE_CFG_STATUS_OK;
+            resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
+          } else {
+            status = BLE_CFG_STATUS_INVALID_STATE;
+          }
         }
       } else {
         rec.flush();
