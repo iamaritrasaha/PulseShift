@@ -290,6 +290,14 @@ static void diagnostic_log_quota() {
   CHECK(!diagnosticLogAppendFits(cap, 1, cap));
   CHECK(!diagnosticLogAppendFits(cap + 482, 0, cap)); // existing field report
   CHECK(!diagnosticLogAppendFits(SIZE_MAX, SIZE_MAX, cap)); // no wraparound
+  // The field board had a 131554-byte existing log and ample spare LittleFS.
+  CHECK(diagnosticLogCanArchive(131554, 0, cap, false, 827392, 32768));
+  // An old archive is never overwritten and the original remains intact.
+  CHECK(!diagnosticLogCanArchive(131554, 0, cap, true, 827392, 32768));
+  CHECK(!diagnosticLogCanArchive(cap - 10, 10, cap, false, 827392, 32768));
+  CHECK(diagnosticLogCanArchive(cap - 10, 11, cap, false, 827392, 32768));
+  CHECK(!diagnosticLogCanArchive(cap, 50, cap, false, 32768, 32768));
+  CHECK(!diagnosticLogCanArchive(cap, 500, cap, false, 32900, 32768));
 }
 
 static void candidate_monitor_staleness() {
