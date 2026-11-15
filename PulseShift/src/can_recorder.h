@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "can_frame.h"
 #include "storage_manager.h"
+#include "capture_resume_guard.h"
 
 // 20-byte packed CAN log record with CRC16
 #pragma pack(push, 1)
@@ -70,7 +71,18 @@ class CanRecorder {
   const char* stageName(Stage s) const;
   void nextStage();
 
-  void setRecording(bool enable) { recording_ = enable; }
+  // False means resume was rejected; preserved captures and write errors are
+  // never reopened by a button press or BLE command.
+  bool setRecording(bool enable) {
+    if (enable && !canResumeCanRecording(initialized_,
+                                        StorageManager::instance().isMounted(),
+                                        flashPreserved_, damagedRecording_,
+                                        storageFull_, writeError_)) {
+      return false;
+    }
+    recording_ = enable;
+    return true;
+  }
   bool isRecording() const { return recording_; }
   bool isStorageFull() const { return storageFull_; }
   bool isFlashPreserved() const { return flashPreserved_; }
