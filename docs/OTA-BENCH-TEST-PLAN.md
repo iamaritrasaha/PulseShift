@@ -211,17 +211,50 @@ If partition table corruption or filesystem damage occurs:
 
 ---
 
+## 4.2 Arduino-ESP32 deferred OTA confirmation check
+
+Arduino-ESP32 core 2.0.x invokes a weak `verifyRollbackLater()` hook before
+the sketch's `setup()`. Without an override, the core can immediately mark a
+new OTA image VALID, bypassing the product's 120-second owner-confirmation gate.
+PulseShift now provides a strong C-linkage override returning `true`, leaving
+the image in `ESP_OTA_IMG_PENDING_VERIFY` until the boot self-test and an
+explicit authenticated `OTA_CONFIRM` (or USB bench `OTA CONFIRM`).
+
+**On a real ESP32, verify the bootloader and both app slots:**
+
+1. Keep the board on stable USB power on the bench, *not on the motorcycle*.
+2. Use Serial Monitor at 115200 baud. Send `OTA STATUS` to inspect the active
+   app slot, actual OTA image state, and whether a rollback candidate exists.
+3. After a valid signed OTA but **before confirmation**, expect
+   `PENDING_VERIFY` and a valid rollback candidate.
+4. After successful Android confirmation, expect `VALID`. Reboot and check
+   that the same slot remains active.
+5. In a separate supervised rollback test, leave an update unconfirmed; after
+   the 120-second firmware timeout the prior image should boot. If the device
+   stays on the new image, **do not deploy OTA or claim rollback protection**.
+6. A pending image will normally roll back if power is cut or the device
+   resets before confirmation. Do not use a power interruption as the first
+   test when valuable CAN recordings have not been exported.
+
+The Android companion queries the extended OTA_STATUS response (8 payload
+bytes, including image state and rollback candidate), completes owner
+reauthentication on the **new** BLE connection, and only then issues OTA_CONFIRM.
+A confirmed OTA requires both a successful acknowledgment and an appropriate
+bootloader image state. Inconsistent state fails closed.
+
+---
+
 ## 5. Bench Test Verification Sign-Off Matrix
 
 | Test ID | Description | Expected Result | Status |
 |---|---|---|---|
-| TC-01 | Full OTA transfer over negotiated MTU 512 | Transfers in <45s, verifies signature, boots into new slot | Bench Verified |
-| TC-02 | Safety interlock with active RPM > 0 | Rejects OTA_BEGIN with INVALID_STATE | Bench Verified |
-| TC-03 | Safety interlock with active CAN traffic | Rejects OTA_BEGIN with INVALID_STATE | Bench Verified |
-| TC-04 | Rejection of unsigned raw binary | Blocked by Android / rejected by ESP32 | Bench Verified |
-| TC-05 | Rejection of binary with invalid ECDSA signature | Rejected by ESP32 signature check | Bench Verified |
-| TC-06 | Rejection of corrupted CRC32 / bit-flip | Rejected by ESP32 CRC32 check | Bench Verified |
-| TC-07 | Rejection of truncated transfer | Rejected by ESP32 byte count check | Bench Verified |
-| TC-08 | Forced boot failure with automatic rollback | Rolls back to prior slot, Android detects rollback | Bench Verified |
-| TC-09 | Power cut at 50% transfer | Prior slot boots unaffected, NVS and LittleFS intact | Bench Verified |
-| TC-10 | Post-reboot Android confirmation handshake | No false success on timeout, disconnect or rollback | Bench Verified |
+| TC-01 | Full OTA transfer over negotiated MTU 512 | Transfers in <45s, verifies signature, boots into new slot | **PENDING PHYSICAL BENCH TEST** |
+| TC-02 | Safety interlock with active RPM > 0 | Rejects OTA_BEGIN with INVALID_STATE | **PENDING PHYSICAL BENCH TEST** |
+| TC-03 | Safety interlock with active CAN traffic | Rejects OTA_BEGIN with INVALID_STATE | **PENDING PHYSICAL BENCH TEST** |
+| TC-04 | Rejection of unsigned raw binary | Blocked by Android / rejected by ESP32 | **PENDING PHYSICAL BENCH TEST** |
+| TC-05 | Rejection of binary with invalid ECDSA signature | Rejected by ESP32 signature check | **PENDING PHYSICAL BENCH TEST** |
+| TC-06 | Rejection of corrupted CRC32 / bit-flip | Rejected by ESP32 CRC32 check | **PENDING PHYSICAL BENCH TEST** |
+| TC-07 | Rejection of truncated transfer | Rejected by ESP32 byte count check | **PENDING PHYSICAL BENCH TEST** |
+| TC-08 | Forced boot failure with automatic rollback | Rolls back to prior slot, Android detects rollback | **PENDING PHYSICAL BENCH TEST** |
+| TC-09 | Power cut at 50% transfer | Prior slot boots unaffected, NVS and LittleFS intact | **PENDING PHYSICAL BENCH TEST** |
+| TC-10 | Post-reboot Android confirmation handshake | No false success on timeout, disconnect or rollback | **PENDING PHYSICAL BENCH TEST** |
