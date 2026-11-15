@@ -12,6 +12,12 @@ enum class DiagLevel : uint8_t {
   Critical = 3
 };
 
+// A log append must fit entirely; never leave half a diagnostic line or
+// overflow a quota. Subtraction is safe only after checking the current size.
+constexpr bool diagnosticLogAppendFits(size_t existing, size_t incoming, size_t limit) {
+  return existing <= limit && incoming <= limit - existing;
+}
+
 class DiagLogger {
  public:
   static constexpr const char* LOG_PATH = "/diag.log";
