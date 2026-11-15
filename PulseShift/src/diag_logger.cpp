@@ -2,6 +2,9 @@
 #include "diag_logger.h"
 #include "ble_manager.h"
 #include <Arduino.h>
+#if defined(ARDUINO)
+#include <esp_task_wdt.h>
+#endif
 #include <esp_system.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -43,6 +46,9 @@ void DiagLogger::begin(uint32_t bootCount, uint32_t sessionId) {
   logFull_ = false;
   bufferPos_ = 0;
   lastFlushMs_ = millis();
+  // Before any new boot logs are written, preserve a full previous log.
+  // Never overwrite an earlier archive or alter the CAN recording.
+  checkRotate();
 
   esp_reset_reason_t r = esp_reset_reason();
   strncpy(resetReasonStr_, resetReasonToName(r), sizeof(resetReasonStr_) - 1);
@@ -144,7 +150,7 @@ void DiagLogger::writeBuffered(const char* str, size_t len) {
   if (len >= BUFFER_SIZE) {
     auto& sm = StorageManager::instance();
     if (sm.isMounted() && !sm.isStorageFull() && !logFull_) {
-      checkRotate();
+      checkRotate(len);
       const size_t stored = sm.exists(LOG_PATH) ? sm.size(LOG_PATH) : 0;
       if (!logFull_ && diagnosticLogAppendFits(stored, len, MAX_LOG_SIZE)) {
         File f = sm.open(LOG_PATH, "a");
@@ -176,16 +182,34 @@ void DiagLogger::pump(uint32_t now) {
   }
 }
 
-void DiagLogger::checkRotate() {
+void DiagLogger::checkRotate(size_t pendingBytes) {
   auto& sm = StorageManager::instance();
   if (!sm.isMounted()) return;
 
-  if (sm.exists(LOG_PATH)) {
-    const size_t sz = sm.size(LOG_PATH);
-    if (sz >= MAX_LOG_SIZE || sm.freeBytes() < StorageManager::MIN_FREE_BYTES) {
-      logFull_ = true;
-    }
+  // Do not write when the filesystem has lost its reserved safety headroom.
+  // Subtraction avoids overflow if pendingBytes is untrusted.
+  const size_t freeBytes = sm.freeBytes();
+  if (freeBytes <= StorageManager::MIN_FREE_BYTES ||
+      pendingBytes > freeBytes - StorageManager::MIN_FREE_BYTES) {
+    logFull_ = true;
+    return;
   }
+  if (!sm.exists(LOG_PATH)) return;
+
+  const size_t stored = sm.size(LOG_PATH);
+  if (diagnosticLogAppendFits(stored, pendingBytes, MAX_LOG_SIZE)) return;
+
+  // A single rename (not copy/delete) leaves the complete previous log
+  // available for later export; an existing archive is NEVER replaced.
+  if (sm.exists(ARCHIVE_LOG_PATH) ||
+      !sm.rename(LOG_PATH, ARCHIVE_LOG_PATH)) {
+    logFull_ = true;
+    return;
+  }
+  logFull_ = false;
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+  Serial.println("[LOGS] Previous full diagnostic log archived safely. New log started.");
+#endif
 }
 
 void DiagLogger::flush() {
@@ -198,7 +222,7 @@ void DiagLogger::flush() {
     return;
   }
 
-  checkRotate();
+  checkRotate(bufferPos_);
   if (logFull_) {
     bufferPos_ = 0;
     return;
@@ -230,28 +254,36 @@ void DiagLogger::dumpToSerial() {
     return;
   }
 
-  if (!sm.exists(LOG_PATH)) {
-    Serial.println("[LOGS] No diagnostic logs stored.");
-    return;
-  }
-
-  File f = sm.open(LOG_PATH, "r");
-  if (!f) {
-    Serial.println("[LOGS] Error opening log file.");
-    return;
-  }
-
-  Serial.println("=== BEGIN PULSESHIFT DIAGNOSTIC LOGS ===");
-  while (f.available()) {
-    char buf[128];
-    const int n = f.readBytes(buf, sizeof(buf) - 1);
-    if (n > 0) {
-      buf[n] = '\0';
-      Serial.print(buf);
+  // Include both archive and current log, so no previously captured errors
+  // become inaccessible after a rollover. This operation is read-only.
+  const char* const paths[] = {ARCHIVE_LOG_PATH, LOG_PATH};
+  const char* const labels[] = {"ARCHIVED", "CURRENT"};
+  bool anyLogs = false;
+  for (unsigned i = 0; i < 2; ++i) {
+    if (!sm.exists(paths[i])) continue;
+    File f = sm.open(paths[i], "r");
+    if (!f) {
+      Serial.printf("[LOGS] Cannot open %s diagnostic log.\r\n", labels[i]);
+      continue;
     }
+    anyLogs = true;
+    Serial.printf("=== BEGIN PULSESHIFT %s DIAGNOSTIC LOGS ===\r\n", labels[i]);
+    while (f.available()) {
+      char buf[128];
+      const int n = f.readBytes(buf, sizeof(buf) - 1);
+      if (n > 0) {
+        buf[n] = '\0';
+        Serial.print(buf);
+      }
+#if defined(ARDUINO)
+      // Export of a 128-KB log at 115200 baud can exceed the task WDT period.
+      esp_task_wdt_reset();
+#endif
+    }
+    f.close();
+    Serial.printf("\r\n=== END PULSESHIFT %s DIAGNOSTIC LOGS ===\r\n", labels[i]);
   }
-  f.close();
-  Serial.println("=== END PULSESHIFT DIAGNOSTIC LOGS ===");
+  if (!anyLogs) Serial.println("[LOGS] No diagnostic logs stored.");
 }
 
 void DiagLogger::clear() {
