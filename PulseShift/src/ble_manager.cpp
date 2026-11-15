@@ -334,16 +334,21 @@ void BleManager::updateCapabilitiesChar() {
   BleCapabilitiesPacket caps{};
   caps.version = PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION;
   caps.physicalLedCount = 6;
-  caps.featureMask = BLE_FEAT_INDIVIDUAL_RGB | BLE_FEAT_EFFECTS |
-                     BLE_FEAT_STARTUP_ANIM | BLE_FEAT_RPM_THRESHOLDS |
-                     BLE_FEAT_SHIFT_WARNING | BLE_FEAT_RPM_MULTIPLIER |
-                     BLE_FEAT_CANDIDATE_SOURCE | BLE_FEAT_PHONE_PRESETS |
-                     BLE_FEAT_NVS_PERSISTENCE | BLE_FEAT_AUTH_WRITES |
-                     BLE_FEAT_DECODER_EXT | BLE_FEAT_HYSTERESIS |
-                     BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
-                     BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
-                     BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
-                     BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_OTA_UPDATE;
+  const bool dualSlotDetected = OtaManager::instance().isDualSlotSupported();
+  uint32_t featureMask = BLE_FEAT_INDIVIDUAL_RGB | BLE_FEAT_EFFECTS |
+                         BLE_FEAT_STARTUP_ANIM | BLE_FEAT_RPM_THRESHOLDS |
+                         BLE_FEAT_SHIFT_WARNING | BLE_FEAT_RPM_MULTIPLIER |
+                         BLE_FEAT_CANDIDATE_SOURCE | BLE_FEAT_PHONE_PRESETS |
+                         BLE_FEAT_NVS_PERSISTENCE | BLE_FEAT_AUTH_WRITES |
+                         BLE_FEAT_DECODER_EXT | BLE_FEAT_HYSTERESIS |
+                         BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
+                         BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
+                         BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
+                         BLE_FEAT_RANGE_DISCOVERY;
+  if (dualSlotDetected) {
+    featureMask |= BLE_FEAT_OTA_UPDATE;
+  }
+  caps.featureMask = featureMask;
   caps.currentRevision = ConfigManager::instance().activeRevision();
   caps.hardwarePresetCapacity = 0; // Phone-managed presets
   caps.securityMode = ConfigManager::instance().securityMode();
@@ -354,7 +359,10 @@ void BleManager::updateCapabilitiesChar() {
   caps.maxEffectId = 5;
   caps.otaActiveSlot = OtaManager::instance().activeRunningSlot();
   caps.protocolMinor = 3;
-  uint8_t otaFlags = 0x02; // Bit 1 = Dual-slot OTA partition layout detected
+  uint8_t otaFlags = 0;
+  if (dualSlotDetected) {
+    otaFlags |= 0x02; // Bit 1 = Dual-slot OTA partition layout detected
+  }
   if (OtaManager::instance().isRollbackPossible()) {
     otaFlags |= 0x01; // Bit 0 = Rollback supported and verified possible
   }

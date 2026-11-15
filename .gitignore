@@ -18,6 +18,7 @@ __pycache__/
 *.tmp
 *.obj
 *.exe
+*.bin
 
 # Cryptographic Keys (Strictly local/offline - NEVER commit to git)
 *.pem
