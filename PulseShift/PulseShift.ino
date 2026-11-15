@@ -597,9 +597,10 @@ private:
     } else if (strcasecmp(cmd, "CLEAR YES") == 0) {
       DiagLogger::instance().clear();
       CanRecorder::instance().clear();
-      Serial.println("[OK] Storage cleared. Fresh capture session initialized.");
+      Serial.println("[OK] CAN capture and current diagnostic log cleared; fresh capture session initialized.");
+      Serial.println("[OK] Archived previous diagnostic log, if present, was retained.");
     } else if (strcasecmp(cmd, "CLEAR") == 0) {
-      Serial.println("[WARNING] To confirm clearing all stored offline logs and capture, type: CLEAR YES");
+      Serial.println("[WARNING] CLEAR YES erases the on-device CAN capture and current log. Archived previous log is retained.");
     } else if (strcasecmp(cmd, "OTA STATUS") == 0) {
 #if defined(ARDUINO)
       const esp_partition_t *running = esp_ota_get_running_partition();
