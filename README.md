@@ -811,7 +811,7 @@ All commands are entered in the Arduino IDE Serial Monitor at **115200 baud**. C
 |---|---|
 | `HELP` | Display all available commands |
 | `STATUS` | Full system status: CAN health, storage, RPM candidate, diagnostics |
-| `LOGS` | Dump the persistent diagnostic event log from flash |
+| `LOGS` | Export archived (if any) and current diagnostic logs from flash; read-only and potentially long-running |
 | `RPM STATUS` | Candidate 0x301 snapshot: raw value, estimated RPM, freshness, range |
 | `RPM MONITOR` | Print one instantaneous candidate telemetry line |
 | `RPM MONITOR ON` | Enable 10 Hz live candidate stream |
