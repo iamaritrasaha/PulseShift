@@ -179,7 +179,7 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
         # Accept the parameterized quota-aware signature while asserting
         # that neither current nor archived logs are ever removed at rollover.
         match = re.search(
-            r"void DiagLogger::checkRotate\\([^)]*\\)\\s*\\{",
+            r"void DiagLogger::checkRotate\([^)]*\)\s*\{",
             content
         )
         self.assertIsNotNone(match, "Quota-aware checkRotate implementation missing")
