@@ -232,6 +232,17 @@ bool OtaManager::isRollbackPossible() const {
 #endif
 }
 
+bool OtaManager::isDualSlotSupported() const {
+#if defined(ARDUINO)
+  const esp_partition_t* p0 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+  const esp_partition_t* p1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
+  const esp_partition_t* otaData = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
+  return (p0 != nullptr && p1 != nullptr && otaData != nullptr);
+#else
+  return true; // Supported in host test environment
+#endif
+}
+
 void OtaManager::initCrc32() {
   runningCrc32_ = 0;
 }
@@ -295,6 +306,11 @@ BleConfigStatusCode OtaManager::startOta(uint32_t totalSize, const uint8_t sha25
                                         const CanTransport& transport,
                                         uint32_t nowMs,
                                         uint32_t& outSessionToken, uint8_t& outTargetSlot) {
+  // Safety Interlock 0: Partition layout must support dual-slot OTA
+  if (!isDualSlotSupported()) {
+    return BLE_CFG_STATUS_UNSUPPORTED;
+  }
+
   // Safety Interlock 1: Vehicle must be stationary and bench-safe
   if (rpmMon.isFresh(nowMs) && rpmMon.estimatedRpm(nowMs) > 0) {
     return BLE_CFG_STATUS_INVALID_STATE;

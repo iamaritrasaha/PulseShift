@@ -7,7 +7,11 @@
 // blank-partition scan conservatively reports "not blank".
 #define ESP_OK 0
 #define ESP_FAIL -1
+#define ESP_PARTITION_TYPE_APP 0
+#define ESP_PARTITION_SUBTYPE_APP_OTA_0 0x10
+#define ESP_PARTITION_SUBTYPE_APP_OTA_1 0x11
 #define ESP_PARTITION_TYPE_DATA 1
+#define ESP_PARTITION_SUBTYPE_DATA_OTA 0x00
 #define ESP_PARTITION_SUBTYPE_DATA_SPIFFS 0x80
 
 struct esp_partition_t {

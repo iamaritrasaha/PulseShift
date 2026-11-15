@@ -82,6 +82,7 @@ public:
 
   // Query whether rollback is possible from hardware bootloader state
   bool isRollbackPossible() const;
+  bool isDualSlotSupported() const;
   bool rollbackConfirmed() const { return rollbackConfirmed_; }
 
   // State inspection
