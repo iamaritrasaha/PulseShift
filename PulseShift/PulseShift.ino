@@ -51,6 +51,11 @@
 #include <esp_ota_ops.h>
 #endif
 
+// Do not ship an OTA-capable image with app-level rollback compiled out.
+#if defined(ARDUINO) && !defined(CONFIG_APP_ROLLBACK_ENABLE)
+#error "PulseShift OTA requires Arduino-ESP32 with CONFIG_APP_ROLLBACK_ENABLE"
+#endif
+
 // Arduino-ESP32 2.0.x calls initArduino() before setup(). Its default weak
 // verifyRollbackLater() hook returns false and immediately marks OTA images
 // VALID, bypassing PulseShift's pending-verification checks and 120s rollback.
