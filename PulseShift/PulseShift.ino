@@ -51,6 +51,16 @@
 #include <esp_ota_ops.h>
 #endif
 
+// Arduino-ESP32 2.0.x calls initArduino() before setup(). Its default weak
+// verifyRollbackLater() hook returns false and immediately marks OTA images
+// VALID, bypassing PulseShift's pending-verification checks and 120s rollback.
+// Override that C symbol so ONLY our explicit OTA_CONFIRM validates the image.
+#if defined(ARDUINO) && defined(CONFIG_APP_ROLLBACK_ENABLE)
+extern "C" bool verifyRollbackLater(void) {
+  return true;
+}
+#endif
+
 namespace {
 class Application {
 public:
@@ -577,6 +587,32 @@ private:
       Serial.println("[OK] Storage cleared. Fresh capture session initialized.");
     } else if (strcasecmp(cmd, "CLEAR") == 0) {
       Serial.println("[WARNING] To confirm clearing all stored offline logs and capture, type: CLEAR YES");
+    } else if (strcasecmp(cmd, "OTA STATUS") == 0) {
+#if defined(ARDUINO)
+      const esp_partition_t *running = esp_ota_get_running_partition();
+      esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+      const esp_err_t result = running ? esp_ota_get_state_partition(running, &state) : ESP_FAIL;
+      const char* stateText = "UNAVAILABLE";
+      if (result == ESP_OK) {
+        switch (state) {
+          case ESP_OTA_IMG_NEW: stateText = "NEW"; break;
+          case ESP_OTA_IMG_PENDING_VERIFY: stateText = "PENDING_VERIFY"; break;
+          case ESP_OTA_IMG_VALID: stateText = "VALID"; break;
+          case ESP_OTA_IMG_INVALID: stateText = "INVALID"; break;
+          case ESP_OTA_IMG_ABORTED: stateText = "ABORTED"; break;
+          case ESP_OTA_IMG_UNDEFINED: stateText = "UNDEFINED"; break;
+          default: stateText = "UNKNOWN"; break;
+        }
+      }
+      Serial.printf("[OTA STATUS] Running: %s | State: %s | Rollback candidate: %s\r\n",
+                    running ? running->label : "NONE", stateText,
+                    OtaManager::instance().isRollbackPossible() ? "YES" : "NO");
+      Serial.printf("[OTA STATUS] Confirmation in this boot: %s | Pending: %s\r\n",
+                    OtaManager::instance().rollbackConfirmed() ? "YES" : "NO",
+                    result == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY ? "YES" : "NO");
+#else
+      Serial.println("[OTA STATUS] ESP32-only diagnostic.");
+#endif
     } else if (strcasecmp(cmd, "OTA CONFIRM") == 0) {
 #if defined(ARDUINO)
       esp_ota_img_states_t ota_state;
@@ -635,6 +671,7 @@ private:
     Serial.println("  STREAM OFF      : Disable live streaming (default: concise summaries only)");
     Serial.println("  CLEAR           : Request erasing stored diagnostic logs and CAN capture");
     Serial.println("  CLEAR YES       : Confirm erase and start a fresh capture session");
+    Serial.println("  OTA STATUS      : Show running OTA slot and bootloader verification state");
     Serial.println("  OTA CONFIRM     : Mark newly booted OTA firmware valid and cancel rollback");
   }
 
