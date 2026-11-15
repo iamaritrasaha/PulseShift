@@ -7,6 +7,7 @@
 #include "led_color.h"
 #include "rpm_candidate.h"
 #include "config_manager.h"
+#include "diag_logger.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -268,6 +269,18 @@ static void restore_defaults_preserves_shape() {
   CHECK(cm.setEffect(4, 50, false) == BLE_CFG_STATUS_INVALID_STATE);
 }
 
+static void diagnostic_log_quota() {
+  constexpr size_t cap = DiagLogger::MAX_LOG_SIZE;
+  CHECK(diagnosticLogAppendFits(0, 0, cap));
+  CHECK(diagnosticLogAppendFits(0, cap, cap));
+  CHECK(!diagnosticLogAppendFits(0, cap + 1, cap));
+  CHECK(diagnosticLogAppendFits(cap - 64, 64, cap));
+  CHECK(!diagnosticLogAppendFits(cap - 64, 65, cap));
+  CHECK(!diagnosticLogAppendFits(cap, 1, cap));
+  CHECK(!diagnosticLogAppendFits(cap + 482, 0, cap)); // existing field report
+  CHECK(!diagnosticLogAppendFits(SIZE_MAX, SIZE_MAX, cap)); // no wraparound
+}
+
 static void candidate_monitor_staleness() {
   // The LEDs must never keep rendering the last RPM after CAN disappears:
   // the monitor marks samples stale once the freshness timeout elapses.
@@ -300,6 +313,7 @@ int main() {
   staged_transactions();
   restore_defaults_preserves_shape();
   candidate_monitor_staleness();
+  diagnostic_log_quota();
   std::printf("PASS config state machine, calibration binding, serialization, pacing: %u checks\n", checks);
   return 0;
 }
