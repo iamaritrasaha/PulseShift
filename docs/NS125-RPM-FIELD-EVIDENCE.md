@@ -10,13 +10,13 @@ reclassify observational field correlation as completed bound calibration.
 - An earlier three-stage recording (key-on/engine-off, idle, gentle RPM sweeps)
   produced **22,542 frames** across **18 CAN IDs** without reported record CRC
   corruption. The candidate **standard CAN ID 0x301, data byte 0** tracked
-  engine state: **raw 0** with the engine off, roughly **35–40** at idle,
+  engine state: **raw 0** with the engine off, roughly **35-40** at idle,
   and varying upward with revs.
 - Using the existing multiplier **40.0**, raw **37** corresponds to **1480 RPM**.
   In a separate real-bike observation, the companion reading agreed with the
   motorcycle dashboard near **3000 RPM**.
 - There is an unresolved idle disagreement: the dashboard appeared to indicate
-  approximately **1000 RPM** while the companion reported **1300–1500 RPM**.
+  approximately **1000 RPM** while the companion reported **1300-1500 RPM**.
   Dashboard granularity and reference accuracy were not established.
 
 ## Additional preserved capture (November 15, 2026)
