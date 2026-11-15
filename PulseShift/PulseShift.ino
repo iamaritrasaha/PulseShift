@@ -707,8 +707,9 @@ private:
 #endif
     Serial.printf("Operating Mode: %s\r\n", config::modeName);
     Serial.printf("Target Vehicle: %s\r\n", config::vehicle);
-    Serial.printf("Transceiver: %s (Passive listen-only; GPIO%d disconnected, CTX to 3V3 directly)\r\n",
+    Serial.printf("Transceiver: %s (TWAI listen-only, TX GPIO%d software muted)\r\n",
                   config::transceiver, config::txPin);
+    Serial.println("Physical installation MUST be checked: GPIO17 disconnected, transceiver CTX/TXD tied to 3V3.");
     Serial.printf("Uptime: %lu ms | Boot Count: %lu | Last Reset Reason: %s\r\n",
                   (unsigned long)now, (unsigned long)sm.bootCount(), diag.resetReasonString());
 
@@ -721,8 +722,12 @@ private:
                   sm.isStorageFull() ? "YES" : "NO",
                   rec.isFlashPreserved() ? "YES" : "NO",
                   rec.isDamagedRecording() ? "YES" : "NO");
-    Serial.printf("Diagnostic Log Size: %lu bytes (Max: %lu)\r\n",
-                  (unsigned long)sm.size(DiagLogger::LOG_PATH), (unsigned long)DiagLogger::MAX_LOG_SIZE);
+    Serial.printf("Diagnostic Log Size: %lu bytes (Max: %lu) | Logger: %s\r\n",
+                  (unsigned long)sm.size(DiagLogger::LOG_PATH), (unsigned long)DiagLogger::MAX_LOG_SIZE,
+                  diag.isLogFull() ? "FULL (new events not saved)" : "READY");
+    Serial.printf("Archived Diagnostic Log: %s (%lu bytes; preserved, readable by LOGS)\r\n",
+                  sm.exists(DiagLogger::ARCHIVE_LOG_PATH) ? "YES" : "NO",
+                  (unsigned long)sm.size(DiagLogger::ARCHIVE_LOG_PATH));
     Serial.printf("CAN Capture File Size: %lu bytes (Max: %lu)\r\n",
                   (unsigned long)rec.currentFileSize(), (unsigned long)CanRecorder::MAX_CAPTURE_SIZE);
 
