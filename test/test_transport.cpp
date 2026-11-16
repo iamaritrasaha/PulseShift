@@ -14,6 +14,7 @@ twai_message_t next;
 bool available=false;
 uint32_t alerts=0;
 int installResult=ESP_OK,rxResult=ESP_OK,alertResult=ESP_OK,initiateResult=ESP_OK,startResult=ESP_OK;
+bool asyncRecovery=false;
 int gpio_reset_pin(gpio_num_t p){CHECK(p==17);routing.push_back(1);return ESP_OK;}
 int gpio_set_direction(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_MODE_INPUT);routing.push_back(2);return ESP_OK;}
 int gpio_set_pull_mode(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_PULLUP_ONLY);routing.push_back(3);return ESP_OK;}
@@ -26,11 +27,11 @@ int twai_driver_install(const twai_general_config_t* g,const twai_timing_config_
 }
 int twai_start(){CHECK(routing==std::vector<int>({1,2,3}));++starts;status.state=startResult==ESP_OK?TWAI_STATE_RUNNING:TWAI_STATE_STOPPED;return startResult;}
 int twai_stop(){++stops;status.state=TWAI_STATE_STOPPED;return ESP_OK;}
-int twai_initiate_recovery(){status.state=TWAI_STATE_STOPPED;return initiateResult;}
+int twai_initiate_recovery(){status.state=asyncRecovery?TWAI_STATE_RECOVERING:TWAI_STATE_STOPPED;return initiateResult;}
 int twai_read_alerts(uint32_t* a,uint32_t timeout){CHECK(timeout==0);*a=alerts;alerts=0;return alertResult;}
 int twai_get_status_info(twai_status_info_t* s){*s=status;return ESP_OK;}
 int twai_receive(twai_message_t* f,uint32_t timeout){CHECK(timeout==0);if(rxResult!=ESP_OK)return rxResult;if(!available)return ESP_ERR_TIMEOUT;*f=next;available=false;return ESP_OK;}
-void reset() { routing.clear();status={};next={};available=false;alerts=0;installResult=rxResult=alertResult=initiateResult=startResult=ESP_OK;Serial.output.clear();Serial.capacity=0; }
+void reset() { routing.clear();status={};next={};available=false;alerts=0;installResult=rxResult=alertResult=initiateResult=startResult=ESP_OK;asyncRecovery=false;Serial.output.clear();Serial.capacity=0; }
 int main() {
   reset();FrameLog disabledLog;CanTransport disabled(0,&disabledLog);
   CHECK(!disabled.configured() && !disabled.begin());CHECK(installs==0);
@@ -96,7 +97,7 @@ int main() {
   // Asynchronous recovery state transitions:
   // RUNNING -> BUS_OFF -> RECOVERING -> STOPPED -> RUNNING
   {
-    reset();FrameLog clog;CanTransport c(500000,&clog);CHECK(c.begin());
+    reset();asyncRecovery=true;FrameLog clog;CanTransport c(500000,&clog);CHECK(c.begin());
     alerts=TWAI_ALERT_BUS_OFF;status.state=TWAI_STATE_BUS_OFF;
     c.poll(1000); // Latches bus-off, enters recovery backoff
     CHECK(!c.healthy());
@@ -105,7 +106,7 @@ int main() {
     // Simulate real driver: twai_initiate_recovery sets state to RECOVERING.
     status.state=TWAI_STATE_BUS_OFF;
     c.poll(2001);
-    status.state=TWAI_STATE_RECOVERING;
+    CHECK(status.state==TWAI_STATE_RECOVERING);
 
     // While in RECOVERING, subsequent polls within timeout must NOT increment attempts or call start.
     const auto startsBefore=starts;
@@ -121,14 +122,15 @@ int main() {
 
   // Recovery timeout test: controller stuck in RECOVERING for > 3000ms
   {
-    reset();FrameLog clog;CanTransport c(500000,&clog);CHECK(c.begin());
+    reset();asyncRecovery=true;FrameLog clog;CanTransport c(500000,&clog);CHECK(c.begin());
     alerts=TWAI_ALERT_BUS_OFF;status.state=TWAI_STATE_BUS_OFF;
     c.poll(1000);
     CHECK(!c.healthy());
 
     // t=2001ms: initiate recovery
+    status.state=TWAI_STATE_BUS_OFF;
     c.poll(2001);
-    status.state=TWAI_STATE_RECOVERING;
+    CHECK(status.state==TWAI_STATE_RECOVERING);
 
     // Poll within timeout (< 3000ms)
     c.poll(4000); // 1999ms into recovery: legitimately waiting
