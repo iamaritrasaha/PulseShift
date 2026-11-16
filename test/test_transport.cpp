@@ -136,9 +136,20 @@ int main() {
     c.poll(4000); // 1999ms into recovery: legitimately waiting
     CHECK(!c.healthy());
 
-    // Poll past timeout (> 3000ms, t=5002ms)
-    c.poll(5002); // Recovery timed out
-    CHECK(!c.healthy());
+    // Poll past timeout (> 3000ms, t=5002ms). It only logs a warning.
+    // Repeated fast polls must never burn five attempts or clear recovery.
+    const auto startsBefore = starts;
+    c.poll(5002);CHECK(!c.healthy() && starts==startsBefore);
+    c.poll(5003);CHECK(!c.healthy() && starts==startsBefore);
+    c.poll(5004);CHECK(!c.healthy() && starts==startsBefore);
+    c.poll(6000);CHECK(!c.healthy() && starts==startsBefore);
+    c.poll(65000);CHECK(!c.healthy() && starts==startsBefore);
+
+    // A recovered bus must still restart after a long RECOVERING interval.
+    alerts=TWAI_ALERT_BUS_RECOVERED;
+    status.state=TWAI_STATE_STOPPED;
+    c.poll(65010);
+    CHECK(c.healthy() && starts==startsBefore+1);
   }
 
   std::printf("PASS receive-only routing, no TX linkage, driver errors/overflow, bounded logging: %u checks\n",checks);
