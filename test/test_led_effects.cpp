@@ -512,7 +512,7 @@ static void boot_button_auth_window_does_not_obscure_active_rpm() {
   input.feedbackActive = true;
   e.update(10050, cfg, liveRpm, input);
   CHECK(e.activeLayer() == LedActiveLayer::Feedback);
-  CHECK(e.getPixel(0) == RgbColor{255, 255, 255});
+  CHECK((e.getPixel(0) == RgbColor{255, 255, 255}));
 
   // Feedback expires (200ms), but auth window remains OPEN for 60 seconds.
   // The shift light MUST continue rendering 4500 RPM and NOT be masked by cyan!
