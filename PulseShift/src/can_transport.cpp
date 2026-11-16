@@ -112,20 +112,16 @@ bool CanTransport::attemptBusOffRecovery(uint32_t now) {
   // an error (ESP_ERR_INVALID_STATE) and waiting must NOT increment the attempt budget.
   if (status.state == TWAI_STATE_RECOVERING) {
     constexpr uint32_t RECOVERY_TIMEOUT_MS = 3000;
-    if (uint32_t(now - recoveryInitiatedMs_) < RECOVERY_TIMEOUT_MS) {
-      return false; // Still legitimately waiting for hardware bus recovery
-    }
-    // Recovery sequence timed out on bus (e.g. bus line held dominant or disconnected)
-    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_BUSOFF_RECOVERY",
-                                    "hardware recovery timed out (%lu ms)",
-                                    (unsigned long)RECOVERY_TIMEOUT_MS);
-    lastRecoveryAttemptMs_ = now;
-    recoveryInitiatedMs_ = 0;
-    if (++busOffRecoveryAttempts_ >= MAX_BUSOFF_RECOVERY_ATTEMPTS) {
-      busOffRecoveryPending_ = false;
-      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_BUSOFF_RECOVERY_GAVE_UP",
-                                      "Recovery abandoned after %u attempts; manual reboot required.",
-                                      static_cast<unsigned>(busOffRecoveryAttempts_));
+    // A prolonged RECOVERING state is not a new recovery attempt. The ESP-IDF
+    // driver still owns the transition to STOPPED. Consuming the retry budget
+    // here can permanently disable an otherwise recoverable receive-only bus.
+    // Report a stuck bus once without resetting the recovery clock.
+    if (!recoveryTimeoutLogged_ &&
+        uint32_t(now - recoveryInitiatedMs_) >= RECOVERY_TIMEOUT_MS) {
+      recoveryTimeoutLogged_ = true;
+      DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_BUSOFF_RECOVERY",
+                                      "hardware still recovering after %lu ms; awaiting STOPPED",
+                                      (unsigned long)RECOVERY_TIMEOUT_MS);
     }
     return false;
   }
@@ -141,11 +137,13 @@ bool CanTransport::attemptBusOffRecovery(uint32_t now) {
     }
     lastRecoveryAttemptMs_ = now;
     recoveryInitiatedMs_ = 0;
+    recoveryTimeoutLogged_ = false;
     const uint32_t attemptNo = static_cast<uint32_t>(busOffRecoveryAttempts_) + 1;
     const auto err = twai_start();
     if (err == ESP_OK) {
       running_ = true;
       busOffRecoveryPending_ = false;
+      recoveryTimeoutLogged_ = false;
       busOffRecoveryAttempts_ = 0;
       DiagLogger::instance().logEvent(DiagLevel::Info, "CAN_BUSOFF_RECOVERED",
                                       "Controller restarted after bus-off (listen-only).");
@@ -180,6 +178,7 @@ bool CanTransport::attemptBusOffRecovery(uint32_t now) {
     const auto err = twai_initiate_recovery();
     if (err == ESP_OK) {
       recoveryInitiatedMs_ = now;
+      recoveryTimeoutLogged_ = false;
       // In real ESP-IDF hardware, driver enters TWAI_STATE_RECOVERING.
       // In synchronous test mocks, twai_initiate_recovery() may set TWAI_STATE_STOPPED directly.
       if (twai_get_status_info(&status) == ESP_OK && status.state == TWAI_STATE_STOPPED) {
@@ -219,6 +218,7 @@ bool CanTransport::attemptBusOffRecovery(uint32_t now) {
     busOffRecoveryPending_ = false;
     busOffRecoveryAttempts_ = 0;
     recoveryInitiatedMs_ = 0;
+    recoveryTimeoutLogged_ = false;
     return true;
   }
 
