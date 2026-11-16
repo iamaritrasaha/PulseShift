@@ -237,7 +237,13 @@ void CanTransport::poll(uint32_t now) {
   // Latch a latched bus-off / stopped controller even without a new alert.
   twai_status_info_t status{};
   if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0) {
-    fault("controller status failure");
+    if (status.state == TWAI_STATE_BUS_OFF) {
+      busOffRecoveryPending_ = true;
+      lastRecoveryAttemptMs_ = now;
+      fault("bus-off detected");
+    } else {
+      fault("controller status failure");
+    }
     return;
   }
 
