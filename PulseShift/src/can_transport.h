@@ -51,5 +51,6 @@ class CanTransport {
   static constexpr uint8_t MAX_BUSOFF_RECOVERY_ATTEMPTS = 5;
   bool busOffRecoveryPending_ = false;
   uint32_t lastRecoveryAttemptMs_ = 0;
+  uint32_t recoveryInitiatedMs_ = 0;
   uint8_t busOffRecoveryAttempts_ = 0;
 };

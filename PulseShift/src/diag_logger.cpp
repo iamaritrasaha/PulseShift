@@ -271,6 +271,15 @@ void DiagLogger::dumpToSerial() {
     anyLogs = true;
     Serial.printf("=== BEGIN PULSESHIFT %s DIAGNOSTIC LOGS ===\r\n", labels[i]);
     while (f.available()) {
+      if (Serial.available()) {
+        const char c = static_cast<char>(Serial.peek());
+        if (c == 0x03 || c == 'q' || c == 'Q' || c == 0x1B) {
+          (void)Serial.read();
+          Serial.println("\r\n[LOGS] Export cancelled by user.");
+          f.close();
+          return;
+        }
+      }
       char buf[128];
       const int n = f.readBytes(buf, sizeof(buf) - 1);
       if (n > 0) {

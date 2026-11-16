@@ -246,33 +246,45 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     return finishFrame(nowMs, cfg);
   }
 
-  // ---- Priority 3: RPM validity safeguard ------------------------------
-  // Effect 4 is the protected, calibrated shift light. Effect 5 is a
-  // separate, explicitly UNVERIFIED diagnostic preview of the live CAN signal.
-  // Neither mode is allowed to display stale, unavailable or invalid RPM.
-  // A provisional preview must still show non-RPM startup/commissioning
-  // indications without a bike connected. Do not apply this exception to
-  // the verified shift-light mode. Once startup finishes and no owner window
-  // is open, stale/invalid RPM is strictly blanked as before.
-  const bool previewIndicatorActive = cfg.effect == 5 &&
-      (input.authWindowOpen || (cfg.isPowerOn && !startupComplete_));
-  if (!input.testRpmActive &&
-      (cfg.effect == 4 || (cfg.effect == 5 && !previewIndicatorActive))) {
-    const bool verifiedBar = cfg.effect == 4;
-    const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
-        (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
-                          rpm.calibrationMatchesSettings));
-    if (!sampleQualified) {
-      // Reset threshold latches so a recovered signal starts from fresh data.
-      for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
-      warningLatched_ = false;
-      activeLayer_ = LedActiveLayer::SafeguardBlank;
-      setAllPixels(RgbColor{0, 0, 0});
-      return finishFrame(nowMs, cfg);
-    }
+  // An explicitly requested synthetic bench test takes precedence over
+  // real RPM display modes and commissioning indications, but not hardware
+  // faults or owner feedback. Never treat the test value as a received CAN sample.
+  if (input.testRpmActive) {
+    activeLayer_ = LedActiveLayer::BenchTest;
+    renderRpmBar(nowMs, cfg, input.testRpm);
+    return finishFrame(nowMs, cfg);
+  }
+
+  // ---- Priority 3: active RPM shift-light rendering --------------------
+  // When an RPM display mode is active and qualified fresh engine-running
+  // samples are arriving, live RPM rendering takes precedence over the
+  // 60-second commissioning window. This ensures that tapping or holding
+  // the BOOT button while riding (e.g. to advance recording stage or pause)
+  // never blinds the rider with a cyan pulse for up to a minute.
+  const bool isRpmMode = (cfg.effect == 4 || cfg.effect == 5);
+  const bool verifiedBar = (cfg.effect == 4);
+  const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
+      (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
+                        rpm.calibrationMatchesSettings));
+  const bool liveRpmActive = isRpmMode && sampleQualified && rpm.engineRunning;
+
+  if (liveRpmActive) {
+    activeLayer_ = verifiedBar ? LedActiveLayer::RpmBar
+                               : LedActiveLayer::ProvisionalRpm;
+    renderRpmBar(nowMs, cfg, rpm.rpm);
+    return finishFrame(nowMs, cfg);
+  }
+
+  // When engine is not running or signal is unqualified, reset threshold latches
+  // so a recovered signal starts clean.
+  if (isRpmMode) {
+    for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
+    warningLatched_ = false;
   }
 
   // ---- Priority 4: owner commissioning indication ----------------------
+  // Displayed when the physical authorization window is open and the engine
+  // is not actively running (e.g. key on / engine stopped, or bench commissioning).
   if (input.authWindowOpen) {
     activeLayer_ = LedActiveLayer::Commissioning;
     const uint32_t phase = nowMs % 1000;
@@ -300,22 +312,15 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // An explicitly requested synthetic bench test takes precedence over
-  // real RPM display modes but not hardware faults, owner feedback, power
-  // or startup. Never treat the test value as a received CAN sample.
-  if (input.testRpmActive) {
-    activeLayer_ = LedActiveLayer::BenchTest;
-    renderRpmBar(nowMs, cfg, input.testRpm);
+  // ---- Priority 6: RPM validity safeguard ------------------------------
+  // If in an RPM mode and engine is stopped, or samples are stale/unqualified,
+  // the display is blanked (never latches old RPM or illuminates without traffic).
+  if (isRpmMode) {
+    activeLayer_ = LedActiveLayer::SafeguardBlank;
+    setAllPixels(RgbColor{0, 0, 0});
     return finishFrame(nowMs, cfg);
   }
 
-  // ---- Priority 6: verified RPM bar / provisional diagnostic preview ---
-  if (cfg.effect == 4 || cfg.effect == 5) {
-    activeLayer_ = (cfg.effect == 4) ? LedActiveLayer::RpmBar
-                                     : LedActiveLayer::ProvisionalRpm;
-    renderRpmBar(nowMs, cfg, rpm.rpm);
-    return finishFrame(nowMs, cfg);
-  }
   // ---- Priority 7: manual decorative lighting --------------------------
   activeLayer_ = LedActiveLayer::Decorative;
   renderEffect(nowMs, cfg);
