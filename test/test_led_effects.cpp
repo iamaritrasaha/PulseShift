@@ -532,7 +532,7 @@ static void boot_button_auth_window_does_not_obscure_active_rpm() {
   // Now cyan commissioning pulse appears because engine is not actively running.
   liveRpm.rpm = 0;
   liveRpm.engineRunning = false;
-  e.update(11000, cfg, liveRpm, input);
+  e.update(11250, cfg, liveRpm, input);
   CHECK(e.activeLayer() == LedActiveLayer::Commissioning);
   CHECK(e.getPixel(0).g > 0);
 
