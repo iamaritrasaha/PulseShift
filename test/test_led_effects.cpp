@@ -485,6 +485,85 @@ static void startup_animations_center_out_and_strobe() {
   CHECK((s.getPixel(0) == RgbColor{50, 60, 70}));
 }
 
+static void boot_button_auth_window_does_not_obscure_active_rpm() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+
+  // Test 1: Provisional RPM preview (effect 5)
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 5;
+  cfg.calibrationVerified = false;
+  cfg.calFingerprint = 0;
+  cfg.calPointsUsed = 0;
+  cfg.warningPatternId = 3;
+
+  LedFrameInput input;
+  LiveRpmSnapshot liveRpm = freshVerifiedSnapshot(4500); // 4 LEDs lit
+  liveRpm.calibrationVerified = false;
+  liveRpm.calibrationMatchesSettings = false;
+
+  // Normal running state
+  e.update(10000, cfg, liveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 4);
+
+  // Button pressed while engine is running: brief white feedback flash
+  input.feedbackActive = true;
+  e.update(10050, cfg, liveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::Feedback);
+  CHECK((e.getPixel(0) == RgbColor{255, 255, 255}));
+
+  // Feedback expires (200ms), but auth window remains OPEN for 60 seconds.
+  // The shift light MUST continue rendering 4500 RPM and NOT be masked by cyan!
+  input.feedbackActive = false;
+  input.authWindowOpen = true;
+  e.update(10250, cfg, liveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 4);
+
+  // Engine speed changes to 3000 RPM while auth window is open: shift light tracks it!
+  liveRpm.rpm = 3000;
+  e.update(10500, cfg, liveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 3);
+
+  // Engine stops (e.g. at traffic light, 0 RPM):
+  // Now cyan commissioning pulse appears because engine is not actively running.
+  liveRpm.rpm = 0;
+  liveRpm.engineRunning = false;
+  e.update(11250, cfg, liveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::Commissioning);
+  CHECK(e.getPixel(0).g > 0);
+
+  // Engine starts up again and revs to 2500 RPM:
+  // Instantly returns to shift light rendering!
+  liveRpm.rpm = 2500;
+  liveRpm.engineRunning = true;
+  e.update(12000, cfg, liveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 2);
+
+  // Auth window closes after 60s
+  input.authWindowOpen = false;
+  e.update(71000, cfg, liveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(e) == 2);
+
+  // Test 2: Verified shift-light mode (effect 4)
+  PulseShiftConfig vcfg = verifiedBarConfig();
+  LiveRpmSnapshot vliveRpm = freshVerifiedSnapshot(3500);
+  e.update(72000, vcfg, vliveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::RpmBar);
+  CHECK(countLit(e) == 3);
+
+  // Button pressed during verified mode with running engine
+  input.authWindowOpen = true;
+  e.update(72100, vcfg, vliveRpm, input);
+  CHECK(e.activeLayer() == LedActiveLayer::RpmBar);
+  CHECK(countLit(e) == 3);
+}
+
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
@@ -492,6 +571,7 @@ int main() {
   provisional_default_keeps_synthetic_bench_test();
   verified_effect_bench_test_without_live_can();
   preview_indicators_visible_without_can();
+  boot_button_auth_window_does_not_obscure_active_rpm();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
   startup_animations_center_out_and_strobe();

@@ -27,7 +27,8 @@ bool CanTransport::begin() {
   general.rx_queue_len = 256;
   general.alerts_enabled = TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF |
                            TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN |
-                           TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN;
+                           TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_ABOVE_ERR_WARN |
+                           TWAI_ALERT_BUS_RECOVERED;
 
   twai_timing_config_t timing{};
   switch (bitrate_) {
@@ -95,32 +96,52 @@ void CanTransport::fault(const char* reason) {
 }
 
 // ESP-IDF bus-off protocol: initiate recovery, the controller leaves BUS_OFF
-// after transmitting 128 recessive bits (sub-millisecond at 500 kbps), then
-// twai_start() re-enters the bus. Listen-only mode plus the physical TX
-// air-gap make this harmless to the vehicle.
+// after observing 128 occurrences of 11 consecutive recessive bits (sub-millisecond at 500 kbps),
+// transitions to TWAI_STATE_STOPPED, then twai_start() re-enters the bus.
+// Listen-only mode plus the physical TX air-gap make this harmless to the vehicle.
 bool CanTransport::attemptBusOffRecovery(uint32_t now) {
   if (!busOffRecoveryPending_ || !beginAttempted_) return false;
 
-  // Exponential backoff: 1 s, 2 s, 4 s, 8 s, 16 s. After
-  // MAX_BUSOFF_RECOVERY_ATTEMPTS failed cycles the fault is latched again and
-  // only a manual reboot (or a fresh bus-off event) retried.
-  const uint32_t backoff =
-      1000u << (busOffRecoveryAttempts_ < 4 ? busOffRecoveryAttempts_ : 4);
-  if (uint32_t(now - lastRecoveryAttemptMs_) < backoff) return false;
-  lastRecoveryAttemptMs_ = now;
-
-  const uint32_t attemptNo = static_cast<uint32_t>(busOffRecoveryAttempts_) + 1;
-
-  // While the controller is still leaving bus-off, kick recovery each cycle
-  // and wait; once it reports a startable state, try to re-enter the bus.
   twai_status_info_t status{};
   const bool statusOk = (twai_get_status_info(&status) == ESP_OK);
-  const bool inBusOff = statusOk &&
-                        (status.state == TWAI_STATE_BUS_OFF ||
-                         status.state == TWAI_STATE_RECOVERING);
-  if (inBusOff) {
-    (void)twai_initiate_recovery(); // best effort; progress is re-checked next cycle
-  } else {
+  if (!statusOk) return false;
+
+  // State 1: Legitimate waiting in TWAI_STATE_RECOVERING.
+  // The ESP-IDF legacy TWAI driver passively monitors the bus for 128 occurrences
+  // of 11 consecutive recessive bits. Calling twai_initiate_recovery() again is
+  // an error (ESP_ERR_INVALID_STATE) and waiting must NOT increment the attempt budget.
+  if (status.state == TWAI_STATE_RECOVERING) {
+    constexpr uint32_t RECOVERY_TIMEOUT_MS = 3000;
+    if (uint32_t(now - recoveryInitiatedMs_) < RECOVERY_TIMEOUT_MS) {
+      return false; // Still legitimately waiting for hardware bus recovery
+    }
+    // Recovery sequence timed out on bus (e.g. bus line held dominant or disconnected)
+    DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_BUSOFF_RECOVERY",
+                                    "hardware recovery timed out (%lu ms)",
+                                    (unsigned long)RECOVERY_TIMEOUT_MS);
+    lastRecoveryAttemptMs_ = now;
+    recoveryInitiatedMs_ = 0;
+    if (++busOffRecoveryAttempts_ >= MAX_BUSOFF_RECOVERY_ATTEMPTS) {
+      busOffRecoveryPending_ = false;
+      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_BUSOFF_RECOVERY_GAVE_UP",
+                                      "Recovery abandoned after %u attempts; manual reboot required.",
+                                      static_cast<unsigned>(busOffRecoveryAttempts_));
+    }
+    return false;
+  }
+
+  // State 2: Controller is in TWAI_STATE_STOPPED.
+  // If the recovery sequence completed (recoveryInitiatedMs_ != 0), restart immediately.
+  // Otherwise, observe backoff before attempting start.
+  if (status.state == TWAI_STATE_STOPPED) {
+    if (recoveryInitiatedMs_ == 0) {
+      const uint32_t backoff =
+          1000u << (busOffRecoveryAttempts_ < 4 ? busOffRecoveryAttempts_ : 4);
+      if (uint32_t(now - lastRecoveryAttemptMs_) < backoff) return false;
+    }
+    lastRecoveryAttemptMs_ = now;
+    recoveryInitiatedMs_ = 0;
+    const uint32_t attemptNo = static_cast<uint32_t>(busOffRecoveryAttempts_) + 1;
     const auto err = twai_start();
     if (err == ESP_OK) {
       running_ = true;
@@ -138,14 +159,69 @@ bool CanTransport::attemptBusOffRecovery(uint32_t now) {
                                     "restart failed: %s (attempt %u/%u)",
                                     esp_err_to_name(err), (unsigned long)attemptNo,
                                     static_cast<unsigned>(MAX_BUSOFF_RECOVERY_ATTEMPTS));
+    if (++busOffRecoveryAttempts_ >= MAX_BUSOFF_RECOVERY_ATTEMPTS) {
+      busOffRecoveryPending_ = false;
+      DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_BUSOFF_RECOVERY_GAVE_UP",
+                                      "Recovery abandoned after %u attempts; manual reboot required.",
+                                      static_cast<unsigned>(busOffRecoveryAttempts_));
+    }
+    return false;
   }
 
-  if (++busOffRecoveryAttempts_ >= MAX_BUSOFF_RECOVERY_ATTEMPTS) {
-    busOffRecoveryPending_ = false;
-    DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_BUSOFF_RECOVERY_GAVE_UP",
-                                    "Recovery abandoned after %u attempts; manual reboot required.",
-                                    static_cast<unsigned>(busOffRecoveryAttempts_));
+  // Exponential backoff check before initiating recovery from BUS_OFF: 1s, 2s, 4s, 8s, 16s.
+  const uint32_t backoff =
+      1000u << (busOffRecoveryAttempts_ < 4 ? busOffRecoveryAttempts_ : 4);
+  if (uint32_t(now - lastRecoveryAttemptMs_) < backoff) return false;
+
+  // State 3: Controller is in TWAI_STATE_BUS_OFF.
+  // Call twai_initiate_recovery() ONCE to enter TWAI_STATE_RECOVERING.
+  if (status.state == TWAI_STATE_BUS_OFF) {
+    lastRecoveryAttemptMs_ = now;
+    const auto err = twai_initiate_recovery();
+    if (err == ESP_OK) {
+      recoveryInitiatedMs_ = now;
+      // In real ESP-IDF hardware, driver enters TWAI_STATE_RECOVERING.
+      // In synchronous test mocks, twai_initiate_recovery() may set TWAI_STATE_STOPPED directly.
+      if (twai_get_status_info(&status) == ESP_OK && status.state == TWAI_STATE_STOPPED) {
+        const auto startErr = twai_start();
+        if (startErr == ESP_OK) {
+          running_ = true;
+          busOffRecoveryPending_ = false;
+          busOffRecoveryAttempts_ = 0;
+          recoveryInitiatedMs_ = 0;
+          DiagLogger::instance().logEvent(DiagLevel::Info, "CAN_BUSOFF_RECOVERED",
+                                          "Controller restarted after bus-off (listen-only).");
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+          if (log_) log_->status("CAN RECOVERED: bus-off auto-restart OK");
+          else Serial.println("CAN RECOVERED: bus-off auto-restart OK");
+#endif
+          return true;
+        }
+      }
+      return false;
+    } else {
+      DiagLogger::instance().logEvent(DiagLevel::Warn, "CAN_BUSOFF_RECOVERY",
+                                      "initiate recovery failed: %s",
+                                      esp_err_to_name(err));
+      if (++busOffRecoveryAttempts_ >= MAX_BUSOFF_RECOVERY_ATTEMPTS) {
+        busOffRecoveryPending_ = false;
+        DiagLogger::instance().logEvent(DiagLevel::Error, "CAN_BUSOFF_RECOVERY_GAVE_UP",
+                                        "Recovery abandoned after %u attempts; manual reboot required.",
+                                        static_cast<unsigned>(busOffRecoveryAttempts_));
+      }
+      return false;
+    }
   }
+
+  // If already running (e.g. recovered externally or restarted)
+  if (status.state == TWAI_STATE_RUNNING) {
+    running_ = true;
+    busOffRecoveryPending_ = false;
+    busOffRecoveryAttempts_ = 0;
+    recoveryInitiatedMs_ = 0;
+    return true;
+  }
+
   return false;
 }
 
@@ -237,7 +313,13 @@ void CanTransport::poll(uint32_t now) {
   // Latch a latched bus-off / stopped controller even without a new alert.
   twai_status_info_t status{};
   if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING || status.msgs_to_tx != 0) {
-    fault("controller status failure");
+    if (status.state == TWAI_STATE_BUS_OFF) {
+      busOffRecoveryPending_ = true;
+      lastRecoveryAttemptMs_ = now;
+      fault("bus-off detected");
+    } else {
+      fault("controller status failure");
+    }
     return;
   }
 

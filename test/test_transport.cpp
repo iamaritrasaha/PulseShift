@@ -14,6 +14,7 @@ twai_message_t next;
 bool available=false;
 uint32_t alerts=0;
 int installResult=ESP_OK,rxResult=ESP_OK,alertResult=ESP_OK,initiateResult=ESP_OK,startResult=ESP_OK;
+bool asyncRecovery=false;
 int gpio_reset_pin(gpio_num_t p){CHECK(p==17);routing.push_back(1);return ESP_OK;}
 int gpio_set_direction(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_MODE_INPUT);routing.push_back(2);return ESP_OK;}
 int gpio_set_pull_mode(gpio_num_t p,int m){CHECK(p==17 && m==GPIO_PULLUP_ONLY);routing.push_back(3);return ESP_OK;}
@@ -21,15 +22,16 @@ int twai_driver_install(const twai_general_config_t* g,const twai_timing_config_
   ++installs;CHECK(g->mode==TWAI_MODE_LISTEN_ONLY);CHECK(g->tx_io==17 && g->rx_io==16);
   CHECK(g->tx_queue_len==0 && g->rx_queue_len==256);CHECK(t->bitrate==500000);
   CHECK(!(g->alerts_enabled & (TWAI_ALERT_TX_SUCCESS|TWAI_ALERT_TX_FAILED|TWAI_ALERT_TX_IDLE)));
+  CHECK(g->alerts_enabled & TWAI_ALERT_BUS_RECOVERED);
   return installResult;
 }
 int twai_start(){CHECK(routing==std::vector<int>({1,2,3}));++starts;status.state=startResult==ESP_OK?TWAI_STATE_RUNNING:TWAI_STATE_STOPPED;return startResult;}
 int twai_stop(){++stops;status.state=TWAI_STATE_STOPPED;return ESP_OK;}
-int twai_initiate_recovery(){status.state=TWAI_STATE_STOPPED;return initiateResult;}
+int twai_initiate_recovery(){status.state=asyncRecovery?TWAI_STATE_RECOVERING:TWAI_STATE_STOPPED;return initiateResult;}
 int twai_read_alerts(uint32_t* a,uint32_t timeout){CHECK(timeout==0);*a=alerts;alerts=0;return alertResult;}
 int twai_get_status_info(twai_status_info_t* s){*s=status;return ESP_OK;}
 int twai_receive(twai_message_t* f,uint32_t timeout){CHECK(timeout==0);if(rxResult!=ESP_OK)return rxResult;if(!available)return ESP_ERR_TIMEOUT;*f=next;available=false;return ESP_OK;}
-void reset() { routing.clear();status={};next={};available=false;alerts=0;installResult=rxResult=alertResult=initiateResult=startResult=ESP_OK;Serial.output.clear();Serial.capacity=0; }
+void reset() { routing.clear();status={};next={};available=false;alerts=0;installResult=rxResult=alertResult=initiateResult=startResult=ESP_OK;asyncRecovery=false;Serial.output.clear();Serial.capacity=0; }
 int main() {
   reset();FrameLog disabledLog;CanTransport disabled(0,&disabledLog);
   CHECK(!disabled.configured() && !disabled.begin());CHECK(installs==0);
@@ -91,5 +93,53 @@ int main() {
   CHECK(Serial.output.find("CAN HALTED: test\r\n")!=std::string::npos);
   char huge[200];memset(huge,'x',sizeof(huge)-1);huge[199]=0;const auto drops=full.dropped();
   full.status("%s",huge);CHECK(full.dropped()==drops+1);
+
+  // Asynchronous recovery state transitions:
+  // RUNNING -> BUS_OFF -> RECOVERING -> STOPPED -> RUNNING
+  {
+    reset();asyncRecovery=true;FrameLog clog;CanTransport c(500000,&clog);CHECK(c.begin());
+    alerts=TWAI_ALERT_BUS_OFF;status.state=TWAI_STATE_BUS_OFF;
+    c.poll(1000); // Latches bus-off, enters recovery backoff
+    CHECK(!c.healthy());
+
+    // Backoff period passes (1000ms): at t=2001ms, attemptBusOffRecovery initiates recovery.
+    // Simulate real driver: twai_initiate_recovery sets state to RECOVERING.
+    status.state=TWAI_STATE_BUS_OFF;
+    c.poll(2001);
+    CHECK(status.state==TWAI_STATE_RECOVERING);
+
+    // While in RECOVERING, subsequent polls within timeout must NOT increment attempts or call start.
+    const auto startsBefore=starts;
+    c.poll(2050);CHECK(!c.healthy() && starts==startsBefore);
+    c.poll(2500);CHECK(!c.healthy() && starts==startsBefore);
+
+    // Legitimate recovery completes on bus: driver alerts BUS_RECOVERED and state becomes STOPPED.
+    alerts=TWAI_ALERT_BUS_RECOVERED;status.state=TWAI_STATE_STOPPED;
+    c.poll(2510);
+    CHECK(c.healthy()); // Restarted successfully!
+    CHECK(starts==startsBefore+1);
+  }
+
+  // Recovery timeout test: controller stuck in RECOVERING for > 3000ms
+  {
+    reset();asyncRecovery=true;FrameLog clog;CanTransport c(500000,&clog);CHECK(c.begin());
+    alerts=TWAI_ALERT_BUS_OFF;status.state=TWAI_STATE_BUS_OFF;
+    c.poll(1000);
+    CHECK(!c.healthy());
+
+    // t=2001ms: initiate recovery
+    status.state=TWAI_STATE_BUS_OFF;
+    c.poll(2001);
+    CHECK(status.state==TWAI_STATE_RECOVERING);
+
+    // Poll within timeout (< 3000ms)
+    c.poll(4000); // 1999ms into recovery: legitimately waiting
+    CHECK(!c.healthy());
+
+    // Poll past timeout (> 3000ms, t=5002ms)
+    c.poll(5002); // Recovery timed out
+    CHECK(!c.healthy());
+  }
+
   std::printf("PASS receive-only routing, no TX linkage, driver errors/overflow, bounded logging: %u checks\n",checks);
 }

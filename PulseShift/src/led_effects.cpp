@@ -254,14 +254,17 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   // indications without a bike connected. Do not apply this exception to
   // the verified shift-light mode. Once startup finishes and no owner window
   // is open, stale/invalid RPM is strictly blanked as before.
+  const bool verifiedBar = cfg.effect == 4;
+  const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
+      (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
+                        rpm.calibrationMatchesSettings));
+  const bool liveRpmActive = (cfg.effect == 4 || cfg.effect == 5) &&
+                             sampleQualified && rpm.engineRunning;
+
   const bool previewIndicatorActive = cfg.effect == 5 &&
       (input.authWindowOpen || (cfg.isPowerOn && !startupComplete_));
   if (!input.testRpmActive &&
       (cfg.effect == 4 || (cfg.effect == 5 && !previewIndicatorActive))) {
-    const bool verifiedBar = cfg.effect == 4;
-    const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
-        (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
-                          rpm.calibrationMatchesSettings));
     if (!sampleQualified) {
       // Reset threshold latches so a recovered signal starts from fresh data.
       for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
@@ -273,7 +276,11 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   }
 
   // ---- Priority 4: owner commissioning indication ----------------------
-  if (input.authWindowOpen) {
+  // Displayed when the physical authorization window is open and the engine
+  // is NOT actively running with qualified RPM. If the engine is running on an
+  // RPM display mode, live RPM rendering takes precedence so a rider tapping
+  // or holding the button is never blinded by cyan.
+  if (input.authWindowOpen && !liveRpmActive) {
     activeLayer_ = LedActiveLayer::Commissioning;
     const uint32_t phase = nowMs % 1000;
     const uint8_t factor = (phase < 500)
