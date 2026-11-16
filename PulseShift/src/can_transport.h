@@ -52,5 +52,6 @@ class CanTransport {
   bool busOffRecoveryPending_ = false;
   uint32_t lastRecoveryAttemptMs_ = 0;
   uint32_t recoveryInitiatedMs_ = 0;
+  bool recoveryTimeoutLogged_ = false;
   uint8_t busOffRecoveryAttempts_ = 0;
 };
