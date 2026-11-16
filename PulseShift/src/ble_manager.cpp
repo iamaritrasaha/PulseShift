@@ -235,6 +235,9 @@ void BleManager::onClientDisconnected() {
   captureCancelRequested_ = false;
   captureLineStaged_ = false;
   captureRecordsSent_ = 0;
+  activeMsgFlags_ = 0;
+  activeMsgOffset_ = 0;
+  activeMsgLen_ = 0;
   // Discard any commands still queued by the departed connection. NimBLE
   // commonly reuses connection handles, so residue could otherwise execute
   // later under a new client's freshly-bound session.
@@ -247,6 +250,8 @@ void BleManager::onClientDisconnected() {
 bool BleManager::isClientConnected() const {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   return s_clientConnected.load(std::memory_order_acquire);
+#elif defined(PULSESHIFT_TEST_BUILD)
+  return testConnected_;
 #else
   return false;
 #endif
@@ -271,6 +276,8 @@ bool BleManager::isHealthSubscribed() const {
 bool BleManager::isLogsSubscribed() const {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   return s_clientConnected.load(std::memory_order_acquire) && s_logsSubscribed.load(std::memory_order_acquire);
+#elif defined(PULSESHIFT_TEST_BUILD)
+  return testConnected_ && testLogsSubscribed_;
 #else
   return false;
 #endif
@@ -626,6 +633,11 @@ void BleManager::drainControlQueue(uint32_t nowMs) {
       capturePageFinished_ = 0;
       captureLineStaged_ = false;
       activeMsgInProgress_ = false;
+      if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
+        activeMsgFlags_ = 0;
+        activeMsgOffset_ = 0;
+        activeMsgLen_ = 0;
+      }
       capturePageActive_ = true;
       // Activate the recorder's export cursor and open its page-scoped read
       // handle. An out-of-range start simply stays inactive so the first
@@ -637,6 +649,13 @@ void BleManager::drainControlQueue(uint32_t nowMs) {
       capturePageEopPending_ = false;
       captureLineStaged_ = false;
       captureRecordsSent_ = 0;
+      CanRecorder::instance().bleExportCancel();
+      if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
+        activeMsgInProgress_ = false;
+        activeMsgFlags_ = 0;
+        activeMsgOffset_ = 0;
+        activeMsgLen_ = 0;
+      }
     }
   }
 }
@@ -746,9 +765,30 @@ void BleManager::sendHealthNotification(const CanTransport& transport,
 #endif
 }
 
+void BleManager::sendLogNotification(const BleLogChunkPacket& packet) {
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+  if (s_pLogsChar) {
+    s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
+    s_pLogsChar->notify();
+    ++notifyCount_;
+    ++logNotifyCount_;
+  }
+#elif defined(PULSESHIFT_TEST_BUILD)
+  if (testLogChunkCount_ < sizeof(testLogChunks_) / sizeof(testLogChunks_[0])) {
+    testLogChunks_[testLogChunkCount_++] = packet;
+  }
+  ++notifyCount_;
+  ++logNotifyCount_;
+#else
+  (void)packet;
+#endif
+}
+
 void BleManager::processLogQueue() {
+#if (defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)) || defined(PULSESHIFT_TEST_BUILD)
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   if (!s_pLogsChar) return;
+#endif
 
   if (!activeMsgInProgress_) {
     if (liveLogCount_ == 0) return;
@@ -785,12 +825,12 @@ void BleManager::processLogQueue() {
   memcpy(chunk.payload, &activeMsgBuf_[activeMsgOffset_], chunkPayloadLen);
   activeMsgOffset_ += chunkPayloadLen;
 
-  s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&chunk), sizeof(chunk));
-  s_pLogsChar->notify();
-  ++notifyCount_;
-  ++logNotifyCount_;
+  sendLogNotification(chunk);
 
   if (activeMsgOffset_ >= activeMsgLen_) {
+    if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
+      captureLineStaged_ = false;
+    }
     activeMsgInProgress_ = false;
     activeMsgFlags_ = 0;
   }
@@ -824,10 +864,7 @@ void BleManager::processHistoricalPageRead() {
     eop.payloadLength = 5;
     memcpy(&eop.payload[0], &histFileOffset_, 4);
     eop.payload[4] = histPageFinished_;
-    s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&eop), sizeof(eop));
-    s_pLogsChar->notify();
-    ++notifyCount_;
-    ++logNotifyCount_;
+    sendLogNotification(eop);
 
     histPageEopPending_ = false;
     histPageActive_ = false;
@@ -905,7 +942,7 @@ void BleManager::processHistoricalPageRead() {
 #endif
 }
 
-#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+#if (defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)) || defined(PULSESHIFT_TEST_BUILD)
 namespace {
 void formatCaptureRecordLine(const CanLogRecord& rec, char* out, size_t outLen) {
   char hexData[17] = "";
@@ -923,18 +960,27 @@ void formatCaptureRecordLine(const CanLogRecord& rec, char* out, size_t outLen) 
            hexData);
 }
 }  // namespace
-#endif // NimBLE guard for the capture-line formatter
+#endif // NimBLE / host-test guard for the capture-line formatter
 
 void BleManager::processCapturePage() {
+#if (defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)) || defined(PULSESHIFT_TEST_BUILD)
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   if (!s_pLogsChar) return;
+#endif
 
   if (captureCancelRequested_) {
     CanRecorder::instance().bleExportCancel();
     capturePageActive_ = false;
     capturePageEopPending_ = false;
-    activeMsgInProgress_ = false;
+    if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
+      activeMsgInProgress_ = false;
+      activeMsgFlags_ = 0;
+      activeMsgOffset_ = 0;
+      activeMsgLen_ = 0;
+    }
     captureLineStaged_ = false;
+    captureRecordsSent_ = 0;
+    captureCancelRequested_ = false;
     return;
   }
 
@@ -952,13 +998,16 @@ void BleManager::processCapturePage() {
     eop.payloadLength = 5;
     memcpy(&eop.payload[0], &captureNextRecord_, 4);
     eop.payload[4] = capturePageFinished_;
-    s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&eop), sizeof(eop));
-    s_pLogsChar->notify();
-    ++notifyCount_;
-    ++logNotifyCount_;
+    sendLogNotification(eop);
 
     capturePageEopPending_ = false;
     capturePageActive_ = false;
+    captureLineStaged_ = false;
+    CanRecorder::instance().bleExportEnd();
+    return;
+  }
+
+  if (activeMsgInProgress_ || captureLineStaged_) {
     return;
   }
 
@@ -987,7 +1036,6 @@ void BleManager::processCapturePage() {
         capturePageFinished_ = 0;
         capturePageEopPending_ = true;
         capturePageActive_ = false;
-        captureLineStaged_ = false;
       }
     } else {
       // End of capture (or unreadable capture).

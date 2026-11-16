@@ -106,6 +106,40 @@ class BleManager {
   bool testCapturePageActive() const { return capturePageActive_; }
   size_t testLiveLogCount() const { return liveLogCount_; }
   const char* testLiveLogText(uint8_t index) const { return liveLogRing_[(liveLogTail_ + index) % LIVE_LOG_CAPACITY]; }
+  void testSetInitialized(bool init) { initialized_ = init; }
+  void testSetConnected(bool connected) { testConnected_ = connected; }
+  void testSetLogsSubscribed(bool subscribed) { testLogsSubscribed_ = subscribed; }
+  size_t testLogChunkCount() const { return testLogChunkCount_; }
+  const BleLogChunkPacket& testLogChunk(size_t index) const { return testLogChunks_[index]; }
+  void testClearLogChunks() { testLogChunkCount_ = 0; }
+  bool testCaptureLineStaged() const { return captureLineStaged_; }
+  bool testCapturePageEopPending() const { return capturePageEopPending_; }
+  uint8_t testCaptureRecordsSent() const { return captureRecordsSent_; }
+  uint32_t testCaptureNextRecord() const { return captureNextRecord_; }
+  uint8_t testCapturePageFinished() const { return capturePageFinished_; }
+  bool testActiveMsgInProgress() const { return activeMsgInProgress_; }
+  uint8_t testActiveMsgFlags() const { return activeMsgFlags_; }
+  void testResetCaptureState() {
+    capturePageActive_ = false;
+    capturePageEopPending_ = false;
+    captureRecordsSent_ = 0;
+    captureLineStaged_ = false;
+    captureCancelRequested_ = false;
+    captureNextRecord_ = 0;
+    capturePageFinished_ = 0;
+    activeMsgInProgress_ = false;
+    activeMsgFlags_ = 0;
+    activeMsgOffset_ = 0;
+    activeMsgLen_ = 0;
+    testLogChunkCount_ = 0;
+  }
+  uint32_t testLastLogNotifyMs() const { return lastLogNotifyMs_; }
+  void testSetLastLogNotifyMs(uint32_t ms) { lastLogNotifyMs_ = ms; }
+  void testClearLiveLogs() {
+    liveLogHead_ = 0;
+    liveLogTail_ = 0;
+    liveLogCount_ = 0;
+  }
 #endif
 
  private:
@@ -125,6 +159,7 @@ class BleManager {
   void drainControlQueue(uint32_t nowMs);
   void processHistoricalPageRead();
   void processCapturePage();
+  void sendLogNotification(const BleLogChunkPacket& packet);
   void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate,
                             const CanTransport& transport, const CanRecorder& recorder);
   void processSnapshotStream();
@@ -228,6 +263,10 @@ class BleManager {
   // without the radio stack). Sized for a full dispatch test sequence.
   BleConfigResultPacket testResults_[64]{};
   size_t testResultCount_ = 0;
+  bool testConnected_ = false;
+  bool testLogsSubscribed_ = false;
+  BleLogChunkPacket testLogChunks_[512]{};
+  size_t testLogChunkCount_ = 0;
 #endif
 
   friend class BleServerCallbacksImpl;

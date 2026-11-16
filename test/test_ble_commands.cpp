@@ -13,6 +13,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <set>
+#include <map>
 
 // Minimal TWAI/GPIO stub definitions: this binary links can_transport.cpp but
 // never drives the transport, so the driver symbols only need to resolve.
@@ -622,6 +624,884 @@ static void ota_and_capabilities_discovery_tests() {
   CHECK(lastResult(ble).payloadLength == 1);
 }
 
+// ============================================================================
+// BLE Capture-Export Test Helpers & Scenario Suite (All 11 Scenarios)
+// ============================================================================
+
+struct ReassembledRecord {
+  uint16_t messageId = 0;
+  std::string csvLine;
+  size_t chunkCount = 0;
+  bool firstChunkValid = false;
+  bool finalChunkValid = false;
+  bool captureFlagValid = true;
+};
+
+struct PageCaptureResult {
+  std::vector<ReassembledRecord> records;
+  bool eopFound = false;
+  uint32_t eopNextCursor = 0;
+  uint8_t eopFinished = 0xFF;
+  size_t eopChunkIndex = 0;
+  size_t totalChunks = 0;
+  size_t liveLogChunks = 0;
+};
+
+static std::string expectedCaptureLine(const CanLogRecord& rec) {
+  char hexData[17] = "";
+  const uint8_t len = (rec.dlc <= 8) ? rec.dlc : 8;
+  for (uint8_t i = 0; i < len; ++i) {
+    snprintf(&hexData[i * 2], 3, "%02X", rec.data[i]);
+  }
+  char out[96];
+  snprintf(out, sizeof(out), "CAP,%lu,%u,%0*lX,%d,%u,%s\r\n",
+           (unsigned long)rec.timestampMs,
+           rec.stage,
+           (rec.id & 0x80000000u) ? 8 : 3,
+           (unsigned long)(rec.id & 0x1FFFFFFFu),
+           (rec.id & 0x80000000u) ? 1 : 0,
+           rec.dlc,
+           hexData);
+  return std::string(out);
+}
+
+static CanLogRecord makeSyntheticRecord(uint32_t index) {
+  CanLogRecord rec{};
+  rec.timestampMs = 1000 + index * 10;
+  rec.id = 0x301;
+  rec.stage = 1;
+  rec.dlc = 8;
+  rec.data[0] = static_cast<uint8_t>(index & 0xFF);
+  rec.data[1] = static_cast<uint8_t>((index >> 8) & 0xFF);
+  rec.checksum = CanRecorder::computeCrc16(reinterpret_cast<const uint8_t*>(&rec), 18);
+  return rec;
+}
+
+static void createCustomCapture(const std::vector<CanLogRecord>& records) {
+  CaptureHeader hdr{};
+  std::memcpy(hdr.magic, "PULSECAP", 8);
+  hdr.headerVersion = 1;
+  hdr.recordSize = sizeof(CanLogRecord);
+  hdr.sessionId = 1;
+  hdr.bootCount = 1;
+  hdr.bitrate = 500000;
+  hdr.startMs = 1000;
+  std::strncpy(hdr.mode, "CAN_REC", sizeof(hdr.mode));
+  std::strncpy(hdr.vehicle, "TEST", sizeof(hdr.vehicle));
+
+  std::vector<uint8_t> fileBytes(sizeof(CaptureHeader) + records.size() * sizeof(CanLogRecord));
+  std::memcpy(fileBytes.data(), &hdr, sizeof(CaptureHeader));
+
+  for (size_t i = 0; i < records.size(); ++i) {
+    CanLogRecord rec = records[i];
+    rec.checksum = CanRecorder::computeCrc16(reinterpret_cast<const uint8_t*>(&rec), 18);
+    std::memcpy(fileBytes.data() + sizeof(CaptureHeader) + i * sizeof(CanLogRecord), &rec, sizeof(rec));
+  }
+  fs::setMockFile(CanRecorder::CAPTURE_PATH, fileBytes);
+}
+
+static void createSyntheticCapture(uint32_t recordCount) {
+  std::vector<CanLogRecord> recs(recordCount);
+  for (uint32_t i = 0; i < recordCount; ++i) {
+    recs[i] = makeSyntheticRecord(i);
+  }
+  createCustomCapture(recs);
+}
+
+static PageCaptureResult parseLogChunks(const BleManager& ble) {
+  PageCaptureResult res;
+  res.totalChunks = ble.testLogChunkCount();
+
+  std::map<uint16_t, size_t> msgIdToIndex;
+  uint16_t currentMsgId = 0xFFFF;
+
+  for (size_t i = 0; i < ble.testLogChunkCount(); ++i) {
+    const BleLogChunkPacket& p = ble.testLogChunk(i);
+
+    if ((p.flags & BLE_LOG_FLAG_END_OF_PAGE) != 0) {
+      res.eopFound = true;
+      res.eopChunkIndex = i;
+      CHECK(p.payloadLength == 5);
+      std::memcpy(&res.eopNextCursor, &p.payload[0], 4);
+      res.eopFinished = p.payload[4];
+      CHECK((p.flags & BLE_LOG_FLAG_FINAL_CHUNK) != 0);
+      CHECK((p.flags & BLE_LOG_FLAG_CAPTURE_LINE) != 0);
+      continue;
+    }
+
+    if ((p.flags & BLE_LOG_FLAG_CAPTURE_LINE) == 0) {
+      res.liveLogChunks++;
+      continue;
+    }
+
+    if (msgIdToIndex.find(p.messageId) == msgIdToIndex.end()) {
+      size_t newIdx = res.records.size();
+      msgIdToIndex[p.messageId] = newIdx;
+      ReassembledRecord rec;
+      rec.messageId = p.messageId;
+      rec.firstChunkValid = ((p.flags & BLE_LOG_FLAG_FIRST_CHUNK) != 0) && (p.chunkIndex == 0);
+      res.records.push_back(rec);
+      currentMsgId = p.messageId;
+    } else {
+      CHECK(currentMsgId == p.messageId);
+    }
+
+    ReassembledRecord& r = res.records[msgIdToIndex[p.messageId]];
+    CHECK(p.chunkIndex == r.chunkCount);
+    r.chunkCount++;
+    if ((p.flags & BLE_LOG_FLAG_FINAL_CHUNK) != 0) {
+      r.finalChunkValid = true;
+    }
+    if ((p.flags & BLE_LOG_FLAG_CAPTURE_LINE) == 0) {
+      r.captureFlagValid = false;
+    }
+
+    for (uint8_t b = 0; b < p.payloadLength; ++b) {
+      r.csvLine.push_back(static_cast<char>(p.payload[b]));
+    }
+  }
+  return res;
+}
+
+static void setupCaptureTest(uint32_t recordCount, uint16_t connId = 7, uint32_t nowMs = 400000) {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanRecorder& recorder = CanRecorder::instance();
+  auto& cm = ConfigManager::instance();
+
+  createSyntheticCapture(recordCount);
+  StorageManager::instance().begin();
+  recorder.begin(1, 1, 500000, "CAN_REC", "TEST");
+  CHECK(recorder.totalRecords() == recordCount);
+
+  cm.triggerAuthWindow(nowMs);
+  std::vector<uint8_t> secret = {1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2};
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_ENROLL_OWNER, secret, 301), connId);
+  drain(ble, cand, nowMs + 10);
+
+  ble.testResetCaptureState();
+  ble.testClearLiveLogs();
+  ble.testSetInitialized(true);
+  ble.testSetConnected(true);
+  ble.testSetLogsSubscribed(true);
+  ble.testClearLogChunks();
+  ble.testSetLastLogNotifyMs(nowMs);
+}
+
+static void regression_capture_page_stall_on_multi_record() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+  auto& cm = ConfigManager::instance();
+
+  createSyntheticCapture(12);
+  StorageManager::instance().begin();
+  recorder.begin(1, 1, 500000, "CAN_REC", "TEST");
+  CHECK(recorder.totalRecords() == 12);
+
+  uint32_t nowMs = 400000;
+  cm.triggerAuthWindow(nowMs);
+  std::vector<uint8_t> secret = {1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2};
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_ENROLL_OWNER, secret, 301), 7);
+  drain(ble, cand, nowMs + 10);
+
+  ble.testResetCaptureState();
+  ble.testSetInitialized(true);
+  ble.testSetConnected(true);
+  ble.testSetLogsSubscribed(true);
+  ble.testClearLogChunks();
+
+  // Request capture page starting at record 0
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+
+  // Run 100 poll ticks (25ms each, > 20ms interval)
+  for (int tick = 0; tick < 100; ++tick) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+  }
+
+  std::set<uint16_t> completedMsgIds;
+  bool eopFound = false;
+  uint32_t eopNextCursor = 0;
+  uint8_t eopFinished = 0xFF;
+
+  for (size_t i = 0; i < ble.testLogChunkCount(); ++i) {
+    const BleLogChunkPacket& p = ble.testLogChunk(i);
+    if ((p.flags & BLE_LOG_FLAG_END_OF_PAGE) != 0) {
+      eopFound = true;
+      std::memcpy(&eopNextCursor, &p.payload[0], 4);
+      eopFinished = p.payload[4];
+    } else if ((p.flags & BLE_LOG_FLAG_FINAL_CHUNK) != 0 && (p.flags & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
+      completedMsgIds.insert(p.messageId);
+    }
+  }
+
+  CHECK(completedMsgIds.size() == 12);
+  CHECK(eopFound);
+  CHECK(eopNextCursor == 12);
+  CHECK(eopFinished == 0);
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 1: Zero records: clean finished EOP, no data records, no hang
+// ----------------------------------------------------------------------------
+static void test_scenario_1_zero_records() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 500000;
+  setupCaptureTest(0, 7, nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  // Tick 1 (nowMs + 25): drain control command -> discovers 0 records -> stages EOP
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testCapturePageEopPending());
+  CHECK(!ble.testCapturePageActive());
+  CHECK(ble.testLogChunkCount() == 0);
+
+  // Tick 2 (nowMs + 25): sends the EOP packet
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+  CHECK(!ble.testCapturePageEopPending());
+
+  // Tick 3: no further packets, no hang
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.empty());
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 0);
+  CHECK(!ble.testCapturePageActive());
+  CHECK(!ble.testCaptureLineStaged());
+  CHECK(!ble.testActiveMsgInProgress());
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 2: One record: all expected chunks of that record, then one finished EOP
+// ----------------------------------------------------------------------------
+static void test_scenario_2_one_record() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 510000;
+  setupCaptureTest(1, 7, nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  for (int tick = 0; tick < 20; ++tick) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 1);
+  CHECK(res.records[0].firstChunkValid);
+  CHECK(res.records[0].finalChunkValid);
+  CHECK(res.records[0].captureFlagValid);
+  CHECK(res.records[0].chunkCount >= 2);
+  CHECK(res.records[0].csvLine == expectedCaptureLine(makeSyntheticRecord(0)));
+
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 1);
+  CHECK(!ble.testCapturePageActive());
+  CHECK(!ble.testCaptureLineStaged());
+  CHECK(!ble.testActiveMsgInProgress());
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 3: 12 records: all 12 delivered in order, page EOP (finished = 0, nextCursor = 12)
+// ----------------------------------------------------------------------------
+static void test_scenario_3_twelve_records() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 520000;
+  setupCaptureTest(12, 7, nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  for (int tick = 0; tick < 100; ++tick) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 12);
+  for (size_t i = 0; i < 12; ++i) {
+    CHECK(res.records[i].firstChunkValid);
+    CHECK(res.records[i].finalChunkValid);
+    CHECK(res.records[i].captureFlagValid);
+    CHECK(res.records[i].csvLine == expectedCaptureLine(makeSyntheticRecord(static_cast<uint32_t>(i))));
+  }
+
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 0); // Not finished, more records could follow
+  CHECK(res.eopNextCursor == 12);
+  CHECK(!ble.testCapturePageActive());
+  CHECK(!ble.testCaptureLineStaged());
+  CHECK(!ble.testActiveMsgInProgress());
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 4: 13 records: page 1 has 12 records, page 2 has 1 record, finished = 1, nextCursor = 13
+// ----------------------------------------------------------------------------
+static void test_scenario_4_thirteen_records() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 530000;
+  setupCaptureTest(13, 7, nowMs);
+
+  // --- Page 1 (offset 0) ---
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  for (int tick = 0; tick < 100; ++tick) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  PageCaptureResult res1 = parseLogChunks(ble);
+  CHECK(res1.records.size() == 12);
+  for (size_t i = 0; i < 12; ++i) {
+    CHECK(res1.records[i].csvLine == expectedCaptureLine(makeSyntheticRecord(i)));
+  }
+  CHECK(res1.eopFound);
+  CHECK(res1.eopFinished == 0);
+  CHECK(res1.eopNextCursor == 12);
+
+  // --- Page 2 (offset 12) ---
+  ble.testClearLogChunks();
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 12, 7);
+
+  for (int tick = 0; tick < 50; ++tick) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  PageCaptureResult res2 = parseLogChunks(ble);
+  CHECK(res2.records.size() == 1);
+  CHECK(res2.records[0].firstChunkValid);
+  CHECK(res2.records[0].finalChunkValid);
+  CHECK(res2.records[0].captureFlagValid);
+  CHECK(res2.records[0].csvLine == expectedCaptureLine(makeSyntheticRecord(12)));
+  CHECK(res2.eopFound);
+  CHECK(res2.eopFinished == 1);
+  CHECK(res2.eopNextCursor == 13);
+  CHECK(!ble.testCapturePageActive());
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 5: Chunk boundary: multi-chunk integrity, flags, indexing, no premature replacement
+// ----------------------------------------------------------------------------
+static void test_scenario_5_chunk_boundary() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 540000;
+
+  std::vector<CanLogRecord> customRecords(4);
+
+  // Rec 0: standard ID (0x123), DLC 0 -> short line (2 chunks: 14 + 7)
+  customRecords[0].timestampMs = 100;
+  customRecords[0].id = 0x123;
+  customRecords[0].stage = 1;
+  customRecords[0].dlc = 0;
+  std::memset(customRecords[0].data, 0, 8);
+
+  // Rec 1: standard ID (0x301), DLC 8 -> medium line (3 chunks: 14 + 14 + 9)
+  customRecords[1].timestampMs = 2500;
+  customRecords[1].id = 0x301;
+  customRecords[1].stage = 2;
+  customRecords[1].dlc = 8;
+  for (int b = 0; b < 8; ++b) customRecords[1].data[b] = static_cast<uint8_t>(0xA0 + b);
+
+  // Rec 2: extended ID (0x80000000 | 0x18DAF110), DLC 8 -> 3 chunks (14 + 14 + 14)
+  customRecords[2].timestampMs = 12345;
+  customRecords[2].id = 0x80000000u | 0x18DAF110u;
+  customRecords[2].stage = 3;
+  customRecords[2].dlc = 8;
+  for (int b = 0; b < 8; ++b) customRecords[2].data[b] = static_cast<uint8_t>(0x55 ^ b);
+
+  // Rec 3: extended ID with large timestamp (99999999) -> 4 chunks (14 + 14 + 14 + 4)
+  customRecords[3].timestampMs = 99999999;
+  customRecords[3].id = 0x80000000u | 0x1FFFFFFAu;
+  customRecords[3].stage = 1;
+  customRecords[3].dlc = 8;
+  for (int b = 0; b < 8; ++b) customRecords[3].data[b] = static_cast<uint8_t>(0xFF - b);
+
+  createCustomCapture(customRecords);
+  StorageManager::instance().begin();
+  recorder.begin(1, 1, 500000, "CAN_REC", "TEST");
+  CHECK(recorder.totalRecords() == 4);
+
+  auto& cm = ConfigManager::instance();
+  cm.triggerAuthWindow(nowMs);
+  std::vector<uint8_t> secret = {1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2};
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_ENROLL_OWNER, secret, 501), 7);
+  drain(ble, cand, nowMs + 10);
+
+  ble.testResetCaptureState();
+  ble.testClearLiveLogs();
+  ble.testSetInitialized(true);
+  ble.testSetConnected(true);
+  ble.testSetLogsSubscribed(true);
+  ble.testClearLogChunks();
+  ble.testSetLastLogNotifyMs(nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  for (int tick = 0; tick < 50; ++tick) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  uint16_t lastMsgId = 0xFFFF;
+  uint8_t expectedChunkIndex = 0;
+
+  for (size_t i = 0; i < ble.testLogChunkCount(); ++i) {
+    const BleLogChunkPacket& p = ble.testLogChunk(i);
+    if ((p.flags & BLE_LOG_FLAG_END_OF_PAGE) != 0) {
+      CHECK(i == ble.testLogChunkCount() - 1);
+      continue;
+    }
+    CHECK((p.flags & BLE_LOG_FLAG_CAPTURE_LINE) != 0);
+
+    if (p.messageId != lastMsgId) {
+      CHECK(p.chunkIndex == 0);
+      CHECK((p.flags & BLE_LOG_FLAG_FIRST_CHUNK) != 0);
+      lastMsgId = p.messageId;
+      expectedChunkIndex = 1;
+    } else {
+      CHECK(p.chunkIndex == expectedChunkIndex);
+      CHECK((p.flags & BLE_LOG_FLAG_FIRST_CHUNK) == 0);
+      expectedChunkIndex++;
+    }
+
+    if ((p.flags & BLE_LOG_FLAG_FINAL_CHUNK) != 0) {
+      CHECK(p.payloadLength > 0 && p.payloadLength <= 14);
+    } else {
+      CHECK(p.payloadLength == 14);
+    }
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 4);
+  for (size_t i = 0; i < 4; ++i) {
+    CHECK(res.records[i].firstChunkValid);
+    CHECK(res.records[i].finalChunkValid);
+    CHECK(res.records[i].captureFlagValid);
+    std::string expected = expectedCaptureLine(customRecords[i]);
+    CHECK(res.records[i].csvLine == expected);
+  }
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 4);
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 6: Cancellation mid-record and mid-page
+// ----------------------------------------------------------------------------
+static void test_scenario_6_cancellation_mid_stream() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 550000;
+
+  // 6a: Cancel mid-record (after chunk 0 is emitted)
+  setupCaptureTest(5, 7, nowMs);
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+  CHECK(ble.testActiveMsgInProgress());
+  CHECK(ble.testCaptureLineStaged());
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_CANCEL_CAPTURE, 0, 7);
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+
+  CHECK(!ble.testCapturePageActive());
+  CHECK(!ble.testCapturePageEopPending());
+  CHECK(!ble.testCaptureLineStaged());
+  CHECK(!ble.testActiveMsgInProgress());
+  CHECK(ble.testActiveMsgFlags() == 0);
+
+  const size_t chunksAfterCancel = ble.testLogChunkCount();
+  for (int t = 0; t < 5; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+  }
+  CHECK(ble.testLogChunkCount() == chunksAfterCancel);
+
+  // 6b: Cancel mid-page (after record 0 completed)
+  nowMs += 1000;
+  setupCaptureTest(5, 7, nowMs);
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  for (int t = 0; t < 3; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+  }
+  CHECK(ble.testLogChunkCount() == 3);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_CANCEL_CAPTURE, 0, 7);
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+
+  CHECK(!ble.testCapturePageActive());
+  CHECK(!ble.testCapturePageEopPending());
+  CHECK(!ble.testCaptureLineStaged());
+  CHECK(!ble.testActiveMsgInProgress());
+
+  size_t countMidPage = ble.testLogChunkCount();
+  for (int t = 0; t < 10; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+  }
+  CHECK(ble.testLogChunkCount() == countMidPage);
+
+  // 6c: Clean state for a later request
+  nowMs += 1000;
+  ble.testClearLogChunks();
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  for (int t = 0; t < 50; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 5);
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 5);
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 7: Disconnect / reconnect: flushes pending state, no stale chunks
+// ----------------------------------------------------------------------------
+static void test_scenario_7_disconnect_reconnect() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 560000;
+  setupCaptureTest(5, 7, nowMs);
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 2);
+  CHECK(ble.testActiveMsgInProgress() || ble.testCapturePageActive());
+
+  // Client disconnects
+  ble.testSetConnected(false);
+  ble.onClientDisconnected();
+
+  CHECK(!ble.testCapturePageActive());
+  CHECK(!ble.testCapturePageEopPending());
+  CHECK(!ble.testCaptureLineStaged());
+  CHECK(!ble.testActiveMsgInProgress());
+  CHECK(ble.testActiveMsgFlags() == 0);
+
+  // Poll while disconnected: zero chunks emitted
+  for (int t = 0; t < 5; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+  }
+  CHECK(ble.testLogChunkCount() == 2);
+
+  // Reconnect
+  ble.testSetConnected(true);
+  ble.testSetLogsSubscribed(true);
+  ConfigManager::instance().triggerAuthWindow(nowMs);
+  std::vector<uint8_t> secret = {1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2};
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_ENROLL_OWNER, secret, 701), 7);
+  drain(ble, cand, nowMs + 10);
+
+  // Poll without new command: no stale chunks or phantom EOP
+  for (int t = 0; t < 5; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+  }
+  CHECK(ble.testLogChunkCount() == 2);
+
+  // Now start fresh request cleanly
+  ble.testClearLogChunks();
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+  for (int t = 0; t < 50; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 5);
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 5);
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 8: Repeated page request / retry: well-defined semantics
+// ----------------------------------------------------------------------------
+static void test_scenario_8_repeated_page_request_retry() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 570000;
+  setupCaptureTest(5, 7, nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 2);
+
+  // Client retries requesting page 0 mid-stream
+  ble.testClearLogChunks();
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  for (int t = 0; t < 50; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() && !ble.testActiveMsgInProgress()) {
+      break;
+    }
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 5);
+  for (size_t i = 0; i < 5; ++i) {
+    CHECK(res.records[i].firstChunkValid);
+    CHECK(res.records[i].finalChunkValid);
+    CHECK(res.records[i].captureFlagValid);
+    CHECK(res.records[i].csvLine == expectedCaptureLine(makeSyntheticRecord(static_cast<uint32_t>(i))));
+  }
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 5);
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 9: Auth rejection: unauthorized connection does not start export or leak data
+// ----------------------------------------------------------------------------
+static void test_scenario_9_auth_rejection() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+  auto& cm = ConfigManager::instance();
+
+  uint32_t nowMs = 580000;
+  cm.closeAuthWindow();
+  CHECK(!cm.isAuthorizedFor(42, nowMs));
+
+  createSyntheticCapture(5);
+  StorageManager::instance().begin();
+  recorder.begin(1, 1, 500000, "CAN_REC", "TEST");
+
+  ble.testResetCaptureState();
+  ble.testClearLiveLogs();
+  ble.testSetInitialized(true);
+  ble.testSetConnected(true);
+  ble.testSetLogsSubscribed(true);
+  ble.testClearLogChunks();
+  ble.testSetLastLogNotifyMs(nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 42);
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+
+  CHECK(!ble.testCapturePageActive());
+  CHECK(!ble.testCapturePageEopPending());
+  CHECK(!ble.testCaptureLineStaged());
+  CHECK((ble.testActiveMsgFlags() & BLE_LOG_FLAG_CAPTURE_LINE) == 0);
+
+  for (int t = 0; t < 10; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+  }
+
+  CHECK(!ble.testActiveMsgInProgress());
+
+  for (size_t i = 0; i < ble.testLogChunkCount(); ++i) {
+    const BleLogChunkPacket& p = ble.testLogChunk(i);
+    CHECK((p.flags & BLE_LOG_FLAG_CAPTURE_LINE) == 0);
+    CHECK((p.flags & BLE_LOG_FLAG_END_OF_PAGE) == 0);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 10: Notification pacing / bounded work: at least 20ms pacing, no bursts
+// ----------------------------------------------------------------------------
+static void test_scenario_10_notification_pacing_and_bounded_work() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 590000;
+  setupCaptureTest(3, 7, nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  // Poll at nowMs + 20: 1st notification sent
+  nowMs += 20;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+
+  // Sub-interval polls: NO notification emitted
+  ble.poll(nowMs + 5, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+
+  ble.poll(nowMs + 10, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+
+  ble.poll(nowMs + 19, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+
+  // Poll at nowMs + 20: EXACTLY 1 notification sent
+  nowMs += 20;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 2);
+
+  // Burst attempts at identical timestamp: NO additional notifications sent
+  for (int b = 0; b < 10; ++b) {
+    ble.poll(nowMs, cand, transport, recorder, false);
+    CHECK(ble.testLogChunkCount() == 2);
+  }
+
+  // Advance in 20ms steps: bounded work per pass (at most 1 notification, never a burst)
+  while (ble.testCapturePageActive() || ble.testCapturePageEopPending() || ble.testActiveMsgInProgress()) {
+    size_t beforeCount = ble.testLogChunkCount();
+    nowMs += 20;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    CHECK(ble.testLogChunkCount() == beforeCount || ble.testLogChunkCount() == beforeCount + 1);
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 3);
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 3);
+}
+
+// ----------------------------------------------------------------------------
+// Scenario 11: Concurrent diagnostic messages: live logs do not corrupt capture lines
+// ----------------------------------------------------------------------------
+static void test_scenario_11_concurrent_diagnostic_messages() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor cand;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+
+  uint32_t nowMs = 600000;
+  setupCaptureTest(3, 7, nowMs);
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+
+  // Poll 1 tick to stage record 0 and emit chunk 0
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 1);
+  CHECK(ble.testCaptureLineStaged());
+
+  // Concurrently queue live diagnostic messages while capture line is in progress
+  ble.queueLiveLog("DIAG: System alert coolant temp 85C", 0);
+  ble.queueLiveLog("DIAG: CAN bus load 12%", 0);
+
+  // Verify capture line state was NOT corrupted or prematurely unstaged by queueLiveLog
+  CHECK(ble.testCaptureLineStaged());
+  CHECK(ble.testActiveMsgInProgress());
+  CHECK((ble.testActiveMsgFlags() & BLE_LOG_FLAG_CAPTURE_LINE) != 0);
+
+  // Poll next chunk of record 0
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
+  CHECK(ble.testLogChunkCount() == 2);
+  CHECK(ble.testLogChunk(1).messageId == ble.testLogChunk(0).messageId);
+  CHECK(ble.testLogChunk(1).chunkIndex == 1);
+  CHECK((ble.testLogChunk(1).flags & BLE_LOG_FLAG_CAPTURE_LINE) != 0);
+
+  // Queue another live log
+  ble.queueLiveLog("DIAG: Battery voltage 13.8V", 0);
+
+  // Poll until both capture page AND live logs are drained
+  for (int t = 0; t < 100; ++t) {
+    nowMs += 25;
+    ble.poll(nowMs, cand, transport, recorder, false);
+    if (!ble.testCapturePageActive() && !ble.testCapturePageEopPending() &&
+        !ble.testActiveMsgInProgress() && ble.testLiveLogCount() == 0) {
+      break;
+    }
+  }
+
+  PageCaptureResult res = parseLogChunks(ble);
+  CHECK(res.records.size() == 3);
+  for (size_t i = 0; i < 3; ++i) {
+    CHECK(res.records[i].firstChunkValid);
+    CHECK(res.records[i].finalChunkValid);
+    CHECK(res.records[i].captureFlagValid);
+    CHECK(res.records[i].csvLine == expectedCaptureLine(makeSyntheticRecord(static_cast<uint32_t>(i))));
+  }
+  CHECK(res.eopFound);
+  CHECK(res.eopFinished == 1);
+  CHECK(res.eopNextCursor == 3);
+
+  // Live log chunks were also delivered without corrupting capture lines
+  CHECK(res.liveLogChunks > 0);
+}
+
 int main() {
   read_queries_do_not_need_authorization();
   writes_require_authorization();
@@ -639,6 +1519,20 @@ int main() {
   v1_page_fetches_require_authorization();
   disconnect_flushes_queued_commands();
   rpm_status_flags_reflect_rendering();
-  std::printf("PASS BLE v2 command dispatch, auth binding, calibration, device ops: %u checks\n", checks);
+  regression_capture_page_stall_on_multi_record();
+
+  test_scenario_1_zero_records();
+  test_scenario_2_one_record();
+  test_scenario_3_twelve_records();
+  test_scenario_4_thirteen_records();
+  test_scenario_5_chunk_boundary();
+  test_scenario_6_cancellation_mid_stream();
+  test_scenario_7_disconnect_reconnect();
+  test_scenario_8_repeated_page_request_retry();
+  test_scenario_9_auth_rejection();
+  test_scenario_10_notification_pacing_and_bounded_work();
+  test_scenario_11_concurrent_diagnostic_messages();
+
+  std::printf("PASS BLE v2 command dispatch, auth binding, calibration, device ops, capture export (11 scenarios): %u checks\n", checks);
   return 0;
 }
