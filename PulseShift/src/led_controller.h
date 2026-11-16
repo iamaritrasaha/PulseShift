@@ -3,26 +3,30 @@
 
 #include "config.h"
 #include "led_effects.h"
-#include <Adafruit_NeoPixel.h>
+#include "led_driver.h"
 
 // ============================================================================
-// LedController - sole owner of the six WS2812B pixels.
+// LedController - sole owner and arbiter of the six WS2812B physical pixels.
 //
-// There is no screen/display abstraction anywhere in this class or in the
-// LED engine it drives. The controller's entire job is:
-//   1. own the NeoPixel bus,
-//   2. per-frame, ask LedEffectEngine (the single priority arbiter) to render
-//      the authoritative frame from the same LiveRpmSnapshot that BLE reports,
-//   3. push the frame to the hardware only when the visible output changed.
+// Separates frame calculation from physical driver transmission:
+//   1. calculatedPixels_: Desired RGB output computed by LedEffectEngine.
+//   2. lastAttemptedPixels_: Output submitted to driver on most recent write.
+//   3. lastConfirmedPixels_: Output confirmed by hardware driver transmission.
 //
-// The controller is fully nonblocking and never delays CAN reception: a frame
-// render is integer math into a 6-pixel buffer; latching/showing happens only
-// on change (WS2812B latch takes ~50 us per refresh at most).
+// Manages transmission failure recovery (50 ms retry backoff) and periodic
+// complete-frame refresh (1000 ms) to prevent silent freezing or ESD desync.
 // ============================================================================
 class LedController {
  public:
+  static constexpr uint8_t LED_COUNT = config::ledCount;
+  static constexpr uint32_t PERIODIC_REFRESH_INTERVAL_MS = 1000;
+  static constexpr uint32_t RETRY_INTERVAL_MS = 50;
+
+  LedController();
+  ~LedController() = default;
+
   bool begin();
-  // Render one frame and flush to hardware when the output changed.
+  // Render one frame and flush to hardware when output changed, retry is due, or periodic refresh is due.
   void update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy);
 
   void triggerButtonFeedback(uint32_t now) {
@@ -35,16 +39,62 @@ class LedController {
     testRpmActive_ = active;
   }
   bool isTestRpmActive() const { return testRpmActive_; }
+  uint16_t testRpm() const { return testRpm_; }
 
   LedEffectEngine& ledEffects() { return engine_; }
   const LedEffectEngine& ledEffects() const { return engine_; }
 
+  // Telemetry and state inspection
+  bool isReady() const { return ready_; }
+  bool hasConfirmedFrame() const { return hasConfirmedFrame_; }
+  uint32_t attemptsCount() const { return attemptsCount_; }
+  uint32_t successCount() const { return successCount_; }
+  uint32_t failureCount() const { return failureCount_; }
+  uint32_t forcedRefreshCount() const { return forcedRefreshCount_; }
+  uint32_t lastAttemptMs() const { return lastAttemptMs_; }
+  uint32_t lastConfirmedMs() const { return lastConfirmedMs_; }
+  LedDriverStatus lastDriverStatus() const { return driver_ ? driver_->lastStatus() : LedDriverStatus::Uninitialized; }
+  const char* lastDriverStatusString() const { return driver_ ? driver_->lastStatusString() : "NO_DRIVER"; }
+
+  RgbColor calculatedPixel(uint8_t i) const { return (i < LED_COUNT) ? calculatedPixels_[i] : RgbColor{0, 0, 0}; }
+  RgbColor lastAttemptedPixel(uint8_t i) const { return (i < LED_COUNT) ? lastAttemptedPixels_[i] : RgbColor{0, 0, 0}; }
+  RgbColor lastConfirmedPixel(uint8_t i) const { return (i < LED_COUNT) ? lastConfirmedPixels_[i] : RgbColor{0, 0, 0}; }
+
+  // Test injection
+  void setDriverForTesting(ILedDriver* driver) {
+    driver_ = driver;
+    if (driver_) ready_ = driver_->isReady();
+  }
+
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+  void printStatus(uint32_t now) const;
+#endif
+
  private:
-  Adafruit_NeoPixel leds_{config::ledCount, config::ledPin, NEO_GRB + NEO_KHZ800};
+#if defined(ARDUINO) && defined(ESP32)
+  Esp32RmtLedDriver defaultDriver_{};
+#else
+  MockLedDriver defaultDriver_{};
+#endif
+  ILedDriver* driver_ = &defaultDriver_;
   LedEffectEngine engine_{};
+
   bool ready_ = false;
   uint32_t feedbackStartMs_ = 0;
   bool feedbackActive_ = false;
   uint16_t testRpm_ = 0;
   bool testRpmActive_ = false;
+
+  // Tri-state buffer architecture
+  RgbColor calculatedPixels_[LED_COUNT]{};
+  RgbColor lastAttemptedPixels_[LED_COUNT]{};
+  RgbColor lastConfirmedPixels_[LED_COUNT]{};
+
+  bool hasConfirmedFrame_ = false;
+  uint32_t attemptsCount_ = 0;
+  uint32_t successCount_ = 0;
+  uint32_t failureCount_ = 0;
+  uint32_t forcedRefreshCount_ = 0;
+  uint32_t lastAttemptMs_ = 0;
+  uint32_t lastConfirmedMs_ = 0;
 };

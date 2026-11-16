@@ -104,5 +104,5 @@ class LedEffectEngine {
 
   RgbColor logicalPixels_[LED_COUNT]{};
   RgbColor outputPixels_[LED_COUNT]{};
-  RgbColor lastOutputPixels_[LED_COUNT]{};
+  RgbColor lastCalculatedOutputPixels_[LED_COUNT]{};
 };
