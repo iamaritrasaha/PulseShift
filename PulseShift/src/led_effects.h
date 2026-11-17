@@ -15,16 +15,15 @@
 //
 //   1. Hardware fault / safety state      (CAN halted: red blink)
 //   2. Button feedback flash              (physical interaction acknowledgment)
-//   3. RPM validity safeguard (stale/invalid signal: blank; verified bar also
-//      requires bound calibration; provisional preview stays UNVERIFIED)
-//   4. Owner commissioning indication     (physical auth window: cyan pulse)
-//   5. Startup indication                 (configured boot animation)
-//   6. RPM-based lighting                 (verified bar or explicitly provisional
-//      diagnostic preview) and owner-initiated bench-test preview
-//   7. Manual decorative lighting         (static/breathing/rainbow/chase)
+//   3. Master power switch                (explicit off)
+//   4. Bench test                         (synthetic RPM)
+//   5. Owner commissioning                (auth window, no qualified running RPM)
+//   6. Startup indication                 (configured boot animation)
+//   7. Live RPM with validity safeguards  (calibrated or provisional)
+//   8. Decorative lighting               (static/breathing/rainbow/chase)
 //
-// A cosmetic effect can never bypass a safety condition: layers 1-4 always
-// win, and RPM-driven lighting only renders from the same authoritative
+// The safety and power layers govern cosmetic effects, and live RPM-driven
+// lighting renders from the same authoritative
 // LiveRpmSnapshot that BLE telemetry reports.
 //
 // The controller is fully nonblocking: update() renders one frame into an
@@ -78,7 +77,8 @@ class LedEffectEngine {
  private:
   void renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg);
   void renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg);
-  void renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg, uint16_t rpm);
+  bool renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg, uint16_t rpm, bool benchTest);
+  void resetRpmLatches();
   void setAllPixels(RgbColor color);
   // Renders logicalPixels_ into outputPixels_ (direction + brightness),
   // detects the change against the previous physical frame, records the
@@ -91,6 +91,7 @@ class LedEffectEngine {
 
   bool startupComplete_ = false;
   uint32_t startupStartMs_ = 0;
+  bool barFromBenchTest_ = false;
 
   // Per-LED hysteresis latch: LED i stays lit until rpm falls below
   // thresholds[i] - hysteresis, preventing flicker around a threshold.

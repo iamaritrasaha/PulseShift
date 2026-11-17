@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Aritra Saha. All rights reserved.
 #include "led_controller.h"
 #include "config_manager.h"
+#include "diag_logger.h"
+#include <stdio.h>
 #include <string.h>
 
 #if defined(ARDUINO)
@@ -14,39 +16,11 @@ LedController::LedController() {
 bool LedController::begin() {
   if (!driver_) return false;
 
-  initAttempts_ = 1;
 #if defined(ARDUINO)
-  lastInitAttemptMs_ = millis();
+  initializeDriver(millis());
 #else
-  lastInitAttemptMs_ = 0;
+  initializeDriver(0);
 #endif
-
-  ready_ = driver_->begin(config::ledPin, LED_COUNT);
-
-  // Clear all states to black
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
-    calculatedPixels_[i] = RgbColor{0, 0, 0};
-    lastAttemptedPixels_[i] = RgbColor{0, 0, 0};
-    lastConfirmedPixels_[i] = RgbColor{0, 0, 0};
-  }
-
-  // Initial flush: command all pixels black to ensure clear initial state
-  if (ready_) {
-    const bool ok = driver_->write(lastAttemptedPixels_, LED_COUNT);
-    lastAttemptMs_ = lastInitAttemptMs_;
-    ++attemptsCount_;
-    if (ok) {
-      hasConfirmedFrame_ = true;
-      lastConfirmedMs_ = lastInitAttemptMs_;
-      lastAttemptFailed_ = false;
-      ++successCount_;
-    } else {
-      ++failureCount_;
-      lastAttemptFailed_ = true;
-    }
-  } else {
-    lastAttemptFailed_ = true;
-  }
 
   // Start the boot animation clock after peripheral setup, not at reset time.
 #if defined(ARDUINO)
@@ -58,36 +32,63 @@ bool LedController::begin() {
   return ready_;
 }
 
-void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy) {
+void LedController::initializeDriver(uint32_t now) {
+  lastInitAttemptMs_ = now;
+  ++initAttempts_;
+  ready_ = driver_->begin(config::ledPin, LED_COUNT);
   if (!ready_) {
-    if (!driver_) return;
-    // Bounded, nonblocking initialization recovery:
-    // If initial driver begin failed, attempt periodic recovery at INIT_RETRY_INTERVAL_MS (1000 ms),
-    // bounded to MAX_INIT_ATTEMPTS (10). Never hammer the peripheral every loop tick.
-    if (initAttempts_ < MAX_INIT_ATTEMPTS && uint32_t(now - lastInitAttemptMs_) >= INIT_RETRY_INTERVAL_MS) {
-      lastInitAttemptMs_ = now;
-      ++initAttempts_;
-      ready_ = driver_->begin(config::ledPin, LED_COUNT);
-      if (ready_) {
-        // Driver recovered: flush initial black frame and reset engine
-        const bool ok = driver_->write(lastAttemptedPixels_, LED_COUNT);
-        lastAttemptMs_ = now;
-        ++attemptsCount_;
-        if (ok) {
-          hasConfirmedFrame_ = true;
-          lastConfirmedMs_ = now;
-          lastAttemptFailed_ = false;
-          ++successCount_;
-        } else {
-          ++failureCount_;
-          lastAttemptFailed_ = true;
-        }
-        engine_.reset(now);
-      }
-    }
+    recordError(now);
     return;
   }
+  // Clear the strip on initial setup or recovery before resuming output.
+  for (auto& pixel : lastAttemptedPixels_) pixel = RgbColor{};
+  transmitAttemptedFrame(now);
+}
+
+void LedController::transmitAttemptedFrame(uint32_t now) {
+  lastAttemptMs_ = now;
+  ++attemptsCount_;
+  if (driver_->write(lastAttemptedPixels_, LED_COUNT)) {
+    memcpy(lastConfirmedPixels_, lastAttemptedPixels_, sizeof(lastConfirmedPixels_));
+    lastConfirmedMs_ = now;
+    hasConfirmedFrame_ = true;
+    lastAttemptFailed_ = false;
+    ++successCount_;
+  } else {
+    ++failureCount_;
+    lastAttemptFailed_ = true;
+    ready_ = driver_->isReady();
+    if (!ready_) lastInitAttemptMs_ = now;
+    recordError(now);
+  }
+}
+
+void LedController::recordError(uint32_t now) {
+  const bool firstError = lastError_ == LedDriverStatus::Uninitialized;
+  lastError_ = lastDriverStatus();
+  lastErrorMs_ = now;
+  if (!firstError && uint32_t(now - lastErrorLoggedMs_) < 5000) return;
+  lastErrorLoggedMs_ = now;
+  char frame[LED_COUNT * 7 + 1]{};
+  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+    const auto color = calculatedPixels_[i];
+    snprintf(frame + i * 7, 8, "%02X%02X%02X ", (unsigned)color.r, (unsigned)color.g, (unsigned)color.b);
+  }
+  DiagLogger::instance().logEvent(DiagLevel::Warn, "LED_DRIVER",
+      "%s attempts=%lu completed=%lu failures=%lu init=%u layer=%u desired=%s",
+      lastDriverStatusString(), (unsigned long)attemptsCount_, (unsigned long)successCount_,
+      (unsigned long)failureCount_, (unsigned)initAttempts_, (unsigned)engine_.activeLayer(), frame);
+}
+
+void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy) {
   if (!driver_) return;
+
+  // Safety, power and feedback layers can interrupt the preview. Its request
+  // still expires so a synthetic RPM cannot unexpectedly resume much later.
+  if (testRpmActive_ && uint32_t(now - testRpmStartMs_) >= BENCH_TEST_DURATION_MS) {
+    testRpmActive_ = false;
+    testRpm_ = 0;
+  }
 
   // Button press acknowledgment expires after 200 ms.
   if (feedbackActive_ && uint32_t(now - feedbackStartMs_) >= 200) {
@@ -109,6 +110,13 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
     calculatedPixels_[i] = engine_.getPixel(i);
   }
 
+  if (!ready_) {
+    if (initAttempts_ < MAX_INIT_ATTEMPTS && uint32_t(now - lastInitAttemptMs_) >= INIT_RETRY_INTERVAL_MS) {
+      initializeDriver(now);
+    }
+    return;
+  }
+
   // 3. Transmission scheduling state machine:
   // Check if we are currently in a failure backoff window.
   // If the last transmission attempt failed, we MUST enforce RETRY_INTERVAL_MS (50 ms) backoff
@@ -124,7 +132,7 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
 
   // If not backed off (or backoff interval has now expired):
   // Transmission is triggered if:
-  //    a) Calculated state changed relative to last confirmed physical state
+  //    a) Calculated state changed relative to the last completed RMT write
   //    b) Retry due after previous write failure whose backoff has elapsed
   //    c) Periodic refresh interval elapsed (1000 ms forced resend to prevent freezing)
   const bool pixelsChanged = !hasConfirmedFrame_ ||
@@ -141,22 +149,7 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
     }
 
     memcpy(lastAttemptedPixels_, calculatedPixels_, sizeof(lastAttemptedPixels_));
-    lastAttemptMs_ = now;
-    ++attemptsCount_;
-
-    const bool ok = driver_->write(lastAttemptedPixels_, LED_COUNT);
-    if (ok) {
-      memcpy(lastConfirmedPixels_, lastAttemptedPixels_, sizeof(lastConfirmedPixels_));
-      lastConfirmedMs_ = now;
-      hasConfirmedFrame_ = true;
-      lastAttemptFailed_ = false;
-      ++successCount_;
-    } else {
-      ++failureCount_;
-      lastAttemptFailed_ = true;
-      // lastConfirmedPixels_ is NOT modified on failure.
-      // Next tick will enforce 50 ms backoff before retrying.
-    }
+    transmitAttemptedFrame(now);
   }
 }
 
@@ -189,12 +182,14 @@ void LedController::printStatus(uint32_t now) const {
   Serial.printf("Active Layer: %s\r\n", layerName);
   Serial.printf("Bench Test: %s | Test RPM: %u\r\n",
                 testRpmActive_ ? "ACTIVE" : "INACTIVE", (unsigned)testRpm_);
-  Serial.printf("Transmissions: Attempts=%lu | Confirmed=%lu | Failures=%lu | ForcedRefreshes=%lu\r\n",
+  Serial.printf("Transmissions: Attempts=%lu | RMT Completed=%lu | Failures=%lu | ForcedRefreshes=%lu\r\n",
                 (unsigned long)attemptsCount_, (unsigned long)successCount_,
                 (unsigned long)failureCount_, (unsigned long)forcedRefreshCount_);
-  Serial.printf("Last Attempt: %lu ms ago | Last Confirmed: %s\r\n",
-                hasConfirmedFrame_ ? (unsigned long)(now - lastAttemptMs_) : 0,
-                hasConfirmedFrame_ ? "YES" : "NO");
+  if (attemptsCount_ != 0) Serial.printf("Last Attempt: %lu ms ago\r\n", (unsigned long)(now - lastAttemptMs_));
+  if (hasConfirmedFrame_) Serial.printf("Last RMT Completion: %lu ms ago\r\n", (unsigned long)(now - lastConfirmedMs_));
+  if (lastError_ != LedDriverStatus::Uninitialized) {
+    Serial.printf("Last Driver Error: %u (%lu ms ago)\r\n", (unsigned)lastError_, (unsigned long)(now - lastErrorMs_));
+  }
 
   Serial.print("Calculated Frame (RGB): ");
   for (uint8_t i = 0; i < LED_COUNT; ++i) {
@@ -202,7 +197,13 @@ void LedController::printStatus(uint32_t now) const {
   }
   Serial.println();
 
-  Serial.print("Confirmed Frame  (RGB): ");
+  Serial.print("Last Attempted Frame (RGB): ");
+  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+    Serial.printf("[%u]=(%u,%u,%u) ", i, lastAttemptedPixels_[i].r, lastAttemptedPixels_[i].g, lastAttemptedPixels_[i].b);
+  }
+  Serial.println();
+
+  Serial.print("Last RMT Completed Frame (RGB): ");
   for (uint8_t i = 0; i < LED_COUNT; ++i) {
     Serial.printf("[%u]=(%u,%u,%u) ", i, lastConfirmedPixels_[i].r, lastConfirmedPixels_[i].g, lastConfirmedPixels_[i].b);
   }

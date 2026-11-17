@@ -146,7 +146,7 @@ transfer and disclose nothing.
 | 16 | `maxEffectId` | `uint8_t` | Maximum supported effect ID (`5` = Provisional Preview) |
 | 17 | `otaActiveSlot` | `uint8_t` | Running OTA slot: `0` = app0, `1` = app1, `0xFF` = unknown/unsupported |
 | 18 | `protocolMinor` | `uint8_t` | Canonical protocol minor version (`3` for 2.3.0) |
-| 19 | `otaFlags` | `uint8_t` | Bit 0: stationary safety interlock, Bit 1: dual-slot rollback supported |
+| 19 | `otaFlags` | `uint8_t` | Bit 0: a rollback candidate exists, bit 1: dual-slot layout detected, bit 2: running app digest query supported |
 
 #### Feature Mask Bits (`featureMask`)
 - `Bit 0` (`0x0001`): `BLE_FEAT_INDIVIDUAL_RGB`
@@ -253,6 +253,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x63` | `OTA_ABORT` | None | Cancel active update, discard written data and return OTA engine to Idle state. |
 | `0x64` | `OTA_CONFIRM` | `[0xA5, 0x5C]` | Cancel bootloader rollback after successful boot self-test. |
 | `0x65` | `OTA_STATUS` | None | Query OTA engine state, active running slot, and written bytes. |
+| `0x65` | `OTA_STATUS` digest | `[index: u8, 0..3]` | If capability bit 2 is set, returns index followed by 8 digest bytes at offset `8 * index`. The result fits the same 20-byte frame. |
 
 ---
 

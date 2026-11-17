@@ -158,7 +158,7 @@ static void provisional_rpm_preview_tracks_throttle_without_calibration() {
   signal.calibrationVerified = false;
   signal.calibrationMatchesSettings = false;
   e.update(10700, cfg, signal, input);
-  CHECK(e.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(e.activeLayer() == LedActiveLayer::Warning);
   CHECK(e.getPixel(0) == cfg.warningColor);
 
   input.canHealthy = false;
@@ -650,6 +650,92 @@ static void test_4500_to_0_rpm_transitions() {
   CHECK(countLit(e) == 4);
 }
 
+static void test_zero_rpm_clears_low_thresholds_and_warning() {
+  LedEffectEngine e;
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.rpmThresholds[0] = 0;
+  cfg.rpmThresholds[1] = 0;
+  cfg.rpmThresholds[2] = 50;
+  cfg.rpmThresholds[3] = 60;
+  cfg.rpmThresholds[4] = 70;
+  cfg.rpmThresholds[5] = 80;
+  cfg.warningRpm = 100;
+  cfg.warningPatternId = 2;
+  LedFrameInput input;
+  input.authWindowOpen = true;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+  e.update(500, cfg, LiveRpmSnapshot{}, input);
+  CHECK(countLit(e) == 6);
+
+  input.testRpm = 0;
+  e.update(510, cfg, LiveRpmSnapshot{}, input);
+  CHECK(e.activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(countLit(e) == 0);
+}
+
+static void test_bench_latches_do_not_contaminate_live_rpm() {
+  LedEffectEngine e;
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.warningPatternId = 3;
+  LedFrameInput input;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+  e.update(500, cfg, LiveRpmSnapshot{}, input);
+  CHECK(countLit(e) == 4);
+
+  input.testRpmActive = false;
+  e.update(510, cfg, freshVerifiedSnapshot(3900), input);
+  CHECK(e.activeLayer() == LedActiveLayer::RpmBar);
+  CHECK(countLit(e) == 3);
+}
+
+static void test_provisional_startup_ends_in_safeguard_with_invalid_rpm() {
+  LedEffectEngine e;
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 5;
+  cfg.startupAnimation = 1;
+  cfg.startupDurationMs = 100;
+  cfg.warningPatternId = 3;
+  LiveRpmSnapshot invalidRpm = freshVerifiedSnapshot(4500);
+  invalidRpm.valid = false;
+  invalidRpm.engineRunning = false;
+  e.reset(UINT32_MAX - 55);
+
+  e.update(UINT32_MAX - 1, cfg, invalidRpm, LedFrameInput{});
+  CHECK(e.activeLayer() == LedActiveLayer::Startup);
+  e.update(44, cfg, invalidRpm, LedFrameInput{});
+  CHECK(e.isStartupComplete());
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(countLit(e) == 0);
+}
+
+static void test_rainbow_phase_survives_long_uptime() {
+  LedEffectEngine fresh;
+  LedEffectEngine longRunning;
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 2;
+  cfg.effectSpeed = 100;
+  cfg.startupAnimation = 0;
+  // Equal rainbow phase four periods past 32-bit multiplication overflow.
+  const uint32_t uptime = 43000030;
+  fresh.update(uptime % (40 * 256), cfg, LiveRpmSnapshot{}, LedFrameInput{});
+  longRunning.update(uptime, cfg, LiveRpmSnapshot{}, LedFrameInput{});
+  for (uint8_t i = 0; i < 6; ++i) CHECK(fresh.getPixel(i) == longRunning.getPixel(i));
+}
+
+static void test_zero_hysteresis_uses_exact_threshold() {
+  LedEffectEngine e;
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.warningPatternId = 3;
+  cfg.startupAnimation = 0;
+  cfg.rpmHysteresis = 0;
+  e.update(3000, cfg, freshVerifiedSnapshot(4000), LedFrameInput{});
+  CHECK(countLit(e) == 4);
+  e.update(3010, cfg, freshVerifiedSnapshot(3999), LedFrameInput{});
+  CHECK(countLit(e) == 3);
+}
+
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
@@ -669,6 +755,11 @@ int main() {
   bench_test_overrides_startup_and_commissioning_window();
   master_power_off_overrides_bench_test();
   test_4500_to_0_rpm_transitions();
+  test_zero_rpm_clears_low_thresholds_and_warning();
+  test_bench_latches_do_not_contaminate_live_rpm();
+  test_provisional_startup_ends_in_safeguard_with_invalid_rpm();
+  test_rainbow_phase_survives_long_uptime();
+  test_zero_hysteresis_uses_exact_threshold();
   master_power_off();
   change_detection_flags();
   std::printf("PASS unified LED engine priorities, safeguard, hysteresis, warnings: %u checks\n", checks);

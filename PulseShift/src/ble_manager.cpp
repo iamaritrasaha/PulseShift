@@ -35,7 +35,7 @@ static NimBLECharacteristic* s_pConfigSnapshotChar = nullptr;
 static NimBLECharacteristic* s_pCapabilitiesChar = nullptr;
 
 static std::atomic<bool> s_clientConnected{false};
-static std::atomic<uint16_t> s_connHandle{0};
+static std::atomic<uint16_t> s_connHandle{BLE_HS_CONN_HANDLE_NONE};
 static std::atomic<bool> s_rpmSubscribed{false};
 static std::atomic<bool> s_healthSubscribed{false};
 static std::atomic<bool> s_logsSubscribed{false};
@@ -44,8 +44,8 @@ static std::atomic<bool> s_configSnapshotSubscribed{false};
 
 class BleServerCallbacksImpl : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
-    s_clientConnected.store(true, std::memory_order_release);
     s_connHandle.store(connInfo.getConnHandle(), std::memory_order_release);
+    s_clientConnected.store(true, std::memory_order_release);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("[BLE] Client connected: %s\r\n", connInfo.getAddress().toString().c_str());
 #endif
@@ -56,17 +56,16 @@ class BleServerCallbacksImpl : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
     (void)pServer; (void)connInfo; (void)reason;
     s_clientConnected.store(false, std::memory_order_release);
-    s_connHandle.store(0, std::memory_order_release);
+    s_connHandle.store(BLE_HS_CONN_HANDLE_NONE, std::memory_order_release);
     s_rpmSubscribed.store(false, std::memory_order_release);
     s_healthSubscribed.store(false, std::memory_order_release);
     s_logsSubscribed.store(false, std::memory_order_release);
     s_configResultSubscribed.store(false, std::memory_order_release);
     s_configSnapshotSubscribed.store(false, std::memory_order_release);
-    BleManager::instance().onClientDisconnected();
+    BleManager::instance().linkResetPending_.store(true, std::memory_order_release);
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     Serial.printf("[BLE] Client disconnected (reason %d). Re-advertising...\r\n", reason);
 #endif
-    NimBLEDevice::startAdvertising();
   }
 };
 
@@ -134,17 +133,7 @@ class BleControlCallbacksImpl : public NimBLECharacteristicCallbacks {
       }
 
       if (valid) {
-        // Bounded SPSC ring: NimBLE task produces, main loop consumes.
-        const uint8_t head = mgr.ctrlQueueHead_.load(std::memory_order_relaxed);
-        const uint8_t next = static_cast<uint8_t>((head + 1) % BleManager::CTRL_QUEUE_CAPACITY);
-        if (next != mgr.ctrlQueueTail_.load(std::memory_order_acquire)) {
-          mgr.ctrlQueue_[head].opcode = opcode;
-          mgr.ctrlQueue_[head].offset = offset;
-          mgr.ctrlQueue_[head].connId = connInfo.getConnHandle();
-          mgr.ctrlQueueHead_.store(next, std::memory_order_release);
-        } else {
-          mgr.droppedCommands_++; // queue full: client is issuing faster than poll() drains
-        }
+        mgr.enqueueControlCommand(opcode, offset, connInfo.getConnHandle());
         return;
       }
     }
@@ -189,18 +178,7 @@ class BleConfigCmdCallbacksImpl : public NimBLECharacteristicCallbacks {
       BleConfigExtCommandPacket pkt{};
       memcpy(&pkt, data, len);
       pkt.payloadLength = static_cast<uint8_t>(len - 6);
-      // Bounded SPSC ring: NimBLE task produces, main loop consumes. When the
-      // ring is full the incoming command is counted and dropped (never
-      // silently overwritten mid-processing).
-      const uint8_t head = mgr.configQueueHead_.load(std::memory_order_relaxed);
-      const uint8_t next = static_cast<uint8_t>((head + 1) % BleManager::CONFIG_QUEUE_CAPACITY);
-      if (next != mgr.configQueueTail_.load(std::memory_order_acquire)) {
-        mgr.configQueue_[head].packet = pkt;
-        mgr.configQueue_[head].connId = connInfo.getConnHandle();
-        mgr.configQueueHead_.store(next, std::memory_order_release);
-      } else {
-        mgr.droppedCommands_++;
-      }
+      mgr.enqueueConfigCommand(pkt, connInfo.getConnHandle());
     }
   }
 };
@@ -224,27 +202,23 @@ BleManager& BleManager::instance() {
 }
 
 void BleManager::onClientDisconnected() {
-  histPageActive_ = false;
-  histPageEopPending_ = false;
-  histCancelRequested_ = false;
+  stopHistoricalPage();
+  stopCapturePage();
   activeMsgInProgress_ = false;
-  histLinesSent_ = 0;
-  snapshotActive_ = false;
-  capturePageActive_ = false;
-  capturePageEopPending_ = false;
-  captureCancelRequested_ = false;
-  captureLineStaged_ = false;
-  captureRecordsSent_ = 0;
   activeMsgFlags_ = 0;
-  activeMsgOffset_ = 0;
-  activeMsgLen_ = 0;
+  activeMsgIsHistorical_ = false;
+  liveLogHead_ = liveLogTail_ = liveLogCount_ = 0;
+  logNotifyFailures_ = 0;
+  snapshotActive_ = false;
+  snapshotNotifyFailures_ = 0;
+  resultPending_ = false;
   // Discard any commands still queued by the departed connection. NimBLE
   // commonly reuses connection handles, so residue could otherwise execute
   // later under a new client's freshly-bound session.
   configQueueTail_.store(configQueueHead_.load(std::memory_order_acquire), std::memory_order_release);
   ctrlQueueTail_.store(ctrlQueueHead_.load(std::memory_order_acquire), std::memory_order_release);
-  CanRecorder::instance().bleExportCancel();
   ConfigManager::instance().onClientDisconnected();
+  OtaManager::instance().abortOta();
 }
 
 bool BleManager::isClientConnected() const {
@@ -286,6 +260,8 @@ bool BleManager::isLogsSubscribed() const {
 bool BleManager::isConfigResultSubscribed() const {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   return s_clientConnected.load(std::memory_order_acquire) && s_configResultSubscribed.load(std::memory_order_acquire);
+#elif defined(PULSESHIFT_TEST_BUILD)
+  return true;
 #else
   return false;
 #endif
@@ -294,6 +270,8 @@ bool BleManager::isConfigResultSubscribed() const {
 bool BleManager::isConfigSnapshotSubscribed() const {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   return s_clientConnected.load(std::memory_order_acquire) && s_configSnapshotSubscribed.load(std::memory_order_acquire);
+#elif defined(PULSESHIFT_TEST_BUILD)
+  return testConnected_ && testSnapshotSubscribed_;
 #else
   return false;
 #endif
@@ -318,13 +296,13 @@ void BleManager::printStatus() const {
                 isRpmSubscribed() ? "YES" : "NO",
                 isHealthSubscribed() ? "YES" : "NO",
                 isLogsSubscribed() ? "YES" : "NO");
-  Serial.printf("Notifications Sent: RPM=%lu, Health=%lu, Logs=%lu (Total=%lu) | Drops=%lu | Dropped Commands=%lu\r\n",
+  Serial.printf("Notifications accepted: RPM=%lu, Health=%lu, Logs=%lu (Total=%lu) | Drops=%lu | Dropped Commands=%lu\r\n",
                 (unsigned long)rpmNotifyCount_,
                 (unsigned long)healthNotifyCount_,
                 (unsigned long)logNotifyCount_,
                 (unsigned long)notifyCount_,
                 (unsigned long)dropCount_,
-                (unsigned long)droppedCommands_);
+                (unsigned long)droppedCommandCount());
   Serial.printf("Firmware: %u.%u.%u | Security Mode: %u | Owner Enrolled: %s | Session Authorized: %s\r\n",
                 PULSESHIFT_FW_VERSION_MAJOR, PULSESHIFT_FW_VERSION_MINOR, PULSESHIFT_FW_VERSION_PATCH,
                 ConfigManager::instance().securityMode(),
@@ -352,7 +330,7 @@ void BleManager::updateCapabilitiesChar() {
                          BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
                          BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
                          BLE_FEAT_RANGE_DISCOVERY;
-  if (dualSlotDetected) {
+  if (dualSlotDetected && PULSESHIFT_OTA_ENABLED) {
     featureMask |= BLE_FEAT_OTA_UPDATE;
   }
   caps.featureMask = featureMask;
@@ -373,6 +351,7 @@ void BleManager::updateCapabilitiesChar() {
   if (OtaManager::instance().isRollbackPossible()) {
     otaFlags |= 0x01; // Bit 0 = Rollback supported and verified possible
   }
+  otaFlags |= 0x04; // Bit 2 = OTA_STATUS supports running image digest queries
   caps.otaFlags = otaFlags;
   s_pCapabilitiesChar->setValue(reinterpret_cast<const uint8_t*>(&caps), sizeof(caps));
 #endif
@@ -388,6 +367,7 @@ bool BleManager::begin() {
 
   s_pServer = NimBLEDevice::createServer();
   s_pServer->setCallbacks(&s_serverCallbacks);
+  s_pServer->advertiseOnDisconnect(false); // Poll reopens advertising after session cleanup.
 
   NimBLEService* pService = s_pServer->createService(PULSESHIFT_BLE_SERVICE_UUID);
   if (!pService) {
@@ -523,38 +503,59 @@ void BleManager::poll(uint32_t nowMs,
                       bool rpmLightsRendering) {
   if (!initialized_) return;
 
-  if (!isClientConnected()) {
-    if (histPageActive_ || activeMsgInProgress_ || snapshotActive_ || capturePageActive_) {
-      onClientDisconnected();
-    }
+  auto& ota = OtaManager::instance();
+  if (ota.rebootDue(nowMs)) {
+#if defined(ARDUINO)
+    esp_restart();
+#endif
     return;
   }
+  ota.serviceTransfer(candidate, transport, nowMs);
+
+  if (linkResetPending_.exchange(false, std::memory_order_acq_rel)) {
+    onClientDisconnected();
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+    NimBLEDevice::startAdvertising();
+#endif
+  }
+  if (!isClientConnected()) return;
 
   // 0a. Drain decoupled control commands received via BLE write callbacks.
   drainControlQueue(nowMs);
 
-  // 0b. Process one incoming Configuration V2 command per loop pass.
-  processConfigCommand(nowMs, candidate, transport, recorder);
-
-  // 1. Live RPM telemetry: send at ~10 Hz (every 100 ms) when subscribed
-  if (isRpmSubscribed() && uint32_t(nowMs - lastRpmNotifyMs_) >= 100) {
-    lastRpmNotifyMs_ = nowMs;
-    sendRpmNotification(nowMs, candidate, transport, recorder, rpmLightsRendering);
+  // Preserve one unsent result across transient errors. Leave subsequent
+  // commands queued until their result can be sent in order.
+  if (resultPending_) {
+    if (!isConfigResultSubscribed()) {
+      resultPending_ = false;
+    } else if (uint32_t(nowMs - lastResultAttemptMs_) >= LOG_NOTIFICATION_INTERVAL_MS) {
+      lastResultAttemptMs_ = nowMs;
+      if (trySendResultNotification(pendingResult_)) {
+        resultPending_ = false;
+      } else if (++resultNotifyFailures_ >= MAX_NOTIFY_FAILURES) {
+        resultPending_ = false;
+        ++dropCount_;
+      }
+    }
+  } else {
+    processConfigCommand(nowMs, candidate, transport, recorder);
   }
 
-  // 2. Health telemetry: send at ~1 Hz (every 1000 ms) when subscribed
-  if (isHealthSubscribed() && uint32_t(nowMs - lastHealthNotifyMs_) >= 1000) {
-    lastHealthNotifyMs_ = nowMs;
-    sendHealthNotification(transport, recorder);
+  const bool logsSubscribed = isLogsSubscribed();
+  if (!logsSubscribed) {
+    stopHistoricalPage();
+    stopCapturePage();
+    activeMsgInProgress_ = false;
+    liveLogHead_ = liveLogTail_ = liveLogCount_ = 0;
+    logNotifyFailures_ = 0;
   }
 
-  // 3. Service diagnostic log chunks, CAN capture pages & config snapshots
-  //    with strict time-based pacing (20 ms between consecutive notifications)
-  if ((uint32_t(nowMs - lastLogNotifyMs_) >= LOG_NOTIFICATION_INTERVAL_MS)) {
+  // Pace snapshot and export chunk attempts independently of RPM events.
+  if (!resultPending_ && uint32_t(nowMs - lastLogNotifyMs_) >= LOG_NOTIFICATION_INTERVAL_MS) {
     if (snapshotActive_) {
       lastLogNotifyMs_ = nowMs;
       processSnapshotStream();
-    } else if (isLogsSubscribed()) {
+    } else if (logsSubscribed) {
       if (histPageEopPending_) {
         lastLogNotifyMs_ = nowMs;
         processHistoricalPageRead();
@@ -577,13 +578,16 @@ void BleManager::poll(uint32_t nowMs,
     }
   }
 
-  // 4. Pending OTA soft reboot countdown
-  if (otaRebootTimer_ != 0 && nowMs >= otaRebootTimer_) {
-    otaRebootTimer_ = 0;
-#if defined(ARDUINO)
-    esp_restart();
-#endif
+  // Offer control and streamed reads to the transport first.
+  if (isRpmSubscribed() && uint32_t(nowMs - lastRpmNotifyMs_) >= 100) {
+    lastRpmNotifyMs_ = nowMs;
+    sendRpmNotification(nowMs, candidate, transport, recorder, rpmLightsRendering);
   }
+  if (isHealthSubscribed() && uint32_t(nowMs - lastHealthNotifyMs_) >= 1000) {
+    lastHealthNotifyMs_ = nowMs;
+    sendHealthNotification(transport, recorder);
+  }
+
 }
 
 // Drain the v1 control request queue (called from poll() on the loop task).
@@ -611,53 +615,53 @@ void BleManager::drainControlQueue(uint32_t nowMs) {
     }
 
     if (cmd.opcode == BLE_CTRL_CMD_GET_LOG_PAGE) {
+      stopHistoricalPage();
       histFileOffset_ = cmd.offset;
-      histLinesSent_ = 0;
-      histFinished_ = false;
-      histCancelRequested_ = false;
-      histPageEopPending_ = false;
       histPageFinished_ = 0;
-      activeMsgInProgress_ = false;
       histPageActive_ = true;
     } else if (cmd.opcode == BLE_CTRL_CMD_CANCEL_LOGS) {
-      histCancelRequested_ = true;
-      histPageActive_ = false;
-      histPageEopPending_ = false;
-      activeMsgInProgress_ = false;
-      histLinesSent_ = 0;
+      stopHistoricalPage();
     } else if (cmd.opcode == BLE_CTRL_CMD_GET_CAPTURE_PAGE) {
+      stopCapturePage();
       captureNextRecord_ = cmd.offset;
-      captureRecordsSent_ = 0;
-      captureCancelRequested_ = false;
-      capturePageEopPending_ = false;
       capturePageFinished_ = 0;
-      captureLineStaged_ = false;
-      activeMsgInProgress_ = false;
-      if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
-        activeMsgFlags_ = 0;
-        activeMsgOffset_ = 0;
-        activeMsgLen_ = 0;
+      const auto exportStatus = CanRecorder::instance().bleExportBegin(cmd.offset);
+      if (exportStatus == CanRecorder::BleExportStatus::ReadError) {
+        queueLiveLog("CAPTURE EXPORT FAILED: capture is unreadable", BLE_LOG_FLAG_ERROR);
+      } else {
+        // For an empty capture the first processCapturePage() stages EOP.
+        capturePageActive_ = true;
       }
-      capturePageActive_ = true;
-      // Activate the recorder's export cursor and open its page-scoped read
-      // handle. An out-of-range start simply stays inactive so the first
-      // processCapturePage() reports a clean end-of-capture page.
-      CanRecorder::instance().bleExportBegin(cmd.offset);
     } else if (cmd.opcode == BLE_CTRL_CMD_CANCEL_CAPTURE) {
-      captureCancelRequested_ = true;
-      capturePageActive_ = false;
-      capturePageEopPending_ = false;
-      captureLineStaged_ = false;
-      captureRecordsSent_ = 0;
-      CanRecorder::instance().bleExportCancel();
-      if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
-        activeMsgInProgress_ = false;
-        activeMsgFlags_ = 0;
-        activeMsgOffset_ = 0;
-        activeMsgLen_ = 0;
-      }
+      stopCapturePage();
     }
   }
+}
+
+void BleManager::stopHistoricalPage() {
+  if (histPageEopPending_ || activeMsgIsHistorical_) logNotifyFailures_ = 0;
+  if (activeMsgIsHistorical_) {
+    activeMsgInProgress_ = false;
+    activeMsgIsHistorical_ = false;
+  }
+  histPageActive_ = false;
+  histPageEopPending_ = false;
+  histLinesSent_ = 0;
+}
+
+void BleManager::stopCapturePage() {
+  if (capturePageEopPending_ || captureLineStaged_) logNotifyFailures_ = 0;
+  if (capturePageActive_ || capturePageEopPending_ || captureLineStaged_) {
+    CanRecorder::instance().bleExportEnd();
+  }
+  if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
+    activeMsgInProgress_ = false;
+    activeMsgFlags_ = 0;
+  }
+  capturePageActive_ = false;
+  capturePageEopPending_ = false;
+  captureLineStaged_ = false;
+  captureRecordsSent_ = 0;
 }
 
 uint8_t BleManager::computeRpmStatusFlags(const RpmCandidateMonitor& candidate,
@@ -724,9 +728,13 @@ void BleManager::sendRpmNotification(uint32_t nowMs,
   pkt.reserved = 0;
 
   s_pRpmChar->setValue(reinterpret_cast<const uint8_t*>(&pkt), sizeof(pkt));
-  s_pRpmChar->notify();
-  ++notifyCount_;
-  ++rpmNotifyCount_;
+  const uint16_t conn = s_connHandle.load(std::memory_order_acquire);
+  if (conn != BLE_HS_CONN_HANDLE_NONE && s_pRpmChar->notify(conn)) {
+    ++notifyCount_;
+    ++rpmNotifyCount_;
+  } else {
+    ++dropCount_;
+  }
 #else
   (void)nowMs; (void)candidate; (void)transport; (void)recorder; (void)rpmLightsRendering;
 #endif
@@ -757,31 +765,44 @@ void BleManager::sendHealthNotification(const CanTransport& transport,
   pkt.recordedFrames = recorder.recordedFrames();
 
   s_pHealthChar->setValue(reinterpret_cast<const uint8_t*>(&pkt), sizeof(pkt));
-  s_pHealthChar->notify();
-  ++notifyCount_;
-  ++healthNotifyCount_;
+  const uint16_t conn = s_connHandle.load(std::memory_order_acquire);
+  if (conn != BLE_HS_CONN_HANDLE_NONE && s_pHealthChar->notify(conn)) {
+    ++notifyCount_;
+    ++healthNotifyCount_;
+  } else {
+    ++dropCount_;
+  }
 #else
   (void)transport; (void)recorder;
 #endif
 }
 
-void BleManager::sendLogNotification(const BleLogChunkPacket& packet) {
+bool BleManager::sendLogNotification(const BleLogChunkPacket& packet) {
+  bool accepted = false;
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
-  if (s_pLogsChar) {
-    s_pLogsChar->setValue(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
-    s_pLogsChar->notify();
-    ++notifyCount_;
-    ++logNotifyCount_;
-  }
+  const uint16_t conn = s_connHandle.load(std::memory_order_acquire);
+  // The no-handle overload calls ble_gatts_chr_updated(), which provides no
+  // error code. The targeted call reports local allocation and send errors.
+  accepted = s_pLogsChar && isLogsSubscribed() && conn != BLE_HS_CONN_HANDLE_NONE &&
+             s_pLogsChar->notify(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet), conn);
 #elif defined(PULSESHIFT_TEST_BUILD)
-  if (testLogChunkCount_ < sizeof(testLogChunks_) / sizeof(testLogChunks_[0])) {
+  if (testLogRejections_ > 0) {
+    --testLogRejections_;
+  } else if (testLogChunkCount_ < sizeof(testLogChunks_) / sizeof(testLogChunks_[0])) {
     testLogChunks_[testLogChunkCount_++] = packet;
+    accepted = true;
   }
-  ++notifyCount_;
-  ++logNotifyCount_;
 #else
   (void)packet;
 #endif
+  if (accepted) {
+    logNotifyFailures_ = 0;
+    ++notifyCount_;
+    ++logNotifyCount_;
+  } else {
+    ++logNotifyFailures_;
+  }
+  return accepted;
 }
 
 void BleManager::processLogQueue() {
@@ -801,6 +822,7 @@ void BleManager::processLogQueue() {
     activeChunkIndex_ = 0;
     activeMsgId_ = logMsgId_++;
     activeMsgFlags_ = liveLogFlags_[liveLogTail_];
+    activeMsgIsHistorical_ = false;
     activeMsgInProgress_ = true;
 
     liveLogTail_ = (liveLogTail_ + 1) % LIVE_LOG_CAPACITY;
@@ -814,7 +836,7 @@ void BleManager::processLogQueue() {
   BleLogChunkPacket chunk{};
   chunk.version = PULSESHIFT_BLE_PROTOCOL_VERSION;
   chunk.messageId = activeMsgId_;
-  chunk.chunkIndex = activeChunkIndex_++;
+  chunk.chunkIndex = activeChunkIndex_;
   chunk.payloadLength = chunkPayloadLen;
 
   uint8_t flags = activeMsgFlags_;
@@ -823,30 +845,44 @@ void BleManager::processLogQueue() {
   chunk.flags = flags;
 
   memcpy(chunk.payload, &activeMsgBuf_[activeMsgOffset_], chunkPayloadLen);
+  if (!sendLogNotification(chunk)) {
+    if (logNotifyFailures_ >= MAX_NOTIFY_FAILURES) {
+      // Without the missing chunk the page cannot be completed. Leave the
+      // app's cursor untouched (no EOP), so it can fetch the page again.
+      if (captureLineStaged_) stopCapturePage();
+      else if (activeMsgIsHistorical_) stopHistoricalPage();
+      activeMsgInProgress_ = false;
+      activeMsgFlags_ = 0;
+      logNotifyFailures_ = 0;
+      ++dropCount_;
+    }
+    return;
+  }
+  ++activeChunkIndex_;
   activeMsgOffset_ += chunkPayloadLen;
-
-  sendLogNotification(chunk);
 
   if (activeMsgOffset_ >= activeMsgLen_) {
     if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
       captureLineStaged_ = false;
+      ++captureNextRecord_;
+      if (++captureRecordsSent_ >= CanRecorder::BLE_EXPORT_PAGE_RECORDS) {
+        capturePageFinished_ = 0;
+        capturePageEopPending_ = true;
+        capturePageActive_ = false;
+      }
     }
     activeMsgInProgress_ = false;
     activeMsgFlags_ = 0;
+    activeMsgIsHistorical_ = false;
   }
 #endif
 }
 
 void BleManager::processHistoricalPageRead() {
+#if (defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)) || defined(PULSESHIFT_TEST_BUILD)
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   if (!s_pLogsChar) return;
-
-  if (histCancelRequested_) {
-    histPageActive_ = false;
-    histPageEopPending_ = false;
-    activeMsgInProgress_ = false;
-    return;
-  }
+#endif
 
   // If a pending End-of-Page notification was deferred until message chunks finished
   if (histPageEopPending_) {
@@ -859,12 +895,19 @@ void BleManager::processHistoricalPageRead() {
     BleLogChunkPacket eop{};
     eop.version = PULSESHIFT_BLE_PROTOCOL_VERSION;
     eop.flags = BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK;
-    eop.messageId = logMsgId_++;
+    eop.messageId = logMsgId_;
     eop.chunkIndex = 0;
     eop.payloadLength = 5;
     memcpy(&eop.payload[0], &histFileOffset_, 4);
     eop.payload[4] = histPageFinished_;
-    sendLogNotification(eop);
+    if (!sendLogNotification(eop)) {
+      if (logNotifyFailures_ >= MAX_NOTIFY_FAILURES) {
+        stopHistoricalPage();
+        ++dropCount_;
+      }
+      return;
+    }
+    ++logMsgId_;
 
     histPageEopPending_ = false;
     histPageActive_ = false;
@@ -899,7 +942,10 @@ void BleManager::processHistoricalPageRead() {
     return;
   }
 
-  f.seek(histFileOffset_);
+  if (!f.seek(histFileOffset_)) {
+    histPageActive_ = false;
+    return;
+  }
 
   // Read one line (bounded up to 128 chars)
   char lineBuf[LIVE_LOG_MAX_LEN]{};
@@ -922,6 +968,7 @@ void BleManager::processHistoricalPageRead() {
     activeChunkIndex_ = 0;
     activeMsgId_ = logMsgId_++;
     activeMsgFlags_ = 0;
+    activeMsgIsHistorical_ = true;
     activeMsgInProgress_ = true;
 
     // Send chunk 0 now
@@ -968,22 +1015,6 @@ void BleManager::processCapturePage() {
   if (!s_pLogsChar) return;
 #endif
 
-  if (captureCancelRequested_) {
-    CanRecorder::instance().bleExportCancel();
-    capturePageActive_ = false;
-    capturePageEopPending_ = false;
-    if ((activeMsgFlags_ & BLE_LOG_FLAG_CAPTURE_LINE) != 0) {
-      activeMsgInProgress_ = false;
-      activeMsgFlags_ = 0;
-      activeMsgOffset_ = 0;
-      activeMsgLen_ = 0;
-    }
-    captureLineStaged_ = false;
-    captureRecordsSent_ = 0;
-    captureCancelRequested_ = false;
-    return;
-  }
-
   // Deferred End-of-Page marker: wait until the active message finished.
   if (capturePageEopPending_) {
     if (activeMsgInProgress_) {
@@ -993,12 +1024,19 @@ void BleManager::processCapturePage() {
     BleLogChunkPacket eop{};
     eop.version = PULSESHIFT_BLE_PROTOCOL_VERSION;
     eop.flags = BLE_LOG_FLAG_END_OF_PAGE | BLE_LOG_FLAG_FINAL_CHUNK | BLE_LOG_FLAG_CAPTURE_LINE;
-    eop.messageId = logMsgId_++;
+    eop.messageId = logMsgId_;
     eop.chunkIndex = 0;
     eop.payloadLength = 5;
     memcpy(&eop.payload[0], &captureNextRecord_, 4);
     eop.payload[4] = capturePageFinished_;
-    sendLogNotification(eop);
+    if (!sendLogNotification(eop)) {
+      if (logNotifyFailures_ >= MAX_NOTIFY_FAILURES) {
+        stopCapturePage();
+        ++dropCount_;
+      }
+      return;
+    }
+    ++logMsgId_;
 
     capturePageEopPending_ = false;
     capturePageActive_ = false;
@@ -1015,10 +1053,11 @@ void BleManager::processCapturePage() {
   if (!captureLineStaged_) {
     CanLogRecord record{};
     uint32_t recordIndex = 0;
-    if (rec.bleExportNext(record, recordIndex)) {
+    const auto read = rec.bleExportNext(record, recordIndex);
+    if (read == CanRecorder::BleExportStatus::Ready) {
       char line[96];
       formatCaptureRecordLine(record, line, sizeof(line));
-      captureNextRecord_ = recordIndex + 1;
+      captureNextRecord_ = recordIndex;
 
       strncpy(activeMsgBuf_, line, sizeof(activeMsgBuf_) - 1);
       activeMsgBuf_[sizeof(activeMsgBuf_) - 1] = '\0';
@@ -1027,27 +1066,21 @@ void BleManager::processCapturePage() {
       activeChunkIndex_ = 0;
       activeMsgId_ = logMsgId_++;
       activeMsgFlags_ = BLE_LOG_FLAG_CAPTURE_LINE;
+      activeMsgIsHistorical_ = false;
       activeMsgInProgress_ = true;
       captureLineStaged_ = true;
       processLogQueue();
-      ++captureRecordsSent_;
-
-      if (captureRecordsSent_ >= CanRecorder::BLE_EXPORT_PAGE_RECORDS) {
-        capturePageFinished_ = 0;
-        capturePageEopPending_ = true;
-        capturePageActive_ = false;
-      }
-    } else {
-      // End of capture (or unreadable capture).
+    } else if (read == CanRecorder::BleExportStatus::End) {
       capturePageFinished_ = 1;
       capturePageEopPending_ = true;
       capturePageActive_ = false;
       captureLineStaged_ = false;
+    } else {
+      stopCapturePage();
+      queueLiveLog("CAPTURE EXPORT FAILED: record read or integrity check failed", BLE_LOG_FLAG_ERROR);
     }
   }
   (void)rec;
-#else
-  (void)captureCancelRequested_;
 #endif
 }
 
@@ -1073,7 +1106,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     res.resultFlags = flags;
     res.activeRevision = ConfigManager::instance().activeRevision();
     res.payloadLength = 0;
-    sendResult(res);
+    sendResult(res, nowMs);
   };
 
   if (pkt.version != PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION) {
@@ -1129,12 +1162,17 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_GET_SNAPSHOT: {
+      if (snapshotActive_ && isConfigSnapshotSubscribed()) {
+        status = BLE_CFG_STATUS_BUSY;
+        break;
+      }
       status = BLE_CFG_STATUS_OK;
       resFlags = 0;
       snapshotLen_ = ConfigManager::instance().serializeSnapshot(snapshotBuf_, sizeof(snapshotBuf_));
       snapshotId_ = pkt.sequence;
       snapshotTotalChunks_ = static_cast<uint8_t>((snapshotLen_ + 13) / 14);
       snapshotChunkIdx_ = 0;
+      snapshotNotifyFailures_ = 0;
       snapshotActive_ = true;
       break;
     }
@@ -1561,6 +1599,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
 
     // --- Device control & diagnostics ---
     case BLE_CFG_OP_GET_DIAGNOSTICS: {
+      if (snapshotActive_ && isConfigSnapshotSubscribed()) {
+        status = BLE_CFG_STATUS_BUSY;
+        break;
+      }
       status = BLE_CFG_STATUS_OK;
       resFlags = 0;
       snapshotLen_ = buildDiagnosticsBlob(snapshotBuf_, sizeof(snapshotBuf_), nowMs,
@@ -1568,6 +1610,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       snapshotId_ = pkt.sequence;
       snapshotTotalChunks_ = static_cast<uint8_t>((snapshotLen_ + 13) / 14);
       snapshotChunkIdx_ = 0;
+      snapshotNotifyFailures_ = 0;
       snapshotActive_ = true;
       break;
     }
@@ -1585,7 +1628,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       res.statusCode = BLE_CFG_STATUS_OK;
       res.resultFlags = BLE_CFG_RESULT_FLAG_APPLIED;
       res.activeRevision = ConfigManager::instance().activeRevision();
-      sendResult(res);
+      sendResult(res, nowMs);
 #if defined(ARDUINO)
       delay(150);
       esp_restart();
@@ -1669,6 +1712,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
 
     // --- Secure Authenticated Dual-Slot Firmware OTA (protocol 2.3.0) ---
     case BLE_CFG_OP_OTA_BEGIN: {
+      if (!PULSESHIFT_OTA_ENABLED) {
+        status = BLE_CFG_STATUS_UNSUPPORTED;
+        break;
+      }
       if (pkt.payloadLength < 10 || pkt.payload[0] != 0xA5 || pkt.payload[1] != 0x5C) {
         status = BLE_CFG_STATUS_INVALID_PARAM;
         break;
@@ -1709,6 +1756,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       uint32_t written = 0;
       status = OtaManager::instance().writeChunk(chunkIdx, &pkt.payload[3], dataLen, written);
       if (status == BLE_CFG_STATUS_OK) {
+        OtaManager::instance().noteChunkAcknowledged(nowMs);
         res.payload[0] = pkt.payload[0];
         res.payload[1] = pkt.payload[1];
         res.payload[2] = static_cast<uint8_t>(written & 0xFF);
@@ -1740,14 +1788,15 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
         res.payload[4] = static_cast<uint8_t>((rebootDelayMs >> 24) & 0xFF);
         res.payloadLength = 5;
         resFlags |= BLE_CFG_RESULT_FLAG_APPLIED;
-        otaRebootTimer_ = nowMs + rebootDelayMs;
+        OtaManager::instance().scheduleReboot(nowMs, rebootDelayMs);
       }
       break;
     }
 
     case BLE_CFG_OP_OTA_ABORT: {
-      OtaManager::instance().abortOta();
-      status = BLE_CFG_STATUS_OK;
+      auto& ota = OtaManager::instance();
+      status = ota.isRebootPending() ? BLE_CFG_STATUS_INVALID_STATE : BLE_CFG_STATUS_OK;
+      ota.abortOta();
       break;
     }
 
@@ -1769,6 +1818,23 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     case BLE_CFG_OP_OTA_STATUS: {
       status = BLE_CFG_STATUS_OK;
       auto& ota = OtaManager::instance();
+      if (pkt.payloadLength != 0) {
+        constexpr size_t DIGEST_CHUNK_SIZE = 8;
+        const uint8_t index = pkt.payload[0];
+        if (pkt.payloadLength != 1 || index >= 4) {
+          status = BLE_CFG_STATUS_INVALID_PARAM;
+          break;
+        }
+        uint8_t digest[32];
+        if (!ota.readRunningImageDigest(digest)) {
+          status = BLE_CFG_STATUS_STORAGE_ERROR;
+          break;
+        }
+        res.payload[0] = index;
+        memcpy(&res.payload[1], &digest[index * DIGEST_CHUNK_SIZE], DIGEST_CHUNK_SIZE);
+        res.payloadLength = 1 + DIGEST_CHUNK_SIZE;
+        break;
+      }
       res.payload[0] = static_cast<uint8_t>(ota.state());
       res.payload[1] = ota.activeRunningSlot();
       const uint32_t bw = ota.bytesWritten();
@@ -1801,47 +1867,75 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   res.statusCode = status;
   res.resultFlags = resFlags;
   res.activeRevision = ConfigManager::instance().activeRevision();
-  sendResult(res);
+  sendResult(res, nowMs);
   updateCapabilitiesChar();
 }
 
-void BleManager::sendResult(BleConfigResultPacket& res) {
+void BleManager::sendResult(const BleConfigResultPacket& res, uint32_t nowMs) {
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
   if (s_pConfigResultChar) {
     s_pConfigResultChar->setValue(reinterpret_cast<const uint8_t*>(&res), sizeof(res));
-    if (isConfigResultSubscribed()) {
-      s_pConfigResultChar->notify();
-      ++notifyCount_;
-      ++configResultNotifyCount_;
-    }
   }
-#else
-#if defined(PULSESHIFT_TEST_BUILD)
+#endif
+  if (isConfigResultSubscribed() && !trySendResultNotification(res)) {
+    pendingResult_ = res;
+    lastResultAttemptMs_ = nowMs;
+    resultNotifyFailures_ = 1;
+    resultPending_ = true;
+  }
+}
+
+bool BleManager::trySendResultNotification(const BleConfigResultPacket& res) {
+#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
+  const uint16_t conn = s_connHandle.load(std::memory_order_acquire);
+  if (!s_pConfigResultChar || conn == BLE_HS_CONN_HANDLE_NONE ||
+      !s_pConfigResultChar->notify(reinterpret_cast<const uint8_t*>(&res), sizeof(res), conn)) {
+    return false;
+  }
+  ++notifyCount_;
+  ++configResultNotifyCount_;
+  return true;
+#elif defined(PULSESHIFT_TEST_BUILD)
+  if (testResultRejections_ > 0) {
+    --testResultRejections_;
+    return false;
+  }
   if (testResultCount_ < sizeof(testResults_) / sizeof(testResults_[0])) {
     testResults_[testResultCount_++] = res;
   }
-#endif
+  return true;
+#else
   (void)res;
+  return false;
 #endif
 }
 
 #if defined(PULSESHIFT_TEST_BUILD)
 void BleManager::testEnqueueCommand(const BleConfigCommandPacket& pkt, uint16_t connId) {
-  const uint8_t head = configQueueHead_.load(std::memory_order_relaxed);
-  const uint8_t next = static_cast<uint8_t>((head + 1) % CONFIG_QUEUE_CAPACITY);
-  if (next != configQueueTail_.load(std::memory_order_acquire)) {
-    configQueue_[head].packet.version = pkt.version;
-    configQueue_[head].packet.opcode = pkt.opcode;
-    configQueue_[head].packet.sequence = pkt.sequence;
-    configQueue_[head].packet.payloadLength = pkt.payloadLength;
-    configQueue_[head].packet.flags = pkt.flags;
-    memcpy(configQueue_[head].packet.payload, pkt.payload, sizeof(pkt.payload));
-    configQueue_[head].connId = connId;
-    configQueueHead_.store(next, std::memory_order_release);
-  }
+  BleConfigExtCommandPacket extended{};
+  memcpy(&extended, &pkt, sizeof(pkt));
+  enqueueConfigCommand(extended, connId);
 }
 
 void BleManager::testEnqueueCtrlCommand(uint8_t opcode, uint32_t offset, uint16_t connId) {
+  enqueueControlCommand(opcode, offset, connId);
+}
+#endif
+
+// Bounded SPSC rings: the NimBLE callback produces and poll consumes.
+void BleManager::enqueueConfigCommand(const BleConfigExtCommandPacket& packet, uint16_t connId) {
+  const uint8_t head = configQueueHead_.load(std::memory_order_relaxed);
+  const uint8_t next = static_cast<uint8_t>((head + 1) % CONFIG_QUEUE_CAPACITY);
+  if (next != configQueueTail_.load(std::memory_order_acquire)) {
+    configQueue_[head].packet = packet;
+    configQueue_[head].connId = connId;
+    configQueueHead_.store(next, std::memory_order_release);
+  } else {
+    ++droppedCommands_;
+  }
+}
+
+void BleManager::enqueueControlCommand(uint8_t opcode, uint32_t offset, uint16_t connId) {
   const uint8_t head = ctrlQueueHead_.load(std::memory_order_relaxed);
   const uint8_t next = static_cast<uint8_t>((head + 1) % CTRL_QUEUE_CAPACITY);
   if (next != ctrlQueueTail_.load(std::memory_order_acquire)) {
@@ -1849,9 +1943,10 @@ void BleManager::testEnqueueCtrlCommand(uint8_t opcode, uint32_t offset, uint16_
     ctrlQueue_[head].offset = offset;
     ctrlQueue_[head].connId = connId;
     ctrlQueueHead_.store(next, std::memory_order_release);
+  } else {
+    ++droppedCommands_;
   }
 }
-#endif
 
 void BleManager::syncDecoderToMonitor(RpmCandidateMonitor& candidate) {
   // Rebuild the authoritative live decoder from the active ConfigManager
@@ -1874,8 +1969,11 @@ void BleManager::syncDecoderToMonitor(RpmCandidateMonitor& candidate) {
 }
 
 void BleManager::processSnapshotStream() {
-#if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
-  if (!snapshotActive_ || !s_pConfigSnapshotChar) return;
+#if (defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)) || defined(PULSESHIFT_TEST_BUILD)
+  if (!isConfigSnapshotSubscribed()) {
+    snapshotActive_ = false;
+    return;
+  }
 
   if (snapshotChunkIdx_ < snapshotTotalChunks_) {
     const size_t offset = snapshotChunkIdx_ * 14;
@@ -1892,13 +1990,30 @@ void BleManager::processSnapshotStream() {
       memcpy(chunk.payload, &snapshotBuf_[offset], chunkBytes);
     }
 
-    s_pConfigSnapshotChar->setValue(reinterpret_cast<const uint8_t*>(&chunk), sizeof(chunk));
-    if (isConfigSnapshotSubscribed()) {
-      s_pConfigSnapshotChar->notify();
-      ++notifyCount_;
-      ++configSnapshotNotifyCount_;
+    bool accepted = false;
+#if defined(ARDUINO)
+    const uint16_t conn = s_connHandle.load(std::memory_order_acquire);
+    accepted = s_pConfigSnapshotChar && conn != BLE_HS_CONN_HANDLE_NONE &&
+               s_pConfigSnapshotChar->notify(reinterpret_cast<const uint8_t*>(&chunk), sizeof(chunk), conn);
+#elif defined(PULSESHIFT_TEST_BUILD)
+    if (testSnapshotRejections_ > 0) {
+      --testSnapshotRejections_;
+    } else if (testSnapshotChunkCount_ < sizeof(testSnapshotChunks_) / sizeof(testSnapshotChunks_[0])) {
+      testSnapshotChunks_[testSnapshotChunkCount_++] = chunk;
+      accepted = true;
+    }
+#endif
+    if (!accepted) {
+      if (++snapshotNotifyFailures_ >= MAX_NOTIFY_FAILURES) {
+        snapshotActive_ = false;
+        ++dropCount_;
+      }
+      return;
     }
 
+    snapshotNotifyFailures_ = 0;
+    ++notifyCount_;
+    ++configSnapshotNotifyCount_;
     ++snapshotChunkIdx_;
     if (snapshotChunkIdx_ >= snapshotTotalChunks_) {
       snapshotActive_ = false;

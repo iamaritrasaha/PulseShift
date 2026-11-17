@@ -176,6 +176,14 @@ int main() {
     assert(status == BLE_CFG_STATUS_OK);
     assert(nextSlot == 1);
     assert(ota.isRebootPending());
+    // Cancellation after slot selection preserves restart and its grace period.
+    const uint32_t rebootStart = UINT32_MAX - 400;
+    ota.scheduleReboot(rebootStart, delayMs);
+    ota.abortOta();
+    assert(ota.startOta(70000, prefix, benchRpm, benchTransport, rebootStart, token, targetSlot) ==
+           BLE_CFG_STATUS_BUSY);
+    assert(!ota.rebootDue(rebootStart + delayMs - 1));
+    assert(ota.rebootDue(rebootStart + delayMs));
     printf("PASS 3: Complete authenticated image transfer and commit succeeded (real ECDSA P-256)\n");
   }
 
@@ -459,6 +467,44 @@ int main() {
     printf("PASS 12: Operational rollback confirmation policy verified\n");
   }
 
-  printf("\nALL 12 OTA CRYPTOGRAPHIC & FAULT-INJECTION TESTS PASSED.\n");
+  // --- Test 13: Transfer exclusivity, inactivity, CAN activity and cancellation ---
+  {
+    auto& ota = OtaManager::instance();
+    ota.resetForTest();
+    RpmCandidateMonitor idleMon;
+    CanTransport benchTransport(500000);
+    benchTransport.begin();
+    const uint8_t prefix[4]{};
+    uint32_t token = 0;
+    uint8_t slot = 0;
+    const uint32_t started = UINT32_MAX - 100;
+    assert(ota.startOta(70000, prefix, idleMon, benchTransport, started, token, slot) == BLE_CFG_STATUS_OK);
+    assert(ota.startOta(71000, prefix, idleMon, benchTransport, started, token, slot) == BLE_CFG_STATUS_BUSY);
+    assert(ota.totalExpectedSize() == 70000);
+    ota.noteChunkAcknowledged(started + 8000);
+    assert(ota.serviceTransfer(idleMon, benchTransport, started + 22999) == BLE_CFG_STATUS_OK);
+    assert(ota.serviceTransfer(idleMon, benchTransport, started + 23000) == BLE_CFG_STATUS_INVALID_STATE);
+    assert(ota.state() == OtaEngineState::Idle);
+
+    assert(ota.startOta(70000, prefix, idleMon, benchTransport, nowMs, token, slot) == BLE_CFG_STATUS_OK);
+    s_mockTwaiRx = true;
+    CanFrame frame{};
+    assert(benchTransport.receive(frame, nowMs + 1));
+    s_mockTwaiRx = false;
+    assert(ota.serviceTransfer(idleMon, benchTransport, nowMs + 1) == BLE_CFG_STATUS_INVALID_STATE);
+    assert(ota.state() == OtaEngineState::Idle);
+    uint32_t written = 0;
+    const uint8_t header = 0xE9;
+    assert(ota.writeChunk(0, &header, 1, written) == BLE_CFG_STATUS_INVALID_STATE);
+    assert(ota.startOta(70000, prefix, idleMon, benchTransport, nowMs + 3000, token, slot) ==
+           BLE_CFG_STATUS_INVALID_STATE);
+    assert(ota.startOta(70000, prefix, idleMon, benchTransport, nowMs + 3001, token, slot) ==
+           BLE_CFG_STATUS_OK);
+    ota.abortOta();
+    assert(ota.state() == OtaEngineState::Idle);
+    printf("PASS 13: Duplicate BEGIN, wrapped timeout, CAN activity during transfer, cancellation\n");
+  }
+
+  printf("\nALL 13 OTA CRYPTOGRAPHIC & FAULT-INJECTION TESTS PASSED.\n");
   return 0;
 }

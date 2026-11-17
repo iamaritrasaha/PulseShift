@@ -56,7 +56,7 @@
 #error "PulseShift OTA requires Arduino-ESP32 with CONFIG_APP_ROLLBACK_ENABLE"
 #endif
 
-// Arduino-ESP32 2.0.x calls initArduino() before setup(). Its default weak
+// Arduino-ESP32 3.3.12 calls initArduino() before setup(). Its default weak
 // verifyRollbackLater() hook returns false and immediately marks OTA images
 // VALID, bypassing PulseShift's pending-verification checks and 120s rollback.
 // Override that C symbol so ONLY our explicit OTA_CONFIRM validates the image.
@@ -124,7 +124,7 @@ public:
     Serial.println("RECEIVE ONLY: Breakout CTX tied to 3V3 directly, GPIO17 disconnected, software listen-only");
 #endif
 
-    // Initialize the LED controller (NeoPixel bus; no display dependency).
+    // Initialize the RMT-backed WS2812B output.
     ledController_.begin();
 
     // Initialize passive CAN reception at the verified vehicle bitrate.
@@ -151,8 +151,10 @@ public:
         const bool selfTestsPass = fsOk &&
                                    ConfigManager::validateConfig(ConfigManager::instance().active()) &&
                                    transport_.healthy() &&
-                                   BleManager::instance().isAdvertising();
+                                   (BleManager::instance().isAdvertising() ||
+                                    BleManager::instance().isClientConnected());
         if (selfTestsPass) {
+          OtaManager::instance().recordBootSelfTestPassed();
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
           Serial.println("[OTA] Boot self-tests passed on pending partition. Partition awaiting Android confirmation.");
 #endif
@@ -199,7 +201,7 @@ public:
 
     // 2. Process serial commands (optional bench console)
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-    handleSerialInput();
+    handleSerialInput(now);
 #endif
 
     // 3. Poll hardware transport
@@ -236,37 +238,26 @@ public:
     DiagLogger::instance().pump(now);
 
     // 6. Refresh the unified LED controller from the authoritative RPM snapshot
-    //    BEFORE BLE telemetry so the SHIFT_LIGHTS_ENABLED flag reports the
-    //    frame the strip is actually showing this tick.
+    //    BEFORE BLE telemetry so the flag reflects the selected RPM layer
+    //    and the most recent driver result.
     logger_.pump();
     const auto rpmSnap = candidateMonitor_.snapshot(now);
     ledController_.update(rpmSnap, now, transport_.healthy());
-
-    // Handle shift-light bench test timeout (rollover-safe)
-    if (ledController_.isTestRpmActive() && uint32_t(now - rpmTestStartMs_) >= 10000) {
-      ledController_.setTestRpm(0, false);
-    }
 
     // 5b. Service BLE GATT notifications, command queue and page streaming.
     //     RPM-driven rendering truth comes from the LED engine's current
     //     layer: the verified bar, the unverified provisional preview or the
     //     RPM warning overlay, never decorative effects or the synthetic
     //     bench test.
-    const LedActiveLayer ledLayer = ledController_.ledEffects().activeLayer();
-    const bool rpmLightsRendering =
-        ledLayer == LedActiveLayer::RpmBar ||
-        ledLayer == LedActiveLayer::ProvisionalRpm ||
-        ledLayer == LedActiveLayer::Warning;
     BleManager::instance().poll(now, candidateMonitor_, transport_, CanRecorder::instance(),
-                                rpmLightsRendering);
+                                ledController_.isLiveRpmRendering());
 
     // A terminal-style Android app can request the same 10-second LED bench
     // test as Serial, but only through an authenticated BLE v2 command.
     uint16_t requestedTestRpm = 0;
     bool requestedTestActive = false;
     if (BleManager::instance().takeBenchTestRequest(requestedTestRpm, requestedTestActive)) {
-      ledController_.setTestRpm(requestedTestRpm, requestedTestActive);
-      rpmTestStartMs_ = now;
+      ledController_.setTestRpm(requestedTestRpm, requestedTestActive, now);
     }
 
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
@@ -425,17 +416,17 @@ private:
   }
 
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-  void handleSerialInput() {
+  void handleSerialInput(uint32_t now) {
     for (unsigned i = 0; i < 32 && Serial.available() > 0; ++i) {
       const char ch = static_cast<char>(Serial.read());
       if (serialProto_.feed(ch)) {
-        processCommand(serialProto_.command());
+        processCommand(serialProto_.command(), now);
         serialProto_.reset();
       }
     }
   }
 
-  void processCommand(const char* rawCmd) {
+  void processCommand(const char* rawCmd, uint32_t now) {
     while (*rawCmd == ' ' || *rawCmd == '\t' || *rawCmd == '\r' || *rawCmd == '\n') ++rawCmd;
     if (*rawCmd == '\0') return;
 
@@ -475,13 +466,12 @@ private:
     } else if (strcasecmp(cmd, "RPM MONITOR") == 0) {
       candidateMonitor_.printStreamLine(millis());
     } else if (strcasecmp(cmd, "RPM TEST OFF") == 0) {
-      ledController_.setTestRpm(0, false);
+      ledController_.setTestRpm(0, false, now);
       Serial.println("[TEST] Shift-light bench test disabled.");
     } else if (strncasecmp(cmd, "RPM TEST ", 9) == 0) {
       uint32_t val = 0;
       if (parseUnsignedNumber(cmd + 9, 20000, val)) {
-        ledController_.setTestRpm(static_cast<uint16_t>(val), true);
-        rpmTestStartMs_ = millis();
+        ledController_.setTestRpm(static_cast<uint16_t>(val), true, now);
         Serial.printf("[TEST] 6-LED shift-light bench test active: %u RPM for 10s (Verified RPM mode requires calibration; provisional preview is separate)\r\n", (unsigned)val);
       } else {
         Serial.println("[ERROR] Test RPM must be a valid integer between 0 and 20000.");
@@ -797,15 +787,9 @@ private:
                     (unsigned)candidateMonitor_.minObservedRaw(),
                     (unsigned)candidateMonitor_.maxObservedRaw());
     }
-    const LedActiveLayer ledLayer = ledController_.ledEffects().activeLayer();
-    const bool shiftLightsRendering =
-        ledLayer == LedActiveLayer::RpmBar ||
-        ledLayer == LedActiveLayer::ProvisionalRpm ||
-        ledLayer == LedActiveLayer::Warning;
-
-    Serial.printf("Calibration: %s | Physical Shift Lights: %s | CAN TX: SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)\r\n",
+    Serial.printf("Calibration: %s | RPM Output: %s | CAN TX: SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)\r\n",
                   candidateMonitor_.isCalibrated() ? "VERIFIED" : "UNVERIFIED",
-                  ledController_.isTestRpmActive() ? "BENCH TEST OVERRIDE" : (shiftLightsRendering ? "ACTIVE" : "STANDBY"));
+                  ledController_.isTestRpmActive() ? "BENCH TEST REQUESTED" : (ledController_.isLiveRpmRendering() ? "ACTIVE" : "STANDBY"));
 
     Serial.println("\n--- Bluetooth Low Energy (PulseShift BLE v1 + v2) ---");
     Serial.printf("Enabled: %s | Advertising: %s | Device Name: PulseShift\r\n",
@@ -903,7 +887,6 @@ private:
   RpmCandidateMonitor candidateMonitor_;
   bool rpmMonitorStreaming_ = false;
   uint32_t lastRpmMonitorPrint_ = 0;
-  uint32_t rpmTestStartMs_ = 0;
   bool bootVerificationTimeoutHandled_ = false;
 };
 

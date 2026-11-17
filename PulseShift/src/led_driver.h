@@ -12,7 +12,9 @@ enum class LedDriverStatus : uint8_t {
   Busy = 3,
   Timeout = 4,
   InitFailed = 5,
-  InvalidParam = 6
+  InvalidParam = 6,
+  TransmitRejected = 7,
+  DeinitFailed = 8
 };
 
 // Abstract interface for the physical or simulated LED output driver.
@@ -29,10 +31,9 @@ class ILedDriver {
 };
 
 #if defined(ARDUINO) && defined(ESP32)
+#include <esp32-hal-rmt.h>
 // Native ESP32 RMT driver utilizing Arduino-ESP32 HAL (esp32-hal-rmt).
-// Allocates 4 hardware RMT memory blocks (256 symbols) for 6 WS2812B LEDs (144 symbols),
-// fitting all symbols in hardware RAM with zero intermediate ISR refills.
-// Returns an authoritative boolean write result.
+// Four ESP32 RMT blocks hold a six-pixel frame, latch interval and HAL EOF.
 class Esp32RmtLedDriver : public ILedDriver {
  public:
   Esp32RmtLedDriver() = default;
@@ -45,9 +46,18 @@ class Esp32RmtLedDriver : public ILedDriver {
   const char* lastStatusString() const override;
 
  private:
+  void releaseIdleChannel();
+
+  static constexpr uint8_t MAX_PIXELS = 6;
+  static constexpr size_t BITS_PER_PIXEL = 24;
+  static constexpr uint32_t TRANSMIT_TIMEOUT_MS = 20;
+  // IDF may retain this payload after a completion timeout.
+  rmt_data_t symbols_[MAX_PIXELS * BITS_PER_PIXEL + 1]{};
   uint8_t pin_ = 0;
   uint8_t count_ = 0;
   bool ready_ = false;
+  bool txPending_ = false;
+  bool deinitFailed_ = false;
   LedDriverStatus lastStatus_ = LedDriverStatus::Uninitialized;
 };
 #endif

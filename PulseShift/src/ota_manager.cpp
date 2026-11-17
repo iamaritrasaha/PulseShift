@@ -196,11 +196,15 @@ void OtaManager::resetForTest() {
   expectedChunkIndex_ = 0;
   sessionToken_ = 0;
   targetSlot_ = 0;
-  rebootTimeMs_ = 0;
+  lastTransferActivityMs_ = 0;
+  rebootStartedMs_ = 0;
+  rebootDelayMs_ = 0;
+  runningImageDigestValid_ = false;
   memset(sha256Prefix_, 0, sizeof(sha256Prefix_));
   memset(trailerBuffer_, 0, sizeof(trailerBuffer_));
   trailerBytesBuffered_ = 0;
   rollbackConfirmed_ = false;
+  bootSelfTestPassed_ = false;
   initCrc32();
   initSha256();
 #if defined(ARDUINO)
@@ -215,7 +219,7 @@ void OtaManager::begin() {
 uint8_t OtaManager::activeRunningSlot() const {
 #if defined(ARDUINO)
   const esp_partition_t* running = esp_ota_get_running_partition();
-  if (running && strcmp(running->label, "app1") == 0) {
+  if (running && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1) {
     return 1;
   }
   return 0;
@@ -242,6 +246,29 @@ bool OtaManager::isDualSlotSupported() const {
   return true; // Supported in host test environment
 #endif
 }
+
+bool OtaManager::readRunningImageDigest(uint8_t out[32]) {
+  if (!runningImageDigestValid_) {
+#if defined(ARDUINO)
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (!running || esp_partition_get_sha256(running, runningImageDigest_) != ESP_OK) {
+      return false;
+    }
+    runningImageDigestValid_ = true;
+#else
+    return false;
+#endif
+  }
+  memcpy(out, runningImageDigest_, sizeof(runningImageDigest_));
+  return true;
+}
+
+#if defined(PULSESHIFT_TEST_BUILD)
+void OtaManager::testSetRunningImageDigest(const uint8_t digest[32]) {
+  memcpy(runningImageDigest_, digest, sizeof(runningImageDigest_));
+  runningImageDigestValid_ = true;
+}
+#endif
 
 void OtaManager::initCrc32() {
   runningCrc32_ = 0;
@@ -301,23 +328,50 @@ void OtaManager::finishSha256(uint8_t output[32]) {
   }
 }
 
+namespace {
+bool otaStationary(const RpmCandidateMonitor& rpmMon, const CanTransport& transport, uint32_t nowMs) {
+  return !(rpmMon.isFresh(nowMs) && rpmMon.estimatedRpm(nowMs) > 0) &&
+         !(transport.totalRx() > 0 && uint32_t(nowMs - transport.lastRxMs()) < 3000);
+}
+}
+
+BleConfigStatusCode OtaManager::serviceTransfer(const RpmCandidateMonitor& rpmMon,
+                                                const CanTransport& transport, uint32_t nowMs) {
+  if (state_ == OtaEngineState::Active &&
+      (!otaStationary(rpmMon, transport, nowMs) ||
+       uint32_t(nowMs - lastTransferActivityMs_) >= 15000)) {
+    abortOta();
+    return BLE_CFG_STATUS_INVALID_STATE;
+  }
+  return BLE_CFG_STATUS_OK;
+}
+
+void OtaManager::scheduleReboot(uint32_t nowMs, uint32_t delayMs) {
+  rebootStartedMs_ = nowMs;
+  rebootDelayMs_ = delayMs;
+}
+
+bool OtaManager::rebootDue(uint32_t nowMs) const {
+  return state_ == OtaEngineState::RebootPending && rebootDelayMs_ != 0 &&
+         uint32_t(nowMs - rebootStartedMs_) >= rebootDelayMs_;
+}
+
 BleConfigStatusCode OtaManager::startOta(uint32_t totalSize, const uint8_t sha256_prefix[4],
                                         const RpmCandidateMonitor& rpmMon,
                                         const CanTransport& transport,
                                         uint32_t nowMs,
                                         uint32_t& outSessionToken, uint8_t& outTargetSlot) {
+  if (state_ != OtaEngineState::Idle) {
+    return BLE_CFG_STATUS_BUSY;
+  }
+
   // Safety Interlock 0: Partition layout must support dual-slot OTA
   if (!isDualSlotSupported()) {
     return BLE_CFG_STATUS_UNSUPPORTED;
   }
 
-  // Safety Interlock 1: Vehicle must be stationary and bench-safe
-  if (rpmMon.isFresh(nowMs) && rpmMon.estimatedRpm(nowMs) > 0) {
-    return BLE_CFG_STATUS_INVALID_STATE;
-  }
-
-  // Safety Interlock 2: CAN bus must be completely inactive (no frames in last 3s)
-  if (transport.hasTraffic(nowMs) || (transport.totalRx() > 0 && (nowMs - transport.lastRxMs()) < 3000)) {
+  // Require zero live RPM and three seconds without observed CAN frames.
+  if (!otaStationary(rpmMon, transport, nowMs)) {
     return BLE_CFG_STATUS_INVALID_STATE;
   }
 
@@ -332,14 +386,19 @@ BleConfigStatusCode OtaManager::startOta(uint32_t totalSize, const uint8_t sha25
 #if defined(ARDUINO)
   const esp_partition_t* running = esp_ota_get_running_partition();
   const esp_partition_t* updatePart = esp_ota_get_next_update_partition(nullptr);
-  if (!running || !updatePart || updatePart == running) {
+  if (!running || !updatePart || updatePart->address == running->address ||
+      (updatePart->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0 &&
+       updatePart->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_1)) {
     return BLE_CFG_STATUS_STORAGE_ERROR;
   }
-  targetSlot_ = (strcmp(updatePart->label, "app1") == 0) ? 1 : 0;
+  targetSlot_ = updatePart->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1 ? 1 : 0;
 
   esp_ota_handle_t handle = 0;
   // Begin OTA targeting the application binary size (excluding trailer)
   const uint32_t appBinarySize = totalSize - OTA_TRAILER_SIZE;
+  if (appBinarySize > updatePart->size) {
+    return BLE_CFG_STATUS_INVALID_PARAM;
+  }
   esp_err_t err = esp_ota_begin(updatePart, appBinarySize, &handle);
   if (err != ESP_OK) {
     return BLE_CFG_STATUS_STORAGE_ERROR;
@@ -362,6 +421,7 @@ BleConfigStatusCode OtaManager::startOta(uint32_t totalSize, const uint8_t sha25
 
   initCrc32();
   initSha256();
+  lastTransferActivityMs_ = nowMs;
   state_ = OtaEngineState::Active;
 
   outSessionToken = sessionToken_;
@@ -475,7 +535,8 @@ BleConfigStatusCode OtaManager::endOta(const uint8_t sha256_tail[4], uint32_t ex
 
   // Step 3: Parse and validate authentication trailer
   const auto* trailer = reinterpret_cast<const OtaAuthTrailer*>(trailerBuffer_);
-  if (memcmp(trailer->magic, "PSOT", 4) != 0 || trailer->version != 1 || trailer->sigLen != 64) {
+  if (memcmp(trailer->magic, "PSOT", 4) != 0 || trailer->version != 1 ||
+      trailer->flags != 0 || trailer->sigLen != 64) {
     abortOta();
     return BLE_CFG_STATUS_VALIDATION_FAILED;
   }
@@ -510,7 +571,8 @@ BleConfigStatusCode OtaManager::endOta(const uint8_t sha256_tail[4], uint32_t ex
   // Step 6: Verify image segments on partition before setting boot slot
   const esp_partition_pos_t partPos = { updatePart->address, updatePart->size };
   esp_image_metadata_t imgData{};
-  if (esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &partPos, &imgData) != ESP_OK) {
+  if (esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &partPos, &imgData) != ESP_OK ||
+      imgData.image_len != totalSize_ - OTA_TRAILER_SIZE) {
     abortOta();
     return BLE_CFG_STATUS_VALIDATION_FAILED;
   }
@@ -528,14 +590,13 @@ BleConfigStatusCode OtaManager::endOta(const uint8_t sha256_tail[4], uint32_t ex
 }
 
 void OtaManager::abortOta() {
-  if (state_ == OtaEngineState::Active) {
+  if (state_ != OtaEngineState::Active) return;
 #if defined(ARDUINO)
-    if (otaHandle_ != 0) {
-      esp_ota_abort(static_cast<esp_ota_handle_t>(otaHandle_));
-      otaHandle_ = 0;
-    }
-#endif
+  if (otaHandle_ != 0) {
+    esp_ota_abort(static_cast<esp_ota_handle_t>(otaHandle_));
+    otaHandle_ = 0;
   }
+#endif
   state_ = OtaEngineState::Idle;
   bytesWritten_ = 0;
   totalSize_ = 0;
@@ -556,9 +617,13 @@ BleConfigStatusCode OtaManager::confirmRollbackCancel(uint8_t& outActiveSlot) {
   if (otaState != ESP_OTA_IMG_PENDING_VERIFY && otaState != ESP_OTA_IMG_VALID) {
     return BLE_CFG_STATUS_INVALID_STATE;
   }
-  if (otaState == ESP_OTA_IMG_PENDING_VERIFY &&
-      esp_ota_mark_app_valid_cancel_rollback() != ESP_OK) {
-    return BLE_CFG_STATUS_STORAGE_ERROR;
+  if (otaState == ESP_OTA_IMG_PENDING_VERIFY) {
+    if (!bootSelfTestPassed_ || !isRollbackPossible()) {
+      return BLE_CFG_STATUS_INVALID_STATE;
+    }
+    if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK) {
+      return BLE_CFG_STATUS_STORAGE_ERROR;
+    }
   }
 #endif
   rollbackConfirmed_ = true;

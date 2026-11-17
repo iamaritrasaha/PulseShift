@@ -44,6 +44,12 @@ g++ $CXXFLAGS \
     test/test_led_controller.cpp -o "$BUILD_DIR/test_led_controller"
 "$BUILD_DIR/test_led_controller"
 
+# Compile the production RMT driver against the 3.3.12 HAL behavior fixture.
+g++ $CXXFLAGS \
+    -DARDUINO -DESP32 -Itest/stubs/rmt -IPulseShift/src \
+    PulseShift/src/led_driver.cpp test/test_led_rmt_driver.cpp -o "$BUILD_DIR/test_led_rmt_driver"
+"$BUILD_DIR/test_led_rmt_driver"
+
 # BLE v2 command dispatch tests through the real BleManager dispatcher
 # (auth binding, staged transactions, calibration workflow, device commands).
 g++ $CXXFLAGS \

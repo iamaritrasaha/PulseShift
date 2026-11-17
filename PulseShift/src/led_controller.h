@@ -23,6 +23,7 @@ class LedController {
   static constexpr uint32_t RETRY_INTERVAL_MS = 50;
   static constexpr uint32_t INIT_RETRY_INTERVAL_MS = 1000;
   static constexpr uint8_t MAX_INIT_ATTEMPTS = 10;
+  static constexpr uint32_t BENCH_TEST_DURATION_MS = 10000;
 
   LedController();
   ~LedController() = default;
@@ -36,12 +37,19 @@ class LedController {
     feedbackActive_ = true;
   }
 
-  void setTestRpm(uint16_t rpm, bool active) {
+  void setTestRpm(uint16_t rpm, bool active, uint32_t now) {
     testRpm_ = rpm;
     testRpmActive_ = active;
+    testRpmStartMs_ = now;
   }
   bool isTestRpmActive() const { return testRpmActive_; }
   uint16_t testRpm() const { return testRpm_; }
+  bool isLiveRpmRendering() const {
+    const LedActiveLayer layer = engine_.activeLayer();
+    return lastDriverStatus() == LedDriverStatus::TransmitOk &&
+           (layer == LedActiveLayer::RpmBar || layer == LedActiveLayer::ProvisionalRpm ||
+            layer == LedActiveLayer::Warning);
+  }
 
   LedEffectEngine& ledEffects() { return engine_; }
   const LedEffectEngine& ledEffects() const { return engine_; }
@@ -81,6 +89,10 @@ class LedController {
 #endif
 
  private:
+  void initializeDriver(uint32_t now);
+  void transmitAttemptedFrame(uint32_t now);
+  void recordError(uint32_t now);
+
 #if defined(ARDUINO) && defined(ESP32)
   Esp32RmtLedDriver defaultDriver_{};
 #else
@@ -97,6 +109,7 @@ class LedController {
   bool feedbackActive_ = false;
   uint16_t testRpm_ = 0;
   bool testRpmActive_ = false;
+  uint32_t testRpmStartMs_ = 0;
 
   // Tri-state buffer architecture
   RgbColor calculatedPixels_[LED_COUNT]{};
@@ -110,4 +123,7 @@ class LedController {
   uint32_t forcedRefreshCount_ = 0;
   uint32_t lastAttemptMs_ = 0;
   uint32_t lastConfirmedMs_ = 0;
+  LedDriverStatus lastError_ = LedDriverStatus::Uninitialized;
+  uint32_t lastErrorMs_ = 0;
+  uint32_t lastErrorLoggedMs_ = 0;
 };
