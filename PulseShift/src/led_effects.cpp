@@ -271,10 +271,9 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   // Effect 4 is the protected, calibrated shift light. Effect 5 is a
   // separate, explicitly UNVERIFIED diagnostic preview of the live CAN signal.
   // Neither mode is allowed to display stale, unavailable or invalid RPM.
-  // A provisional preview must still show non-RPM startup/commissioning
-  // indications without a bike connected. Do not apply this exception to
-  // the verified shift-light mode. Once startup finishes and no owner window
-  // is open, stale/invalid RPM is strictly blanked as before.
+  // The missing-signal safeguard blanks the strip when an RPM mode is active,
+  // EXCEPT when the owner commissioning window is open (which displays cyan pairing pulse)
+  // or when an initial provisional preview startup animation is playing.
   const bool verifiedBar = cfg.effect == 4;
   const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
       (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
@@ -282,10 +281,11 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   const bool liveRpmActive = (cfg.effect == 4 || cfg.effect == 5) &&
                              sampleQualified && rpm.engineRunning;
 
-  const bool previewIndicatorActive = cfg.effect == 5 &&
-      (input.authWindowOpen || (cfg.isPowerOn && !startupComplete_));
-  if (cfg.effect == 4 || (cfg.effect == 5 && !previewIndicatorActive)) {
-    if (!sampleQualified) {
+  const bool commissioningActive = input.authWindowOpen && !liveRpmActive;
+  const bool previewStartupActive = (cfg.effect == 5) && (cfg.isPowerOn && !startupComplete_);
+
+  if (cfg.effect == 4 || cfg.effect == 5) {
+    if (!commissioningActive && !previewStartupActive && !sampleQualified) {
       // Reset threshold latches so a recovered signal starts from fresh data.
       for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
       warningLatched_ = false;
@@ -300,7 +300,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   // is NOT actively running with qualified RPM. If the engine is running on an
   // RPM display mode, live RPM rendering takes precedence so a rider tapping
   // or holding the button is never blinded by cyan.
-  if (input.authWindowOpen && !liveRpmActive) {
+  if (commissioningActive) {
     activeLayer_ = LedActiveLayer::Commissioning;
     const uint32_t phase = nowMs % 1000;
     const uint8_t factor = (phase < 500)
