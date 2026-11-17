@@ -512,6 +512,7 @@ void BleManager::poll(uint32_t nowMs,
 #endif
     return;
   }
+  if (recorder.isRecording()) ota.abortOta();
   ota.serviceTransfer(candidate, transport, nowMs);
 
   if (linkResetPending_.exchange(false, std::memory_order_acq_rel)) {
@@ -727,8 +728,7 @@ void BleManager::sendRpmNotification(uint32_t nowMs,
 
   pkt.captureStage = static_cast<uint8_t>(recorder.currentStage());
   pkt.canFramesRx = transport.totalRx();
-  // Experimental, signed-off-by-user sensor hypothesis (0x303[1] / 10 V).
-  // Only previously reserved bytes change; all established RPM fields remain intact.
+  // Publish the optional raw voltage candidate without changing the RPM fields.
   pkt.reserved = ExperimentalVoltageProbe::instance().bleReservedWord(nowMs);
 
   s_pRpmChar->setValue(reinterpret_cast<const uint8_t*>(&pkt), sizeof(pkt));
@@ -1724,6 +1724,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
         status = BLE_CFG_STATUS_INVALID_PARAM;
         break;
       }
+      if (recorder.isRecording()) {
+        status = BLE_CFG_STATUS_INVALID_STATE;
+        break;
+      }
       const uint32_t totalSize = static_cast<uint32_t>(pkt.payload[2]) |
                                  (static_cast<uint32_t>(pkt.payload[3]) << 8) |
                                  (static_cast<uint32_t>(pkt.payload[4]) << 16) |
@@ -1872,7 +1876,9 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   res.resultFlags = resFlags;
   res.activeRevision = ConfigManager::instance().activeRevision();
   sendResult(res, nowMs);
-  updateCapabilitiesChar();
+  // Capabilities cannot change during a data write. Avoid checking rollback
+  // viability against the partially written inactive image for every chunk.
+  if (pkt.opcode != BLE_CFG_OP_OTA_DATA) updateCapabilitiesChar();
 }
 
 void BleManager::sendResult(const BleConfigResultPacket& res, uint32_t nowMs) {
@@ -2181,6 +2187,10 @@ size_t BleManager::buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen, uint32_t
     putU32(&v[8], cfgMgr.active().calFingerprint);
     appendTlv(BLE_DIAG_TLV_CALIBRATION, v, 13);
   }
+
+  uint8_t rawCandidates[5];
+  ExperimentalVoltageProbe::instance().diagnosticsSnapshot(nowMs, rawCandidates);
+  appendTlv(BLE_DIAG_TLV_EXPERIMENTAL, rawCandidates, sizeof(rawCandidates));
 
   // Trailing CRC32 over everything serialized so far
   const uint32_t crc = ConfigManager::computeCrc32(outBuf, offset);

@@ -324,9 +324,10 @@ enum BleDiagnosticsTlvId : uint8_t {
                                      // ownerEnrolled u8, sessionAuthorized u8 (5 bytes)
   BLE_DIAG_TLV_CAPTURE_INFO  = 0x47, // stage u8, sessionId u32, bootCount u32 (9 bytes)
   BLE_DIAG_TLV_LAST_ERROR    = 0x48, // UTF-8 string (<= 96 bytes)
-  BLE_DIAG_TLV_CALIBRATION   = 0x49  // sessionActive u8, points u8, captureActive u8,
+  BLE_DIAG_TLV_CALIBRATION   = 0x49, // sessionActive u8, points u8, captureActive u8,
                                      // samples u16 LE, calVerified u8, pointsUsed u8,
                                      // maxResidual u8, fingerprint u32 LE (13 bytes)
+  BLE_DIAG_TLV_EXPERIMENTAL = 0x4A  // freshness mask, then raw 0x302[1], 0x302[5], 0x452[7], 0x540[3]
 };
 
 // Binary Capabilities Packet (UUID: ...d218, exactly 20 bytes)

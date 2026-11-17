@@ -60,7 +60,7 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 
 #### 3.1.0 Optional experimental battery-voltage hypothesis
 
-**Unverified and disabled until paired firmware is explicitly flashed.** From the
+**Unverified. Available on paired firmware with a fresh sample.** From the
 archived key-on/engine-off capture, CAN ID `0x303` byte 1 ranged from 119 to 122.
 The test-only hypothesis is `volts = rawByte / 10.0`, which would suggest
 11.9-12.2 V during that recording. This is **not** a calibrated voltage or a
@@ -272,7 +272,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x54` | `SET_CAPTURE_STAGE` | `[stage: u8 (1..3)]` | Label subsequent CAN capture records: 1=KeyOn, 2=Idle, 3=RPM sweep. Does not change operation or synthesize CAN data. |
 | `0x55` | `SET_LED_TEST_RPM` | `[testRpm: u16 LE (0..20000), enable: u8 (0 or 1)]` | Authenticated, temporary 10-second synthetic six-LED bench test. `enable=0` stops it; independent of real CAN data. Does not persist or inject CAN frames. |
 | `0x60` | `OTA_BEGIN` | `[0xA5, 0x5C, size: u32 LE, shaPrefix: u8[4]]` | Begin authenticated dual-slot OTA update to inactive partition. Validates image size and stationary safety interlock. |
-| `0x61` | `OTA_DATA` | `[chunkIdx: u16 LE, dataLen: u8, data...]` | Stream chunked image data (up to 11 bytes/packet). Validates sequential chunk indexing. |
+| `0x61` | `OTA_DATA` | `[chunkIdx: u16 LE, dataLen: u8, data...]` | Stream sequential image chunks. The Android client uses 11 data bytes at the baseline ATT MTU and up to 230 with a larger negotiated MTU. |
 | `0x62` | `OTA_END` | `[shaTail: u8[4], crc32: u32 LE]` | Conclude transfer, verify full-image FIPS 180-2 SHA-256 hash, set boot partition, schedule restart (1.5s delay). |
 | `0x63` | `OTA_ABORT` | None | Cancel active update, discard written data and return OTA engine to Idle state. |
 | `0x64` | `OTA_CONFIRM` | `[0xA5, 0x5C]` | Cancel bootloader rollback after successful boot self-test. |
@@ -370,6 +370,7 @@ All 12 mandatory tags (`0x10` through `0x1B`) are always emitted; schema-3 tags 
 | `0x47` | Capture Info | 9 | `[stage: u8, sessionId: u32, bootCount: u32]` |
 | `0x48` | Last Error | <= 96 | UTF-8 text of the last Error/Critical event this session (absent when none) |
 | `0x49` | Calibration State | 13 | `[sessionActive: u8, points: u8, captureActive: u8, samples: u16, calVerified: u8, pointsUsed: u8, maxResidualRpm: u8, fingerprint: u32]` |
+| `0x4A` | Experimental CAN bytes | 5 | Freshness bitmask followed by raw `0x302[1]`, `0x302[5]`, `0x452[7]`, `0x540[3]`. Bit index matches byte order. A clear bit means unavailable at snapshot time. Standard non-RTR frames, max sample age 1000 ms. |
 
 ---
 

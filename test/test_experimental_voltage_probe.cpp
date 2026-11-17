@@ -50,6 +50,30 @@ int main() {
   probe.ingest(voltage, 0xFFFFFF00u);
   assert(probe.isFresh(0x00000050u));
   assert(!probe.isFresh(0x00000400u));
+  // Optional diagnostics are snapshots of independently fresh raw fields.
+  ExperimentalVoltageProbe candidates;
+  uint8_t readings[5];
+  candidates.diagnosticsSnapshot(100, readings);
+  assert(readings[0] == 0);
+  CanFrame other{};
+  other.id = 0x302;
+  other.dlc = 2;
+  other.data[1] = 0x6A;
+  other.data[5] = 0x44;
+  candidates.ingest(other, 100);
+  candidates.diagnosticsSnapshot(100, readings);
+  assert(readings[0] == 1 && readings[1] == 0x6A && readings[2] == 0);
+  other.dlc = 8;
+  other.id = 0x452;
+  other.data[7] = 0xA4;
+  candidates.ingest(other, 200);
+  other.id = 0x540;
+  other.data[3] = 0; // A valid raw zero has its own freshness bit.
+  candidates.ingest(other, 250);
+  candidates.diagnosticsSnapshot(1101, readings);
+  assert(readings[0] == 0x0C && readings[1] == 0 && readings[3] == 0xA4 && readings[4] == 0);
+  assert(candidates.bleReservedWord(250) == 0x5A00);
+
   std::puts("experimental voltage CAN probe PASS");
   return 0;
 }

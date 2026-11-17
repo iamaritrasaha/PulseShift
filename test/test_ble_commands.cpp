@@ -644,6 +644,19 @@ static void ota_and_capabilities_discovery_tests() {
   drain(ble, cand, 300014);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
   CHECK(lastResult(ble).payloadLength == 1);
+
+  // A process or radio disconnect during transfer discards the session.
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_BEGIN, {
+      0xA5, 0x5C, 0, 0, 1, 0, 0x12, 0x34, 0x56, 0x78
+  }, 214), 10);
+  drain(ble, cand, 300015);
+  CHECK(ota.state() == OtaEngineState::Active);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_DATA, {0, 0, 1, 0xE9}, 215), 10);
+  drain(ble, cand, 300016);
+  CHECK(ota.bytesWritten() == 1);
+  ble.onClientDisconnected();
+  CHECK(ota.state() == OtaEngineState::Idle);
+  CHECK(ota.bytesWritten() == 0);
 }
 
 // ============================================================================
