@@ -14,6 +14,13 @@ LedController::LedController() {
 bool LedController::begin() {
   if (!driver_) return false;
 
+  initAttempts_ = 1;
+#if defined(ARDUINO)
+  lastInitAttemptMs_ = millis();
+#else
+  lastInitAttemptMs_ = 0;
+#endif
+
   ready_ = driver_->begin(config::ledPin, LED_COUNT);
 
   // Clear all states to black
@@ -26,15 +33,19 @@ bool LedController::begin() {
   // Initial flush: command all pixels black to ensure clear initial state
   if (ready_) {
     const bool ok = driver_->write(lastAttemptedPixels_, LED_COUNT);
-    lastAttemptMs_ = 0;
+    lastAttemptMs_ = lastInitAttemptMs_;
     ++attemptsCount_;
     if (ok) {
       hasConfirmedFrame_ = true;
-      lastConfirmedMs_ = 0;
+      lastConfirmedMs_ = lastInitAttemptMs_;
+      lastAttemptFailed_ = false;
       ++successCount_;
     } else {
       ++failureCount_;
+      lastAttemptFailed_ = true;
     }
+  } else {
+    lastAttemptFailed_ = true;
   }
 
   // Start the boot animation clock after peripheral setup, not at reset time.
@@ -48,7 +59,35 @@ bool LedController::begin() {
 }
 
 void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy) {
-  if (!ready_ || !driver_) return;
+  if (!ready_) {
+    if (!driver_) return;
+    // Bounded, nonblocking initialization recovery:
+    // If initial driver begin failed, attempt periodic recovery at INIT_RETRY_INTERVAL_MS (1000 ms),
+    // bounded to MAX_INIT_ATTEMPTS (10). Never hammer the peripheral every loop tick.
+    if (initAttempts_ < MAX_INIT_ATTEMPTS && uint32_t(now - lastInitAttemptMs_) >= INIT_RETRY_INTERVAL_MS) {
+      lastInitAttemptMs_ = now;
+      ++initAttempts_;
+      ready_ = driver_->begin(config::ledPin, LED_COUNT);
+      if (ready_) {
+        // Driver recovered: flush initial black frame and reset engine
+        const bool ok = driver_->write(lastAttemptedPixels_, LED_COUNT);
+        lastAttemptMs_ = now;
+        ++attemptsCount_;
+        if (ok) {
+          hasConfirmedFrame_ = true;
+          lastConfirmedMs_ = now;
+          lastAttemptFailed_ = false;
+          ++successCount_;
+        } else {
+          ++failureCount_;
+          lastAttemptFailed_ = true;
+        }
+        engine_.reset(now);
+      }
+    }
+    return;
+  }
+  if (!driver_) return;
 
   // Button press acknowledgment expires after 200 ms.
   if (feedbackActive_ && uint32_t(now - feedbackStartMs_) >= 200) {
@@ -70,15 +109,28 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
     calculatedPixels_[i] = engine_.getPixel(i);
   }
 
-  // 3. Determine if physical transmission is required:
+  // 3. Transmission scheduling state machine:
+  // Check if we are currently in a failure backoff window.
+  // If the last transmission attempt failed, we MUST enforce RETRY_INTERVAL_MS (50 ms) backoff
+  // before attempting any hardware write. This prevents failed writes from triggering
+  // an unbounded busy retry on every loop tick even when pixelsChanged remains true.
+  if (lastAttemptFailed_) {
+    const uint32_t elapsedSinceAttempt = uint32_t(now - lastAttemptMs_);
+    if (elapsedSinceAttempt < RETRY_INTERVAL_MS) {
+      // Backoff active: suppress transmission until backoff interval expires
+      return;
+    }
+  }
+
+  // If not backed off (or backoff interval has now expired):
+  // Transmission is triggered if:
   //    a) Calculated state changed relative to last confirmed physical state
-  //    b) Retry due after previous write failure (50 ms backoff)
+  //    b) Retry due after previous write failure whose backoff has elapsed
   //    c) Periodic refresh interval elapsed (1000 ms forced resend to prevent freezing)
   const bool pixelsChanged = !hasConfirmedFrame_ ||
       (memcmp(calculatedPixels_, lastConfirmedPixels_, sizeof(calculatedPixels_)) != 0);
 
-  const bool retryDue = (!hasConfirmedFrame_ || (lastAttemptMs_ > lastConfirmedMs_)) &&
-      (uint32_t(now - lastAttemptMs_) >= RETRY_INTERVAL_MS);
+  const bool retryDue = lastAttemptFailed_;
 
   const bool periodicRefreshDue = hasConfirmedFrame_ &&
       (uint32_t(now - lastConfirmedMs_) >= PERIODIC_REFRESH_INTERVAL_MS);
@@ -97,11 +149,13 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
       memcpy(lastConfirmedPixels_, lastAttemptedPixels_, sizeof(lastConfirmedPixels_));
       lastConfirmedMs_ = now;
       hasConfirmedFrame_ = true;
+      lastAttemptFailed_ = false;
       ++successCount_;
     } else {
       ++failureCount_;
+      lastAttemptFailed_ = true;
       // lastConfirmedPixels_ is NOT modified on failure.
-      // Next tick will detect unconfirmed change or retryDue, triggering automatic retry.
+      // Next tick will enforce 50 ms backoff before retrying.
     }
   }
 }

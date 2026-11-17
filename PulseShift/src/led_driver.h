@@ -61,6 +61,12 @@ class MockLedDriver : public ILedDriver {
   bool begin(uint8_t pin, uint8_t count) override {
     pin_ = pin;
     count_ = count;
+    if (failBeginCount_ > 0) {
+      --failBeginCount_;
+      ready_ = false;
+      lastStatus_ = LedDriverStatus::InitFailed;
+      return false;
+    }
     ready_ = true;
     lastStatus_ = LedDriverStatus::Ready;
     return true;
@@ -100,6 +106,7 @@ class MockLedDriver : public ILedDriver {
   }
 
   void setFailNextWrites(uint32_t count) { failNextCount_ = count; }
+  void setFailBegin(uint32_t count) { failBeginCount_ = count; }
   uint32_t writeAttempts() const { return writeAttempts_; }
   uint32_t successfulWrites() const { return successfulWrites_; }
   RgbColor lastWrittenPixel(uint8_t idx) const { return (idx < 6) ? lastWrittenPixels_[idx] : RgbColor{0, 0, 0}; }
@@ -110,6 +117,7 @@ class MockLedDriver : public ILedDriver {
   bool ready_ = false;
   LedDriverStatus lastStatus_ = LedDriverStatus::Uninitialized;
   uint32_t failNextCount_ = 0;
+  uint32_t failBeginCount_ = 0;
   uint32_t writeAttempts_ = 0;
   uint32_t successfulWrites_ = 0;
   RgbColor lastWrittenPixels_[6]{};

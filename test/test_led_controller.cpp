@@ -193,13 +193,49 @@ static void test_master_power_off_and_restore() {
   }
 }
 
+static void test_initialization_recovery() {
+  MockLedDriver mock;
+  mock.setFailBegin(1); // Fail initial begin() call
+
+  LedController ctrl;
+  ctrl.setDriverForTesting(&mock);
+
+  CHECK(!ctrl.begin());
+  CHECK(!ctrl.isReady());
+  CHECK(ctrl.lastDriverStatus() == LedDriverStatus::InitFailed);
+  CHECK(ctrl.initAttempts() == 1);
+  CHECK(ctrl.isInitRecovering());
+
+  // Intermediate updates before INIT_RETRY_INTERVAL_MS (1000 ms) do not spam re-initialization
+  ctrl.update(LiveRpmSnapshot{}, 200, true);
+  ctrl.update(LiveRpmSnapshot{}, 500, true);
+  ctrl.update(LiveRpmSnapshot{}, 900, true);
+  CHECK(!ctrl.isReady());
+  CHECK(ctrl.initAttempts() == 1);
+
+  // At t = 1000 ms, bounded nonblocking recovery fires and succeeds
+  ctrl.update(LiveRpmSnapshot{}, 1000, true);
+  CHECK(ctrl.isReady());
+  CHECK(ctrl.initAttempts() == 2);
+  CHECK(ctrl.hasConfirmedFrame());
+  CHECK(ctrl.successCount() == 1);
+  CHECK(ctrl.lastDriverStatus() == LedDriverStatus::TransmitOk);
+
+  // Verify that all 6 pixels are flushed to black upon recovery
+  for (uint8_t i = 0; i < 6; ++i) {
+    CHECK((mock.lastWrittenPixel(i) == RgbColor{0, 0, 0}));
+    CHECK((ctrl.lastConfirmedPixel(i) == RgbColor{0, 0, 0}));
+  }
+}
+
 int main() {
   test_initial_black_flush();
   test_bench_test_4500_to_0_rpm();
   test_retry_on_simulated_driver_failure();
   test_periodic_refresh();
   test_master_power_off_and_restore();
+  test_initialization_recovery();
 
-  std::printf("PASS LedController tri-state buffer, retry, refresh, mock driver: %u checks\n", checks);
+  std::printf("PASS LedController tri-state buffer, retry, refresh, mock driver, init recovery: %u checks\n", checks);
   return 0;
 }
