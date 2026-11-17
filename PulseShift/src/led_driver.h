@@ -14,7 +14,8 @@ enum class LedDriverStatus : uint8_t {
   InitFailed = 5,
   InvalidParam = 6,
   TransmitRejected = 7,
-  DeinitFailed = 8
+  DeinitFailed = 8,
+  TransmitStalled = 9
 };
 
 // Abstract interface for the physical or simulated LED output driver.
@@ -26,6 +27,7 @@ class ILedDriver {
   virtual bool begin(uint8_t pin, uint8_t count) = 0;
   virtual bool write(const RgbColor* pixels, uint8_t count) = 0;
   virtual bool isReady() const = 0;
+  virtual bool isTerminalFault() const { return false; }
   virtual LedDriverStatus lastStatus() const = 0;
   virtual const char* lastStatusString() const = 0;
 };
@@ -42,6 +44,9 @@ class Esp32RmtLedDriver : public ILedDriver {
   bool begin(uint8_t pin, uint8_t count) override;
   bool write(const RgbColor* pixels, uint8_t count) override;
   bool isReady() const override { return ready_; }
+  bool isTerminalFault() const override {
+    return lastStatus_ == LedDriverStatus::TransmitStalled || lastStatus_ == LedDriverStatus::DeinitFailed;
+  }
   LedDriverStatus lastStatus() const override { return lastStatus_; }
   const char* lastStatusString() const override;
 
@@ -51,13 +56,15 @@ class Esp32RmtLedDriver : public ILedDriver {
   static constexpr uint8_t MAX_PIXELS = 6;
   static constexpr size_t BITS_PER_PIXEL = 24;
   static constexpr uint32_t TRANSMIT_TIMEOUT_MS = 20;
-  // IDF may retain this payload after a completion timeout.
+  static constexpr uint32_t TRANSMIT_STALL_MS = 100;
+  // The application owns this driver for the lifetime of the firmware. IDF
+  // may retain the payload after a timeout or terminal stall.
   rmt_data_t symbols_[MAX_PIXELS * BITS_PER_PIXEL + 1]{};
+  uint32_t txStartedMs_ = 0;
   uint8_t pin_ = 0;
   uint8_t count_ = 0;
   bool ready_ = false;
   bool txPending_ = false;
-  bool deinitFailed_ = false;
   LedDriverStatus lastStatus_ = LedDriverStatus::Uninitialized;
 };
 #endif

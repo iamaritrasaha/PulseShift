@@ -329,6 +329,33 @@ static void test_bench_and_refresh_across_uptime_wrap() {
   CHECK(ctrl.ledEffects().activeLayer() == LedActiveLayer::Commissioning);
 }
 
+static void test_terminal_driver_fault_skips_init_retries() {
+  class StalledDriver : public MockLedDriver {
+   public:
+    bool write(const RgbColor*, uint8_t) override {
+      stalled_ = true;
+      return false;
+    }
+    bool isReady() const override { return !stalled_ && MockLedDriver::isReady(); }
+    bool isTerminalFault() const override { return stalled_; }
+    LedDriverStatus lastStatus() const override {
+      return stalled_ ? LedDriverStatus::TransmitStalled : MockLedDriver::lastStatus();
+    }
+   private:
+    bool stalled_ = false;
+  } driver;
+
+  LedController ctrl;
+  ctrl.setDriverForTesting(&driver);
+  CHECK(!ctrl.begin());
+  CHECK(!ctrl.isInitRecovering());
+  CHECK(ctrl.lastDriverStatus() == LedDriverStatus::TransmitStalled);
+  ctrl.update(LiveRpmSnapshot{}, 1000, true);
+  ctrl.update(LiveRpmSnapshot{}, 2000, true);
+  CHECK(ctrl.initAttempts() == 1);
+  CHECK(ctrl.attemptsCount() == 1);
+}
+
 int main() {
   test_initial_black_flush();
   test_bench_test_4500_to_0_rpm();
@@ -339,6 +366,7 @@ int main() {
   test_runtime_channel_loss_and_partial_reinit();
   test_initialization_exhausts_ten_attempts();
   test_bench_and_refresh_across_uptime_wrap();
+  test_terminal_driver_fault_skips_init_retries();
 
   std::printf("PASS LedController tri-state buffer, retry, refresh, mock driver, init recovery: %u checks\n", checks);
   return 0;

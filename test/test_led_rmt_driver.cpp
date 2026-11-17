@@ -177,10 +177,40 @@ static void test_failed_detach_does_not_touch_stale_mapping() {
   CHECK(hal.inits == 1 && hal.detaches == 1);
 }
 
+static void test_permanent_stall_stops_output_without_releasing_payload() {
+  hal = {};
+  Esp32RmtLedDriver driver;
+  CHECK(driver.begin(27, 6));
+  hal.now = UINT32_MAX - 10;
+  hal.completeAfterMs = UINT32_MAX;
+  RgbColor lit[6]{{0, 0xff, 0}};
+  RgbColor clear[6]{};
+  CHECK(!driver.write(lit, 6));
+  CHECK(driver.lastStatus() == LedDriverStatus::Timeout);
+
+  hal.now = hal.submitTime + 99;
+  CHECK(!driver.write(clear, 6));
+  CHECK(driver.isReady());
+  CHECK(driver.lastStatus() == LedDriverStatus::Busy);
+  hal.now += 1;
+  CHECK(!driver.write(clear, 6));
+  CHECK(!driver.isReady());
+  CHECK(driver.isTerminalFault());
+  CHECK(driver.lastStatus() == LedDriverStatus::TransmitStalled);
+
+  hal.now += 1000;
+  CHECK(!driver.begin(27, 6));
+  CHECK(!driver.write(clear, 6));
+  CHECK(driver.lastStatus() == LedDriverStatus::TransmitStalled);
+  CHECK(hal.active && hal.inits == 1 && hal.submits == 1 && hal.detaches == 0);
+  CHECK(hal.data[0].duration0 == 8);
+}
+
 int main() {
   test_grb_with_latch();
   test_rejected_submission_and_partial_setup_recover();
   test_timeout_does_not_reuse_pending_payload();
   test_failed_detach_does_not_touch_stale_mapping();
+  test_permanent_stall_stops_output_without_releasing_payload();
   std::printf("PASS ESP32 RMT driver timing, rejection recovery and pending payload lifetime: %u checks\n", checks);
 }

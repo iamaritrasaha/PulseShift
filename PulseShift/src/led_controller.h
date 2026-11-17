@@ -56,7 +56,10 @@ class LedController {
 
   // Telemetry and state inspection
   bool isReady() const { return ready_; }
-  bool isInitRecovering() const { return !ready_ && initAttempts_ > 0 && initAttempts_ < MAX_INIT_ATTEMPTS; }
+  bool isInitRecovering() const {
+    return driver_ && !ready_ && !driver_->isTerminalFault() &&
+           initAttempts_ > 0 && initAttempts_ < MAX_INIT_ATTEMPTS;
+  }
   uint8_t initAttempts() const { return initAttempts_; }
   bool hasConfirmedFrame() const { return hasConfirmedFrame_; }
   uint32_t attemptsCount() const { return attemptsCount_; }

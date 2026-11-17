@@ -54,6 +54,10 @@ that requires a 0.7 x VDD input high needs 3.5 V at a 5 V supply. If the
 installed strip lacks margin, use a suitable LED data level shifter. The
 SN65HVD230 serves the CAN bus. Recent driver failures are available through
 the rate-limited `LED_DRIVER` diagnostic log, including on a headless build.
+If an accepted transfer remains pending after the 100 ms stall threshold, the
+driver reports `TX_STALLED_RESTART_REQUIRED` and stops submissions and init
+retries. The original ESP32 HAL cannot guarantee a bounded active-channel stop.
+The stalled channel retains its symbol buffer until system restart.
 
 ## 3. Host-Side C++ and Integration Tests
 Automated regression tests run locally with:
@@ -64,7 +68,7 @@ The test suite validates:
 - Configuration state machine: validation rules, snapshot TLV serialization with CRC32, staged transactions, restore-defaults.
 - Firmware-driven calibration session: point capture, bad-evidence rejection (non-monotonic, unstable, small span), fingerprint-bound verification.
 - Unified LED engine: layer priorities, RPM validity safeguard, per-LED hysteresis, warning patterns, direction and brightness scaling.
-- RMT driver with a HAL fixture: bit and latch timing, GRB ordering, timeout payload lifetime, and recovery after rejected transmission.
+- RMT driver with a HAL fixture: bit and latch timing, GRB ordering, late and missing completions, retained payload, and recovery after rejected transmission.
 - BLE v2 command dispatch through the real dispatcher: authorization binding to the connection handle, staged transactions, calibration workflow, device commands (restart/clear-diagnostics/recording), diagnostics TLV blob with CRC32.
 - CAN transport: listen-only install, zero TX queue, TX-pin isolation routing, overflow handling, bounded logging.
 - Candidate 0x301 monitor bounds, staleness, NaN/Inf rejection, and 32-bit timer rollover safety.

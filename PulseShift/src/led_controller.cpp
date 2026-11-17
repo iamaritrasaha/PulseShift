@@ -65,9 +65,10 @@ void LedController::transmitAttemptedFrame(uint32_t now) {
 
 void LedController::recordError(uint32_t now) {
   const bool firstError = lastError_ == LedDriverStatus::Uninitialized;
+  const bool newTerminalError = driver_->isTerminalFault() && lastDriverStatus() != lastError_;
   lastError_ = lastDriverStatus();
   lastErrorMs_ = now;
-  if (!firstError && uint32_t(now - lastErrorLoggedMs_) < 5000) return;
+  if (!firstError && !newTerminalError && uint32_t(now - lastErrorLoggedMs_) < 5000) return;
   lastErrorLoggedMs_ = now;
   char frame[LED_COUNT * 7 + 1]{};
   for (uint8_t i = 0; i < LED_COUNT; ++i) {
@@ -111,7 +112,8 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
   }
 
   if (!ready_) {
-    if (initAttempts_ < MAX_INIT_ATTEMPTS && uint32_t(now - lastInitAttemptMs_) >= INIT_RETRY_INTERVAL_MS) {
+    if (!driver_->isTerminalFault() && initAttempts_ < MAX_INIT_ATTEMPTS &&
+        uint32_t(now - lastInitAttemptMs_) >= INIT_RETRY_INTERVAL_MS) {
       initializeDriver(now);
     }
     return;

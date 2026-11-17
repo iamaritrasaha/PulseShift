@@ -5,11 +5,11 @@
 #include <Arduino.h>
 
 bool Esp32RmtLedDriver::begin(uint8_t pin, uint8_t count) {
+  if (isTerminalFault()) return false;
   if (count == 0 || count > MAX_PIXELS || (ready_ && (pin != pin_ || count != count_))) {
     lastStatus_ = LedDriverStatus::InvalidParam;
     return false;
   }
-  if (deinitFailed_) return false;
   if (ready_) return true;
 
   pin_ = pin;
@@ -35,18 +35,26 @@ void Esp32RmtLedDriver::releaseIdleChannel() {
   if (!rmtDeinit(pin_)) {
     // 3.3.12 may have freed the bus while leaving its pin mapping in place.
     // Stop touching that mapping if the detach operation failed.
-    deinitFailed_ = true;
     lastStatus_ = LedDriverStatus::DeinitFailed;
   }
 }
 
 bool Esp32RmtLedDriver::write(const RgbColor* pixels, uint8_t count) {
+  if (isTerminalFault()) return false;
   if (!ready_ || !pixels || count != count_) {
     lastStatus_ = LedDriverStatus::InvalidParam;
     return false;
   }
   if (txPending_ && !rmtTransmitCompleted(pin_)) {
-    lastStatus_ = LedDriverStatus::Busy;
+    if (uint32_t(millis() - txStartedMs_) >= TRANSMIT_STALL_MS) {
+      // Arduino 3.3.12 deinit frees callback resources before disabling TX.
+      // On ESP32 that disable can wait indefinitely for a hardware TX_DONE.
+      // Quarantine the channel and its borrowed symbols until system restart.
+      ready_ = false;
+      lastStatus_ = LedDriverStatus::TransmitStalled;
+    } else {
+      lastStatus_ = LedDriverStatus::Busy;
+    }
     return false;
   }
   txPending_ = false;
@@ -79,9 +87,9 @@ bool Esp32RmtLedDriver::write(const RgbColor* pixels, uint8_t count) {
     return false;
   }
   txPending_ = true;
-  const uint32_t start = millis();
+  txStartedMs_ = millis();
   while (!rmtTransmitCompleted(pin_)) {
-    if (uint32_t(millis() - start) >= TRANSMIT_TIMEOUT_MS) {
+    if (uint32_t(millis() - txStartedMs_) >= TRANSMIT_TIMEOUT_MS) {
       lastStatus_ = LedDriverStatus::Timeout;
       return false;
     }
@@ -102,6 +110,7 @@ const char* Esp32RmtLedDriver::lastStatusString() const {
     case LedDriverStatus::Busy: return "BUSY";
     case LedDriverStatus::TransmitRejected: return "TRANSMIT_REJECTED";
     case LedDriverStatus::DeinitFailed: return "DEINIT_FAILED";
+    case LedDriverStatus::TransmitStalled: return "TX_STALLED_RESTART_REQUIRED";
     default: return "UNINITIALIZED";
   }
 }
