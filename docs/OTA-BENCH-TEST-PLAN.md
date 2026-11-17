@@ -159,6 +159,7 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
   1. Build firmware with the boot-failure fault injection flag:
      ```bash
      arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 \
+       --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=nvs_flash_init" \
        --build-property "compiler.cpp.extra_flags=-DPULSESHIFT_TEST_FORCE_BOOT_FAIL=1" \
        PulseShift
      ```
@@ -187,36 +188,30 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 
 ---
 
-## 4. Universal USB Fallback Recovery Procedure
+## 4. Data-preserving recovery on an existing controller
 
-> **CRITICAL ARCHITECTURAL DISTINCTION:** Writing only the application binary at `0x10000` is **NOT** a universal recovery procedure. If a power cut or partition corruption damages the bootloader, partition table, or `otadata` slots, writing only `0x10000` will result in an unbootable boot loop.
+1. Keep the unit on stable bench power and record its present active slot,
+   OTA image state, reported firmware and reset reason. Capture the serial
+   transcript and verify both historical backups and their recorded SHA-256.
+2. If the prior app is running after rollback, verify owner authentication,
+   LittleFS mount, CAN capture count and checksum, receive-only telemetry and
+   LED behavior. Keep that working slot in place.
+3. If the device does not boot, inspect the partition table and OTA metadata
+   with read-only USB tools. An app-only restore requires verification of the
+   same device, layout, affected slot, original app image and offset, plus
+   explicit owner authorization. If the evidence cannot identify the slot or
+   indicates damage outside it, stop and preserve the evidence.
 
-Universal recovery requires flashing all 4 foundational flash components or executing a full flash erase.
-
-### 4.1 Full Four-Artifact Recovery Flash
-Locate the compiled binaries from the Arduino IDE build cache or ESP-IDF build directory and flash using `esptool.py`:
-```bash
-esptool.py --chip esp32 --port <PORT> --baud 921600 write_flash \
-  0x1000  bootloader.bin \
-  0x8000  partitions.bin \
-  0xe000  boot_app0.bin \
-  0x10000 PulseShift.ino.bin
-```
-
-### 4.2 Factory Erase and Clean Reflash (When Flash Layout is Corrupted)
-If partition table corruption or filesystem damage occurs:
-1. Completely erase flash:
-   ```bash
-   esptool.py --chip esp32 --port <PORT> erase_flash
-   ```
-2. Reflash the complete build using Arduino IDE (Upload) or via the four-artifact `write_flash` command above.
-3. Open Serial Monitor at 115200 baud. Type `STATUS` to verify LittleFS initialization and clean NVS profile generation.
+Keep the bootloader, partition table, NVS, LittleFS and capture data intact.
+OTA payload writes target the inactive app slot. Boot selection and confirmed
+rollback status use `otadata`. Ordinary application boot updates diagnostic
+metadata and logs.
 
 ---
 
-## 4.2 Arduino-ESP32 deferred OTA confirmation check
+## 5. Arduino-ESP32 deferred OTA confirmation check
 
-Arduino-ESP32 core 2.0.x invokes a weak `verifyRollbackLater()` hook before
+Arduino-ESP32 core 3.3.12 invokes a weak `verifyRollbackLater()` hook before
 the sketch's `setup()`. Without an override, the core can immediately mark a
 new OTA image VALID, bypassing the product's 120-second owner-confirmation gate.
 PulseShift now provides a strong C-linkage override returning `true`, leaving
