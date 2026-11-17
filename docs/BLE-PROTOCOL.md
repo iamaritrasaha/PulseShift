@@ -56,7 +56,31 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | 11 | `captureStage` | `uint8_t` | Current field stage: `0`=Standby, `1`=KeyOn, `2`=Idling, `3`=GentleRPM |
 | 12..15 | `canFramesRx` | `uint32_t` | Cumulative count of total CAN frames received by TWAI driver |
 | 16..17 | `candidateAgeMs` | `uint16_t` | Milliseconds elapsed since last candidate frame. `65535` = never received |
-| 18..19 | `reserved` | `uint16_t` | Reserved for alignment; always zero |
+| 18..19 | `experimentalProbe` | `uint16_t` | Optional experimental, uncalibrated standard CAN `0x303` byte 1, encoded as below. Legacy firmware leaves it zero. |
+
+#### 3.1.0 Optional experimental battery-voltage hypothesis
+
+**Unverified and disabled until paired firmware is explicitly flashed.** From the
+archived key-on/engine-off capture, CAN ID `0x303` byte 1 ranged from 119 to 122.
+The test-only hypothesis is `volts = rawByte / 10.0`, which would suggest
+11.9–12.2 V during that recording. This is **not** a calibrated voltage or a
+safe battery/charging warning and must be compared against synchronized
+multimeter readings at several operating points.
+
+To avoid a new GATT service or any change to the existing 20-byte packet
+length, an optional firmware build uses the previously zero reserved bytes:
+
+| Offset | Value | Meaning |
+|---|---|---|
+| 18 | 0–255 | Raw CAN `0x303[1]` from a standard, non-RTR frame with DLC ≥ 2; only meaningful if byte 19 is `0xA5` |
+| 19 | `0xA5` | Candidate received within the last 1000 ms; Android may show `raw / 10.0` under **EXPERIMENTAL** label |
+| 19 | `0x5A` | Firmware supports probe but frame absent or stale; Android displays unavailable |
+| 19 | `0x00` with byte 18 = 0 | Legacy firmware without probe support; Android displays unavailable |
+
+All other RPM, health, configuration and OTA fields retain their documented
+meaning and offsets. The dedicated RPM decoder remains locked to the existing
+candidate configuration. The probe never writes NVS/LittleFS or transmits CAN.
+DO NOT infer an accurate battery voltage from visual agreement at one point.
 
 #### 3.1.1 Status Flags Bitmask (`statusFlags`)
 - `Bit 0` (`0x01`): `BLE_RPM_FLAG_CANDIDATE_FRESH` (Candidate frame received within the freshness timeout, default 250 ms)
