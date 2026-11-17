@@ -49,8 +49,15 @@ struct BleRpmPacket {
   uint8_t  captureStage;     // Offset 11: Field capture stage (0=Standby, 1=KeyOn, 2=Idle, 3=GentleRPM)
   uint32_t canFramesRx;      // Offset 12-15: Total CAN frames received
   uint16_t candidateAgeMs;   // Offset 16-17: Milliseconds since candidate update; 65535 = unavailable
-  uint16_t reserved;         // Offset 18-19: Reserved (0)
+  uint16_t reserved;         // Offset 18-19: Optional experimental 0x303[1] probe (see below)
 };
+
+// Reserved-byte experiment (only when supported by updated firmware):
+// offset 18: raw unsigned data[1] of standard CAN ID 0x303.
+// offset 19: 0xA5 when fresh (<=1000 ms), 0x5A if supported but stale/absent.
+// Legacy firmware emits both bytes zero: voltage probe unsupported.
+// Hypothesized volts = raw / 10.0, NOT yet validated against a multimeter.
+// Never interpret 0x5A, 0x00, or missing frames as 0 V.
 
 // --- Health Packet (UUID: ...d212) ---
 // Fixed 20-byte binary packet. Properties: READ, NOTIFY.
