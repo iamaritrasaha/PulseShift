@@ -37,6 +37,7 @@
 #include "src/storage_manager.h"
 #include "src/diag_logger.h"
 #include "src/can_recorder.h"
+#include "src/experimental_voltage_probe.h"
 #include "src/button_handler.h"
 #include "src/serial_protocol.h"
 #include "src/rpm_candidate.h"
@@ -212,6 +213,8 @@ public:
     for (unsigned i = 0; i < 256; ++i) {
       if (!transport_.receive(f, now)) break;
 
+      // Independent read-only sensor hypothesis; does not touch RPM settings.
+      ExperimentalVoltageProbe::instance().ingest(f, now);
       const bool candMatched = candidateMonitor_.ingest(f, now);
       if (candMatched && candidateMonitor_.hasRawUpdate()) {
         const auto snap = candidateMonitor_.snapshot(now);
