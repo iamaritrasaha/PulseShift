@@ -120,13 +120,11 @@ class CanRecorder {
   // characteristic. Reading never mutates the capture file; the cursor is
   // independent of the serial DUMP cursor so both can interleave safely.
   static constexpr uint32_t BLE_EXPORT_PAGE_RECORDS = 12;
-  bool bleExportBegin(uint32_t startRecord);             // false: no readable capture
-  bool bleExportNext(CanLogRecord& out, uint32_t& recordIndex);  // false: end of capture
-  uint32_t bleExportCursor() const { return bleCursor_; }
-  void bleExportCancel() { bleActive_ = false; bleExportEnd(); }
-  void bleExportEnd();                                   // close the cached read handle
+  enum class BleExportStatus : uint8_t { Ready, End, ReadError };
+  BleExportStatus bleExportBegin(uint32_t startRecord);
+  BleExportStatus bleExportNext(CanLogRecord& out, uint32_t& recordIndex);
+  void bleExportEnd();
   bool isBleExportActive() const { return bleActive_; }
-  bool bleExportChecksumOk() const { return bleChecksumOk_; }
 
   void clear();
 
@@ -178,8 +176,8 @@ class CanRecorder {
   // BLE export cursor state; the read handle stays open for the duration of
   // one page stream instead of one open/close per record.
   bool bleActive_ = false;
-  bool bleChecksumOk_ = true;
   uint32_t bleCursor_ = 0;
+  uint32_t bleExportLimit_ = 0;
   bool bleExportFileOpen_ = false;
   File bleExportFile_{};
 };

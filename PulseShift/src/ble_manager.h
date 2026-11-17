@@ -62,9 +62,6 @@ class BleManager {
     return true;
   }
 
-  // Called when client disconnects to cleanly reset log retrieval state
-  void onClientDisconnected();
-
   // Enqueue a live diagnostic log event to be broadcast over BLE (if subscribed)
   void queueLiveLog(const char* text);
   void queueLiveLog(const char* text, uint8_t logFlags); // e.g. BLE_LOG_FLAG_ERROR
@@ -75,7 +72,7 @@ class BleManager {
   uint32_t rpmNotifyCount() const { return rpmNotifyCount_; }
   uint32_t healthNotifyCount() const { return healthNotifyCount_; }
   uint32_t logNotifyCount() const { return logNotifyCount_; }
-  uint32_t droppedCommandCount() const { return droppedCommands_; }
+  uint32_t droppedCommandCount() const { return droppedCommands_.load(std::memory_order_relaxed); }
   void printStatus() const;
 
   // Rebuild the authoritative live decoder from the active configuration and
@@ -99,6 +96,7 @@ class BleManager {
     }
   }
   size_t testResultCount() const { return testResultCount_; }
+  void testClearResults() { testResultCount_ = 0; }
   const BleConfigResultPacket& testResult(size_t index) const { return testResults_[index]; }
   size_t testPendingSnapshotLen() const { return snapshotLen_; }
   const uint8_t* testPendingSnapshotData() const { return snapshotBuf_; }
@@ -107,8 +105,20 @@ class BleManager {
   size_t testLiveLogCount() const { return liveLogCount_; }
   const char* testLiveLogText(uint8_t index) const { return liveLogRing_[(liveLogTail_ + index) % LIVE_LOG_CAPACITY]; }
   void testSetInitialized(bool init) { initialized_ = init; }
-  void testSetConnected(bool connected) { testConnected_ = connected; }
+  void testSetConnected(bool connected) {
+    if (testConnected_ && !connected) linkResetPending_ = true;
+    testConnected_ = connected;
+  }
+  void testResetDisconnectedLink() { onClientDisconnected(); linkResetPending_ = false; }
   void testSetLogsSubscribed(bool subscribed) { testLogsSubscribed_ = subscribed; }
+  void testRejectLogNotifications(uint8_t count) { testLogRejections_ = count; }
+  void testSetLogMessageId(uint16_t id) { logMsgId_ = id; }
+  void testRejectResultNotifications(uint8_t count) { testResultRejections_ = count; }
+  void testSetSnapshotSubscribed(bool subscribed) { testSnapshotSubscribed_ = subscribed; }
+  void testRejectSnapshotNotifications(uint8_t count) { testSnapshotRejections_ = count; }
+  bool testSnapshotActive() const { return snapshotActive_; }
+  size_t testSnapshotChunkCount() const { return testSnapshotChunkCount_; }
+  const BleConfigSnapshotChunkPacket& testSnapshotChunk(size_t index) const { return testSnapshotChunks_[index]; }
   size_t testLogChunkCount() const { return testLogChunkCount_; }
   const BleLogChunkPacket& testLogChunk(size_t index) const { return testLogChunks_[index]; }
   void testClearLogChunks() { testLogChunkCount_ = 0; }
@@ -124,14 +134,16 @@ class BleManager {
     capturePageEopPending_ = false;
     captureRecordsSent_ = 0;
     captureLineStaged_ = false;
-    captureCancelRequested_ = false;
     captureNextRecord_ = 0;
     capturePageFinished_ = 0;
     activeMsgInProgress_ = false;
     activeMsgFlags_ = 0;
+    activeMsgIsHistorical_ = false;
     activeMsgOffset_ = 0;
     activeMsgLen_ = 0;
     testLogChunkCount_ = 0;
+    testLogRejections_ = 0;
+    logNotifyFailures_ = 0;
   }
   uint32_t testLastLogNotifyMs() const { return lastLogNotifyMs_; }
   void testSetLastLogNotifyMs(uint32_t ms) { lastLogNotifyMs_ = ms; }
@@ -156,15 +168,21 @@ class BleManager {
                               const CanRecorder& recorder);
 
   void processLogQueue();
+  void enqueueControlCommand(uint8_t opcode, uint32_t offset, uint16_t connId);
+  void enqueueConfigCommand(const BleConfigExtCommandPacket& packet, uint16_t connId);
   void drainControlQueue(uint32_t nowMs);
   void processHistoricalPageRead();
   void processCapturePage();
-  void sendLogNotification(const BleLogChunkPacket& packet);
+  bool sendLogNotification(const BleLogChunkPacket& packet);
+  void stopHistoricalPage();
+  void stopCapturePage();
+  void onClientDisconnected();
   void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate,
                             const CanTransport& transport, const CanRecorder& recorder);
   void processSnapshotStream();
   void updateCapabilitiesChar();
-  void sendResult(BleConfigResultPacket& res);
+  void sendResult(const BleConfigResultPacket& res, uint32_t nowMs);
+  bool trySendResultNotification(const BleConfigResultPacket& res);
   size_t buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen, uint32_t nowMs,
                               const RpmCandidateMonitor& candidate,
                               const CanTransport& transport,
@@ -178,12 +196,16 @@ class BleManager {
   uint16_t rpmSeq_ = 0;
   uint16_t healthSeq_ = 0;
   uint16_t logMsgId_ = 0;
-  uint32_t droppedCommands_ = 0;
+  std::atomic<uint32_t> droppedCommands_{0};
+  std::atomic<bool> linkResetPending_{false};
 
   uint32_t lastRpmNotifyMs_ = 0;
   uint32_t lastHealthNotifyMs_ = 0;
   uint32_t lastLogNotifyMs_ = 0;
   static constexpr uint32_t LOG_NOTIFICATION_INTERVAL_MS = 20; // 20 ms pacing between log chunks
+  static constexpr uint8_t MAX_NOTIFY_FAILURES = 8;
+  uint8_t logNotifyFailures_ = 0;
+  uint8_t snapshotNotifyFailures_ = 0;
   uint32_t notifyCount_ = 0;
   uint32_t dropCount_ = 0;
   uint32_t rpmNotifyCount_ = 0;
@@ -191,7 +213,6 @@ class BleManager {
   uint32_t logNotifyCount_ = 0;
   uint32_t configResultNotifyCount_ = 0;
   uint32_t configSnapshotNotifyCount_ = 0;
-  uint32_t otaRebootTimer_ = 0;
 
   // Bounded ring buffer for live log events (16 messages, max 128 chars each)
   static constexpr size_t LIVE_LOG_CAPACITY = 16;
@@ -210,6 +231,7 @@ class BleManager {
   size_t activeMsgOffset_ = 0;
   uint8_t activeChunkIndex_ = 0;
   uint8_t activeMsgFlags_ = 0; // BleLogFlags for the active message (e.g. CAPTURE_LINE)
+  bool activeMsgIsHistorical_ = false;
 
   // CAN capture page streaming state (v1 control extension)
   bool capturePageActive_ = false;
@@ -218,7 +240,6 @@ class BleManager {
   uint32_t captureNextRecord_ = 0;
   uint8_t captureRecordsSent_ = 0;
   bool captureLineStaged_ = false;
-  bool captureCancelRequested_ = false;
 
   // Control request command queue (thread-safe decoupling from NimBLE callback)
   struct PendingCtrlCmd {
@@ -236,8 +257,6 @@ class BleManager {
   uint8_t histPageFinished_ = 0;
   uint32_t histFileOffset_ = 0;
   uint8_t histLinesSent_ = 0;
-  bool histFinished_ = false;
-  bool histCancelRequested_ = false;
 
   // Configuration V2 Command Queue (bounded SPSC ring; when full the incoming
   // command is dropped and counted for diagnostics).
@@ -249,6 +268,10 @@ class BleManager {
   PendingConfigCmd configQueue_[CONFIG_QUEUE_CAPACITY]{};
   std::atomic<uint8_t> configQueueHead_{0}; // NimBLE callback task writes
   std::atomic<uint8_t> configQueueTail_{0}; // main loop reads
+  BleConfigResultPacket pendingResult_{};
+  bool resultPending_ = false;
+  uint32_t lastResultAttemptMs_ = 0;
+  uint8_t resultNotifyFailures_ = 0;
 
   // Configuration Snapshot Stream State (also used for diagnostics blobs)
   bool snapshotActive_ = false;
@@ -261,12 +284,18 @@ class BleManager {
 #if defined(PULSESHIFT_TEST_BUILD)
   // Host-only capture of emitted result packets (NimBLE sendResult is inert
   // without the radio stack). Sized for a full dispatch test sequence.
-  BleConfigResultPacket testResults_[64]{};
+  BleConfigResultPacket testResults_[128]{};
   size_t testResultCount_ = 0;
+  uint8_t testResultRejections_ = 0;
   bool testConnected_ = false;
   bool testLogsSubscribed_ = false;
+  bool testSnapshotSubscribed_ = false;
+  uint8_t testSnapshotRejections_ = 0;
+  BleConfigSnapshotChunkPacket testSnapshotChunks_[64]{};
+  size_t testSnapshotChunkCount_ = 0;
   BleLogChunkPacket testLogChunks_[512]{};
   size_t testLogChunkCount_ = 0;
+  uint8_t testLogRejections_ = 0;
 #endif
 
   friend class BleServerCallbacksImpl;

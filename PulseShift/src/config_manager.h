@@ -151,7 +151,7 @@ class ConfigManager {
 
   // Security / Provisioning
   void triggerAuthWindow(uint32_t nowMs);
-  void closeAuthWindow() { authWindowStartMs_ = 0; }
+  void closeAuthWindow() { authWindowActive_ = false; }
   bool isAuthWindowOpen(uint32_t nowMs) const;
   bool isAuthorized(uint32_t nowMs) const;
   // Session authorization is bound to the connection that authenticated.
@@ -189,6 +189,7 @@ class ConfigManager {
   static constexpr uint32_t TX_TIMEOUT_MS = 30000;
 
   // Security state
+  bool authWindowActive_ = false;
   uint32_t authWindowStartMs_ = 0;
   static constexpr uint32_t AUTH_WINDOW_MS = 60000;
   static constexpr uint32_t SESSION_TIMEOUT_MS = 300000;

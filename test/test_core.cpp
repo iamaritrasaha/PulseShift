@@ -253,6 +253,25 @@ static void staged_transactions() {
   CHECK(!cm.isStagedTransactionActive());
   CHECK(cm.active().rpmThresholds[1] == 2000); // abort leaves active untouched
 
+  // A confirmed live write invalidates the older staged copy. A commit must
+  // preserve the live decoder settings and must not reuse its revision.
+  CHECK(cm.beginTransaction());
+  CHECK(cm.setBrightness(105, true) == BLE_CFG_STATUS_OK);
+  CHECK(cm.setRpmMultiplier(45.0f, false) == BLE_CFG_STATUS_OK);
+  const uint32_t liveRevision = cm.activeRevision();
+  CHECK(!cm.commitTransaction());
+  CHECK(!cm.isStagedTransactionActive());
+  CHECK(cm.activeRevision() == liveRevision);
+  CHECK(cm.active().rpmMultiplier == 45.0f);
+  CHECK(cm.active().brightness == 77);
+
+  CHECK(cm.beginTransaction());
+  CHECK(cm.setBrightness(105, true) == BLE_CFG_STATUS_OK);
+  CHECK(cm.restoreDefaults(0xA5, 0x5A));
+  CHECK(cm.activeRevision() == liveRevision + 1);
+  CHECK(!cm.commitTransaction());
+  CHECK(cm.active().brightness == 200);
+
   CHECK(cm.restoreDefaults(0xA5, 0x5A)); // leave clean defaults
 }
 
@@ -300,6 +319,23 @@ static void diagnostic_log_quota() {
   CHECK(!diagnosticLogCanArchive(cap, 500, cap, false, 32900, 32768));
 }
 
+static void physical_authorization_window_expires_across_clock_wrap() {
+  ConfigManager& cm = ConfigManager::instance();
+  cm.triggerAuthWindow(0);
+  CHECK(cm.isAuthWindowOpen(0));
+  CHECK(cm.isAuthWindowOpen(59999));
+  cm.poll(60000);
+  CHECK(!cm.isAuthWindowOpen(60000));
+  CHECK(!cm.isAuthWindowOpen(0)); // same timestamp in a later uptime epoch
+
+  cm.triggerAuthWindow(UINT32_MAX - 20);
+  CHECK(cm.isAuthWindowOpen(5));
+  CHECK(cm.isAuthWindowOpen(59978));
+  cm.poll(59979);
+  CHECK(!cm.isAuthWindowOpen(59979));
+  CHECK(!cm.isAuthWindowOpen(UINT32_MAX - 20));
+}
+
 static void candidate_monitor_staleness() {
   // The LEDs must never keep rendering the last RPM after CAN disappears:
   // the monitor marks samples stale once the freshness timeout elapses.
@@ -331,6 +367,7 @@ int main() {
   calibration_rejects_bad_evidence();
   staged_transactions();
   restore_defaults_preserves_shape();
+  physical_authorization_window_expires_across_clock_wrap();
   candidate_monitor_staleness();
   diagnostic_log_quota();
   capture_resume_guard();

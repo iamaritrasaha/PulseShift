@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 30
     env:
       ESP32_INDEX_URL: https://espressif.github.io/arduino-esp32/package_esp32_index.json
-      ESP32_FQBN: esp32:esp32:esp32
+      ESP32_FQBN: esp32:esp32:esp32doit-devkit-v1
 
     steps:
       - name: Check out source
@@ -37,7 +37,6 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install esp32:esp32@3.3.12
           arduino-cli lib update-index
-          arduino-cli lib install --no-deps "Adafruit NeoPixel@1.12.3"
           arduino-cli lib install --no-deps "NimBLE-Arduino@2.3.8"
 
       - name: Compile and verify sketch
@@ -46,13 +45,13 @@ jobs:
             --fqbn "$ESP32_FQBN" \
             --build-path "$RUNNER_TEMP/build-release" \
             PulseShift
+          test "$(( $(wc -c < "$RUNNER_TEMP/build-release/PulseShift.ino.bin") + 76 ))" -le 1310720
 
       - name: Package Arduino sketch ZIP
         run: |
-          TAG="${{ github.ref_name }}"
-          ZIP="PulseShift-Arduino-$TAG.zip"
-          zip -r "$RUNNER_TEMP/$ZIP" PulseShift/
-          sha256sum "$RUNNER_TEMP/$ZIP" > "$RUNNER_TEMP/$ZIP.sha256"
+          ZIP="PulseShift-Arduino-$GITHUB_REF_NAME.zip"
+          git archive --format=zip --output="$RUNNER_TEMP/$ZIP" HEAD PulseShift/
+          (cd "$RUNNER_TEMP" && sha256sum "$ZIP" > "$ZIP.sha256")
           echo "ZIP=$RUNNER_TEMP/$ZIP" >> "$GITHUB_ENV"
           echo "SHA=$RUNNER_TEMP/$ZIP.sha256" >> "$GITHUB_ENV"
 

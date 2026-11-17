@@ -59,7 +59,6 @@ For complete electrical schematics, noise filtering, and circuit protection, see
 
 1. **Environment Setup**: Install Arduino IDE with ESP32 Arduino Core **3.3.12** (ESP-IDF 5.3+).
 2. **Install Pinned Libraries**:
-   - `Adafruit NeoPixel` version **1.12.3**
    - `NimBLE-Arduino` version **2.3.8**
 3. **Board Configuration**: Select **ESP32 Dev Module** from the Boards menu.
 4. **Partition Scheme**: Select **Default 4MB with spiffs** (allocates dual 1.25 MB `app0`/`app1` slots and 1.43 MB LittleFS partition).

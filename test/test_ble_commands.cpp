@@ -496,7 +496,7 @@ static void disconnect_flushes_queued_commands() {
   const size_t resultsBefore = ble.testResultCount();
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {11}, 140), 5);
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_SET_BRIGHTNESS, {12}, 141), 5);
-  ble.onClientDisconnected();
+  ble.testResetDisconnectedLink();
   drain(ble, cand, 102000);
   CHECK(ble.testResultCount() == resultsBefore);
   CHECK(cm.active().brightness != 11 && cm.active().brightness != 12);
@@ -617,9 +617,31 @@ static void ota_and_capabilities_discovery_tests() {
   CHECK(lastResult(ble).payload[6] == 0xFF); // Unknown in host, real ESP-IDF queried on hardware
   CHECK(lastResult(ble).payload[7] == 1); // Host has a rollback candidate
 
+  // Digest query uses four ordinary 20-byte result frames, with no larger MTU.
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_STATUS, {0}, 208), 10);
+  drain(ble, cand, 300008);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_STORAGE_ERROR);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_STATUS, {4}, 209), 10);
+  drain(ble, cand, 300009);
+  CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  uint8_t digest[32];
+  for (uint8_t i = 0; i < sizeof(digest); ++i) digest[i] = i;
+  ota.testSetRunningImageDigest(digest);
+  for (uint8_t i = 0; i < 4; ++i) {
+    const uint16_t sequence = 210 + i;
+    ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_STATUS, {i}, sequence), 10);
+    drain(ble, cand, 300010 + i);
+    const auto result = lastResult(ble);
+    const auto* wire = reinterpret_cast<const uint8_t*>(&result);
+    CHECK(sizeof(result) == 20);
+    CHECK(wire[0] == 2 && wire[1] == 0x65 && wire[2] == sequence && wire[10] == 9);
+    CHECK(wire[4] == BLE_CFG_STATUS_OK && wire[11] == i);
+    CHECK(memcmp(&wire[12], &digest[i * 8], 8) == 0);
+  }
+
   // 8. Confirm rollback cancellation
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_CONFIRM, {0xA5, 0x5C}, 207), 10);
-  drain(ble, cand, 300008);
+  drain(ble, cand, 300014);
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
   CHECK(lastResult(ble).payloadLength == 1);
 }
@@ -1240,7 +1262,9 @@ static void test_scenario_7_disconnect_reconnect() {
 
   // Client disconnects
   ble.testSetConnected(false);
-  ble.onClientDisconnected();
+  CHECK(ble.testCaptureLineStaged()); // callback only signals; the loop cleans up
+  nowMs += 25;
+  ble.poll(nowMs, cand, transport, recorder, false);
 
   CHECK(!ble.testCapturePageActive());
   CHECK(!ble.testCapturePageEopPending());
@@ -1502,6 +1526,134 @@ static void test_scenario_11_concurrent_diagnostic_messages() {
   CHECK(res.liveLogChunks > 0);
 }
 
+static void test_capture_retries_exact_wire_packet_and_eop() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor candidate;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+  uint32_t now = 620000;
+  setupCaptureTest(1, 7, now);
+  ble.testSetLogMessageId(0x1234);
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+  const auto tick = [&](uint32_t interval) {
+    now += interval;
+    ble.poll(now, candidate, transport, recorder);
+  };
+  tick(20);
+  CHECK(ble.testLogChunkCount() == 1);
+  ble.testRejectLogNotifications(2);
+  const uint32_t acceptedBefore = ble.logNotifyCount();
+  tick(20);
+  tick(19);
+  CHECK(ble.testLogChunkCount() == 1);
+  tick(1);
+  CHECK(ble.logNotifyCount() == acceptedBefore);
+  CHECK(ble.testCaptureNextRecord() == 0);
+  CHECK(ble.testCaptureRecordsSent() == 0);
+  tick(20);
+  CHECK(ble.testLogChunk(1).chunkIndex == 1);
+  tick(20);
+  CHECK(ble.testCaptureNextRecord() == 1);
+  tick(20); // EOF stages EOP
+  CHECK(ble.testCapturePageEopPending());
+  ble.testRejectLogNotifications(1);
+  tick(20);
+  CHECK(ble.testCapturePageEopPending());
+  CHECK(ble.testLogChunkCount() == 3);
+  tick(20);
+  CHECK(!ble.testCapturePageEopPending());
+  CHECK(ble.testLogChunkCount() == 4);
+
+  // Same packed fixture consumed by Android's CapturePageReaderTest.
+  constexpr uint8_t wire[][20] = {
+    {0x01, 0x11, 0x34, 0x12, 0x00, 0x0e, 0x43, 0x41, 0x50, 0x2c, 0x31, 0x30, 0x30, 0x30, 0x2c, 0x31, 0x2c, 0x33, 0x30, 0x31},
+    {0x01, 0x10, 0x34, 0x12, 0x01, 0x0e, 0x2c, 0x30, 0x2c, 0x38, 0x2c, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30},
+    {0x01, 0x12, 0x34, 0x12, 0x02, 0x09, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x0d, 0x0a},
+    {0x01, 0x16, 0x35, 0x12, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x01},
+  };
+  for (size_t i = 0; i < 4; ++i) {
+    CHECK(std::memcmp(wire[i], &ble.testLogChunk(i), sizeof(wire[i])) == 0);
+  }
+
+  ble.testClearLogChunks();
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+  ble.testRejectLogNotifications(8);
+  const uint32_t drops = ble.dropCount();
+  for (int i = 0; i < 8; ++i) tick(20);
+  CHECK(ble.dropCount() == drops + 1);
+  CHECK(!ble.testCapturePageActive() && !ble.testCapturePageEopPending());
+  CHECK(!recorder.isBleExportActive());
+  CHECK(ble.testLogChunkCount() == 0);
+}
+
+static void test_control_result_retry_and_snapshot_busy() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor candidate;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+  uint32_t now = 650000;
+  setupCaptureTest(0, 7, now);
+  ble.testClearResults();
+  ble.testSetSnapshotSubscribed(true);
+  ble.testRejectResultNotifications(2);
+  ble.testRejectSnapshotNotifications(2);
+  const uint32_t drops = ble.droppedCommandCount();
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_GET_SNAPSHOT, {}, 0x1234), 7);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_GET_DIAGNOSTICS, {}, 2), 7);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_GET_CAPABILITIES, {}, 3), 7);
+  ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_GET_CAPABILITIES, {}, 4), 7);
+  CHECK(ble.droppedCommandCount() == drops + 1);
+
+  const auto tick = [&] { now += 20; ble.poll(now, candidate, transport, recorder); };
+  tick();
+  tick();
+  CHECK(ble.testResultCount() == 0);
+  CHECK(ble.testSnapshotChunkCount() == 0);
+  tick();
+  CHECK(ble.testResultCount() == 1);
+  CHECK(ble.testResult(0).sequence == 0x1234);
+  tick();
+  CHECK(ble.testResultCount() == 2);
+  CHECK(ble.testResult(1).statusCode == BLE_CFG_STATUS_BUSY);
+  CHECK(ble.testSnapshotChunkCount() == 0);
+  tick();
+  CHECK(ble.testResultCount() == 3);
+  CHECK(ble.testSnapshotChunkCount() == 1);
+  CHECK(ble.testSnapshotChunk(0).chunkIndex == 0);
+  CHECK(ble.testSnapshotChunk(0).snapshotId == 0x1234);
+  for (int i = 0; i < 40 && ble.testSnapshotActive(); ++i) tick();
+  CHECK(!ble.testSnapshotActive());
+  CHECK(ble.testSnapshotChunkCount() == ble.testSnapshotChunk(0).chunkCount);
+  for (size_t i = 0; i < ble.testSnapshotChunkCount(); ++i) {
+    CHECK(ble.testSnapshotChunk(i).chunkIndex == i);
+  }
+}
+
+static void test_capture_read_corruption_does_not_report_eof() {
+  BleManager& ble = BleManager::instance();
+  RpmCandidateMonitor candidate;
+  CanTransport transport(500000);
+  CanRecorder& recorder = CanRecorder::instance();
+  uint32_t now = 680000;
+  setupCaptureTest(2, 7, now);
+  auto& file = fs::mockFsRegistry().at(CanRecorder::CAPTURE_PATH)->data;
+  const size_t corrupt = sizeof(CaptureHeader) + sizeof(CanLogRecord) + 18;
+  file[corrupt] ^= 0x40;
+  const uint8_t originalCorruptValue = file[corrupt];
+
+  ble.testEnqueueCtrlCommand(BLE_CTRL_CMD_GET_CAPTURE_PAGE, 0, 7);
+  for (int i = 0; i < 30; ++i) {
+    now += 20;
+    ble.poll(now, candidate, transport, recorder);
+  }
+  const PageCaptureResult result = parseLogChunks(ble);
+  CHECK(result.records.size() == 1);
+  CHECK(!result.eopFound);
+  CHECK(result.liveLogChunks > 0);
+  CHECK(!recorder.isBleExportActive());
+  CHECK(file[corrupt] == originalCorruptValue);
+}
+
 int main() {
   read_queries_do_not_need_authorization();
   writes_require_authorization();
@@ -1532,7 +1684,10 @@ int main() {
   test_scenario_9_auth_rejection();
   test_scenario_10_notification_pacing_and_bounded_work();
   test_scenario_11_concurrent_diagnostic_messages();
+  test_capture_retries_exact_wire_packet_and_eop();
+  test_control_result_retry_and_snapshot_busy();
+  test_capture_read_corruption_does_not_report_eof();
 
-  std::printf("PASS BLE v2 command dispatch, auth binding, calibration, device ops, capture export (11 scenarios): %u checks\n", checks);
+  std::printf("PASS BLE v2 command dispatch, auth binding, calibration, device ops, capture export and backpressure: %u checks\n", checks);
   return 0;
 }

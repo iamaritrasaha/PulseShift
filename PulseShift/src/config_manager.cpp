@@ -296,6 +296,7 @@ bool ConfigManager::reloadFromNvs() {
   // Owner credentials, calibration-independent fields and the live session
   // are untouched; only the persisted configuration is re-applied.
   if (!validateConfig(reloaded)) return false;
+  reloaded.activeRevision = active_.activeRevision + 1;
   active_ = reloaded;
   return true;
 }
@@ -324,6 +325,10 @@ void ConfigManager::loadOwnerSecurity() {
 }
 
 void ConfigManager::poll(uint32_t nowMs) {
+  if (authWindowActive_ && uint32_t(nowMs - authWindowStartMs_) >= AUTH_WINDOW_MS) {
+    closeAuthWindow();
+  }
+
   // Check transaction timeout
   if (stagedTxActive_ && uint32_t(nowMs - stagedTxStartMs_) >= TX_TIMEOUT_MS) {
     stagedTxActive_ = false;
@@ -365,6 +370,12 @@ bool ConfigManager::beginTransaction() {
 
 bool ConfigManager::commitTransaction() {
   if (!stagedTxActive_) return false;
+  if (staged_.activeRevision != active_.activeRevision) {
+    // A live write occurred after BEGIN. Committing this full staged copy
+    // would overwrite that change and reuse its revision.
+    abortTransaction();
+    return false;
+  }
   if (!validateConfig(staged_)) return false;
 
   active_ = staged_;
@@ -645,8 +656,9 @@ bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved
   // a credential recovery path: owner enrollment and stored captures are
   // intentionally preserved. Credential recovery is the distinct physical
   // BOOT-window re-enrollment flow.
+  const uint32_t nextRevision = active_.activeRevision + 1;
   applySafeDefaults(active_);
-  active_.activeRevision++;
+  active_.activeRevision = nextRevision;
   const bool saved = saveToNvs();
   if (nvsSaved) *nvsSaved = saved;
   return true;
@@ -995,6 +1007,7 @@ CalibrationResult ConfigManager::computeCalibration(bool applyWhenValid, uint32_
 
 void ConfigManager::triggerAuthWindow(uint32_t nowMs) {
   authWindowStartMs_ = nowMs;
+  authWindowActive_ = true;
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
   Serial.printf("[SECURITY] Physical BOOT button pressed. Authorization window open for %u seconds.\r\n",
                 (unsigned)(AUTH_WINDOW_MS / 1000));
@@ -1002,7 +1015,7 @@ void ConfigManager::triggerAuthWindow(uint32_t nowMs) {
 }
 
 bool ConfigManager::isAuthWindowOpen(uint32_t nowMs) const {
-  return (authWindowStartMs_ != 0 && uint32_t(nowMs - authWindowStartMs_) < AUTH_WINDOW_MS);
+  return authWindowActive_ && uint32_t(nowMs - authWindowStartMs_) < AUTH_WINDOW_MS;
 }
 
 bool ConfigManager::isAuthorized(uint32_t nowMs) const {

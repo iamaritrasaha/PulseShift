@@ -4,8 +4,6 @@
 #include <math.h>
 
 namespace {
-// Per-frame hysteresis default; the persisted value lives in the config.
-constexpr uint16_t DEFAULT_HYSTERESIS_RPM = 150;
 constexpr uint16_t WARNING_FLASH_PERIOD_MS = 100;   // 10 Hz flash
 constexpr uint16_t WARNING_STROBE_PERIOD_MS = 50;   // 20 Hz strobe
 }  // namespace
@@ -22,9 +20,13 @@ LedEffectEngine::LedEffectEngine() {
 void LedEffectEngine::reset(uint32_t nowMs) {
   startupStartMs_ = nowMs;
   startupComplete_ = false;
+  barFromBenchTest_ = false;
+  resetRpmLatches();
+}
+
+void LedEffectEngine::resetRpmLatches() {
   warningLatched_ = false;
-  warningStartMs_ = 0;
-  for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
+  for (auto& latched : barLatched_) latched = false;
 }
 
 RgbColor LedEffectEngine::hsvToRgb(uint8_t h, uint8_t s, uint8_t v) {
@@ -146,7 +148,7 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
   else if (cfg.effect == 2) {
     // Speed: 0..100 maps to hue rate
     const uint32_t speedFactor = (cfg.effectSpeed > 0) ? cfg.effectSpeed : 10;
-    const uint8_t baseHue = static_cast<uint8_t>((nowMs * speedFactor / 40) % 256);
+    const uint8_t baseHue = static_cast<uint8_t>((nowMs % (40 * 256)) * speedFactor / 40);
     for (uint8_t i = 0; i < LED_COUNT; ++i) {
       const uint8_t hue = (baseHue + (i * 256 / LED_COUNT)) % 256;
       logicalPixels_[i] = hsvToRgb(hue, 255, 255);
@@ -183,8 +185,15 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
 // Six-stage threshold bar with per-LED hysteresis. LED i activates when the
 // RPM rises past thresholds[i] and stays lit until RPM falls below
 // thresholds[i] - hysteresis (no flicker on falling RPM).
-void LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg, uint16_t rpm) {
-  const uint16_t hyst = (cfg.rpmHysteresis > 0) ? cfg.rpmHysteresis : DEFAULT_HYSTERESIS_RPM;
+bool LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg,
+                                   uint16_t rpm, bool benchTest) {
+  if (benchTest != barFromBenchTest_ || rpm == 0) resetRpmLatches();
+  barFromBenchTest_ = benchTest;
+  if (rpm == 0) {
+    setAllPixels(RgbColor{});
+    return false;
+  }
+  const uint16_t hyst = cfg.rpmHysteresis;
 
   for (uint8_t i = 0; i < LED_COUNT; ++i) {
     const uint16_t onAt = cfg.rpmThresholds[i];
@@ -223,7 +232,10 @@ void LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg, 
         setAllPixels(RgbColor{0, 0, 0});
       }
     }
+  } else {
+    warningLatched_ = false;
   }
+  return warningLatched_;
 }
 
 bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
@@ -263,7 +275,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   if (input.testRpmActive) {
     activeLayer_ = LedActiveLayer::BenchTest;
     startupComplete_ = true; // Mark startup complete so test expiration returns to normal operation
-    renderRpmBar(nowMs, cfg, input.testRpm);
+    renderRpmBar(nowMs, cfg, input.testRpm, true);
     return finishFrame(nowMs, cfg);
   }
 
@@ -278,22 +290,11 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
       (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
                         rpm.calibrationMatchesSettings));
-  const bool liveRpmActive = (cfg.effect == 4 || cfg.effect == 5) &&
-                             sampleQualified && rpm.engineRunning;
+  const bool rpmMode = verifiedBar || cfg.effect == 5;
+  const bool liveRpmActive = rpmMode && sampleQualified && rpm.engineRunning;
 
   const bool commissioningActive = input.authWindowOpen && !liveRpmActive;
-  const bool previewStartupActive = (cfg.effect == 5) && (cfg.isPowerOn && !startupComplete_);
-
-  if (cfg.effect == 4 || cfg.effect == 5) {
-    if (!commissioningActive && !previewStartupActive && !sampleQualified) {
-      // Reset threshold latches so a recovered signal starts from fresh data.
-      for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
-      warningLatched_ = false;
-      activeLayer_ = LedActiveLayer::SafeguardBlank;
-      setAllPixels(RgbColor{0, 0, 0});
-      return finishFrame(nowMs, cfg);
-    }
-  }
+  if (!rpmMode || !sampleQualified) resetRpmLatches();
 
   // ---- Priority 6: owner commissioning indication ----------------------
   // Displayed when the physical authorization window is open and the engine
@@ -312,7 +313,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   }
 
   // ---- Priority 7: startup indication ----------------------------------
-  if (!startupComplete_) {
+  if (!startupComplete_ && (!verifiedBar || sampleQualified)) {
     renderStartup(nowMs, cfg);
     if (!startupComplete_) {
       activeLayer_ = LedActiveLayer::Startup;
@@ -321,10 +322,15 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   }
 
   // ---- Priority 8: verified RPM bar / provisional diagnostic preview ---
-  if (cfg.effect == 4 || cfg.effect == 5) {
-    activeLayer_ = (cfg.effect == 4) ? LedActiveLayer::RpmBar
-                                     : LedActiveLayer::ProvisionalRpm;
-    renderRpmBar(nowMs, cfg, rpm.rpm);
+  if (rpmMode) {
+    if (!sampleQualified) {
+      activeLayer_ = LedActiveLayer::SafeguardBlank;
+      setAllPixels(RgbColor{});
+    } else {
+      const bool warning = renderRpmBar(nowMs, cfg, rpm.rpm, false);
+      activeLayer_ = warning ? LedActiveLayer::Warning
+                             : (verifiedBar ? LedActiveLayer::RpmBar : LedActiveLayer::ProvisionalRpm);
+    }
     return finishFrame(nowMs, cfg);
   }
 

@@ -78,20 +78,26 @@ public:
   void abortOta();
 
   // Cancel rollback upon successful post-reboot verification
+  void recordBootSelfTestPassed() { bootSelfTestPassed_ = true; }
   BleConfigStatusCode confirmRollbackCancel(uint8_t& outActiveSlot);
 
   // Query whether rollback is possible from hardware bootloader state
   bool isRollbackPossible() const;
   bool isDualSlotSupported() const;
+  bool readRunningImageDigest(uint8_t out[32]);
   bool rollbackConfirmed() const { return rollbackConfirmed_; }
 
   // State inspection
+  BleConfigStatusCode serviceTransfer(const RpmCandidateMonitor& rpmMon,
+                                      const CanTransport& transport, uint32_t nowMs);
+  void noteChunkAcknowledged(uint32_t nowMs) { lastTransferActivityMs_ = nowMs; }
+  void scheduleReboot(uint32_t nowMs, uint32_t delayMs);
+  bool rebootDue(uint32_t nowMs) const;
   OtaEngineState state() const { return state_; }
   uint8_t activeRunningSlot() const;
   uint32_t bytesWritten() const { return bytesWritten_; }
   uint32_t totalExpectedSize() const { return totalSize_; }
   bool isRebootPending() const { return state_ == OtaEngineState::RebootPending; }
-  uint32_t rebootScheduledTimeMs() const { return rebootTimeMs_; }
 
   // Self-test verification on boot
   static bool verifyAndCommitBootSlot();
@@ -102,6 +108,9 @@ public:
 
   // Test helpers
   void resetForTest();
+#if defined(PULSESHIFT_TEST_BUILD)
+  void testSetRunningImageDigest(const uint8_t digest[32]);
+#endif
 
 private:
   OtaManager();
@@ -116,7 +125,11 @@ private:
   uint32_t sessionToken_ = 0;
   uint8_t targetSlot_ = 0;
   uint8_t sha256Prefix_[4] = {0};
-  uint32_t rebootTimeMs_ = 0;
+  uint32_t lastTransferActivityMs_ = 0;
+  uint32_t rebootStartedMs_ = 0;
+  uint32_t rebootDelayMs_ = 0;
+  bool runningImageDigestValid_ = false;
+  uint8_t runningImageDigest_[32] = {};
 
   // Running CRC32 calculation
   uint32_t runningCrc32_ = 0xFFFFFFFF;
@@ -136,6 +149,7 @@ private:
   uint8_t trailerBuffer_[OTA_TRAILER_SIZE] = {0};
   size_t  trailerBytesBuffered_ = 0;
   bool rollbackConfirmed_ = false;
+  bool bootSelfTestPassed_ = false;
 
 #if defined(ARDUINO)
   uint32_t otaHandle_ = 0;

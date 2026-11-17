@@ -61,7 +61,7 @@ static void test_bench_test_4500_to_0_rpm() {
   ConfigManager::instance().activeMutable() = verifiedBarConfig();
 
   // Command 4,500 RPM bench test
-  ctrl.setTestRpm(4500, true);
+  ctrl.setTestRpm(4500, true, 100);
   ctrl.update(LiveRpmSnapshot{}, 100, true);
 
   CHECK(ctrl.isTestRpmActive());
@@ -80,7 +80,7 @@ static void test_bench_test_4500_to_0_rpm() {
   }
 
   // Transition to 0 RPM bench test
-  ctrl.setTestRpm(0, true);
+  ctrl.setTestRpm(0, true, 150);
   ctrl.update(LiveRpmSnapshot{}, 150, true);
 
   CHECK(ctrl.attemptsCount() == 3);
@@ -104,7 +104,7 @@ static void test_retry_on_simulated_driver_failure() {
   // Simulate a hardware driver failure on the next write attempt
   mock.setFailNextWrites(1);
 
-  ctrl.setTestRpm(3000, true);
+  ctrl.setTestRpm(3000, true, 200);
   ctrl.update(LiveRpmSnapshot{}, 200, true);
 
   // Transmission was attempted but failed
@@ -141,7 +141,7 @@ static void test_periodic_refresh() {
   ctrl.begin();
 
   ConfigManager::instance().activeMutable() = verifiedBarConfig();
-  ctrl.setTestRpm(1000, true);
+  ctrl.setTestRpm(1000, true, 100);
   ctrl.update(LiveRpmSnapshot{}, 100, true);
 
   CHECK(ctrl.attemptsCount() == 2);
@@ -169,7 +169,7 @@ static void test_master_power_off_and_restore() {
 
   auto& cfg = ConfigManager::instance().activeMutable();
   cfg = verifiedBarConfig();
-  ctrl.setTestRpm(4500, true);
+  ctrl.setTestRpm(4500, true, 100);
   ctrl.update(LiveRpmSnapshot{}, 100, true);
   CHECK(ctrl.attemptsCount() == 2);
 
@@ -228,6 +228,134 @@ static void test_initialization_recovery() {
   }
 }
 
+class RejectingDriver : public MockLedDriver {
+ public:
+  bool begin(uint8_t pin, uint8_t count) override {
+    channelLost = false;
+    return MockLedDriver::begin(pin, count);
+  }
+  bool write(const RgbColor* pixels, uint8_t count) override {
+    if (channelLost) return false;
+    return MockLedDriver::write(pixels, count);
+  }
+  bool isReady() const override { return !channelLost && MockLedDriver::isReady(); }
+  LedDriverStatus lastStatus() const override {
+    return channelLost ? LedDriverStatus::TransmitRejected : MockLedDriver::lastStatus();
+  }
+  bool channelLost = false;
+};
+
+static void test_runtime_channel_loss_and_partial_reinit() {
+  RejectingDriver mock;
+  LedController ctrl;
+  ctrl.setDriverForTesting(&mock);
+  CHECK(ctrl.begin());
+  auto cfg = verifiedBarConfig();
+  ConfigManager::instance().activeMutable() = cfg;
+  ctrl.setTestRpm(4500, true, 100);
+  ctrl.update(LiveRpmSnapshot{}, 100, true);
+  CHECK(ctrl.lastConfirmedPixel(3) == cfg.ledColors[3]);
+
+  mock.channelLost = true;
+  ctrl.setTestRpm(0, true, 150);
+  ctrl.update(LiveRpmSnapshot{}, 150, true);
+  CHECK(!ctrl.isReady());
+  CHECK(ctrl.isInitRecovering());
+  CHECK(ctrl.lastConfirmedPixel(3) == cfg.ledColors[3]);
+  CHECK(ctrl.lastAttemptedPixel(3) == RgbColor{});
+  CHECK(ctrl.calculatedPixel(3) == RgbColor{});
+  ctrl.update(LiveRpmSnapshot{}, 1149, true);
+  CHECK(ctrl.initAttempts() == 1);
+
+  // Reacquire RMT, then fail its initial clear once. The historical completed
+  // frame remains intact, and the normal 50 ms write backoff applies.
+  mock.setFailNextWrites(1);
+  ctrl.update(LiveRpmSnapshot{}, 1150, true);
+  CHECK(ctrl.isReady());
+  CHECK(ctrl.initAttempts() == 2);
+  CHECK(ctrl.lastConfirmedPixel(3) == cfg.ledColors[3]);
+  ctrl.update(LiveRpmSnapshot{}, 1199, true);
+  CHECK(ctrl.lastConfirmedPixel(3) == cfg.ledColors[3]);
+  ctrl.update(LiveRpmSnapshot{}, 1200, true);
+  CHECK(ctrl.lastConfirmedPixel(3) == RgbColor{});
+  CHECK(ctrl.attemptsCount() == 5);
+  CHECK(ctrl.failureCount() == 2);
+}
+
+static void test_initialization_exhausts_ten_attempts() {
+  MockLedDriver mock;
+  mock.setFailBegin(20);
+  LedController ctrl;
+  ctrl.setDriverForTesting(&mock);
+  CHECK(!ctrl.begin());
+  for (uint32_t now = 100; now <= 16000; now += 100) {
+    ctrl.update(LiveRpmSnapshot{}, now, true);
+  }
+  CHECK(ctrl.initAttempts() == LedController::MAX_INIT_ATTEMPTS);
+  CHECK(!ctrl.isInitRecovering());
+  CHECK(!ctrl.isReady());
+  CHECK(ctrl.attemptsCount() == 0);
+}
+
+static void test_bench_and_refresh_across_uptime_wrap() {
+  MockLedDriver mock;
+  LedController ctrl;
+  ctrl.setDriverForTesting(&mock);
+  CHECK(ctrl.begin());
+  auto cfg = verifiedBarConfig();
+  cfg.startupAnimation = 1;
+  cfg.startupDurationMs = 2000;
+  auto& config = ConfigManager::instance();
+  config.activeMutable() = cfg;
+
+  // Use the same tick timestamp for issuing and rendering the command while
+  // commissioning is active. The test and its refresh both span millis wrap.
+  const uint32_t start = UINT32_MAX - 500;
+  config.triggerAuthWindow(start - 1);
+  ctrl.setTestRpm(4500, true, start);
+  ctrl.update(LiveRpmSnapshot{}, start, true);
+  CHECK(ctrl.ledEffects().activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(ctrl.lastConfirmedPixel(3) == cfg.ledColors[3]);
+  const auto before = ctrl.forcedRefreshCount();
+  ctrl.update(LiveRpmSnapshot{}, start + 999, true);
+  CHECK(ctrl.forcedRefreshCount() == before);
+  ctrl.update(LiveRpmSnapshot{}, start + 1000, true);
+  CHECK(ctrl.forcedRefreshCount() == before + 1);
+
+  ctrl.update(LiveRpmSnapshot{}, start + LedController::BENCH_TEST_DURATION_MS - 1, true);
+  CHECK(ctrl.isTestRpmActive());
+  ctrl.update(LiveRpmSnapshot{}, start + LedController::BENCH_TEST_DURATION_MS, true);
+  CHECK(!ctrl.isTestRpmActive());
+  CHECK(ctrl.ledEffects().activeLayer() == LedActiveLayer::Commissioning);
+}
+
+static void test_terminal_driver_fault_skips_init_retries() {
+  class StalledDriver : public MockLedDriver {
+   public:
+    bool write(const RgbColor*, uint8_t) override {
+      stalled_ = true;
+      return false;
+    }
+    bool isReady() const override { return !stalled_ && MockLedDriver::isReady(); }
+    bool isTerminalFault() const override { return stalled_; }
+    LedDriverStatus lastStatus() const override {
+      return stalled_ ? LedDriverStatus::TransmitStalled : MockLedDriver::lastStatus();
+    }
+   private:
+    bool stalled_ = false;
+  } driver;
+
+  LedController ctrl;
+  ctrl.setDriverForTesting(&driver);
+  CHECK(!ctrl.begin());
+  CHECK(!ctrl.isInitRecovering());
+  CHECK(ctrl.lastDriverStatus() == LedDriverStatus::TransmitStalled);
+  ctrl.update(LiveRpmSnapshot{}, 1000, true);
+  ctrl.update(LiveRpmSnapshot{}, 2000, true);
+  CHECK(ctrl.initAttempts() == 1);
+  CHECK(ctrl.attemptsCount() == 1);
+}
+
 int main() {
   test_initial_black_flush();
   test_bench_test_4500_to_0_rpm();
@@ -235,6 +363,10 @@ int main() {
   test_periodic_refresh();
   test_master_power_off_and_restore();
   test_initialization_recovery();
+  test_runtime_channel_loss_and_partial_reinit();
+  test_initialization_exhausts_ten_attempts();
+  test_bench_and_refresh_across_uptime_wrap();
+  test_terminal_driver_fault_skips_init_retries();
 
   std::printf("PASS LedController tri-state buffer, retry, refresh, mock driver, init recovery: %u checks\n", checks);
   return 0;

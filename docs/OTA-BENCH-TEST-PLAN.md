@@ -24,7 +24,7 @@ Perform all OTA tests on a dedicated test bench before flashing or deploying on 
 
 ### 1.2 Bootloader and Partition Verification
 The production firmware relies on the standard ESP32 dual-OTA partition scheme (`default.csv`):
-- `bootloader.bin`: `0x1000` (ESP-IDF 4.4 / Arduino core with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=1`)
+- `bootloader.bin`: `0x1000`. The build uses Arduino-ESP32 3.3.12 and ESP-IDF 5.5.5 with app rollback enabled. The installed bootloader still requires separate verification.
 - `partitions.bin`: `0x8000` (NVS at `0x9000`, otadata at `0xe000`, `app0` at `0x10000`, `app1` at `0x150000`, `spiffs` at `0x290000`)
 - `boot_app0.bin`: `0xe000` (Initial otadata pointing to active `app0`)
 - `app0` slot: 1,310,720 bytes (1.25 MB)
@@ -127,11 +127,11 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 - **Objective:** Verify cryptographic rejection of unsigned or improperly signed images.
 - **Test 3A - Unsigned Binary:**
   1. Attempt to upload raw `PulseShift.ino.bin` without `PSOT` trailer.
-  2. **Pass Criteria:** Android companion app rejects the file immediately. If sent directly via protocol, ESP32 rejects at `endOta()` with `BLE_CFG_STATUS_OTA_AUTH_FAIL`. Inactive partition is erased and device does not reboot.
+  2. **Pass Criteria:** Android rejects the file. If sent directly, the ESP32 rejects the package before setting the boot partition and stays on the running image. A partially written inactive slot may remain.
 - **Test 3B - Rogue / Invalid Key Signature:**
   1. Generate an unauthorized temporary ECDSA key and sign the firmware.
   2. Transmit the image via BLE OTA.
-  3. **Pass Criteria:** ESP32 validates CRC32 but ECDSA signature verification against `PULSESHIFT_OTA_PUBLIC_KEY` fails. ESP32 returns `BLE_CFG_STATUS_OTA_AUTH_FAIL`. Boot partition remains unchanged.
+  3. **Pass Criteria:** ESP32 validates CRC32 but ECDSA signature verification against `PULSESHIFT_OTA_PUBLIC_KEY` fails. ESP32 returns `BLE_CFG_STATUS_OTA_CHECKSUM_ERROR`. Boot partition remains unchanged.
 
 ---
 
@@ -238,9 +238,12 @@ explicit authenticated `OTA_CONFIRM` (or USB bench `OTA CONFIRM`).
 
 The Android companion queries the extended OTA_STATUS response (8 payload
 bytes, including image state and rollback candidate), completes owner
-reauthentication on the **new** BLE connection, and only then issues OTA_CONFIRM.
-A confirmed OTA requires both a successful acknowledgment and an appropriate
-bootloader image state. Inconsistent state fails closed.
+reauthentication on the **new** BLE connection, and reads the running app digest
+when the device advertises this capability. Android compares it with the
+validated ESP32 app digest in the selected package before issuing OTA_CONFIRM.
+It reads the bootloader state again and requires VALID on the target slot, even
+if the confirmation acknowledgment was lost. Older firmware can confirm the
+slot and bootloader state. Its exact app image remains unverified.
 
 ---
 

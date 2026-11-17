@@ -992,64 +992,53 @@ void CanRecorder::clear() {
 // BLE capture export (bounded, resumable, non-destructive)
 // ============================================================================
 
-bool CanRecorder::bleExportBegin(uint32_t startRecord) {
-  auto& sm = StorageManager::instance();
-  if (!sm.isMounted() || !sm.exists(CAPTURE_PATH) || damagedRecording_) {
-    return false;
-  }
-  const uint32_t recs = totalRecords();
-  if (recs == 0 || startRecord >= recs) {
-    return false;
-  }
-
+CanRecorder::BleExportStatus CanRecorder::bleExportBegin(uint32_t startRecord) {
   bleExportEnd();
+  auto& sm = StorageManager::instance();
+  if (!sm.isMounted() || damagedRecording_) return BleExportStatus::ReadError;
+  if (!sm.exists(CAPTURE_PATH)) return BleExportStatus::End;
   bleExportFile_ = sm.open(CAPTURE_PATH, "r");
   bleExportFileOpen_ = static_cast<bool>(bleExportFile_);
-  if (!bleExportFileOpen_) {
-    return false;
+  if (!bleExportFileOpen_) return BleExportStatus::ReadError;
+
+  const size_t fileSize = bleExportFile_.size();
+  if (fileSize < sizeof(CaptureHeader) ||
+      (fileSize - sizeof(CaptureHeader)) % sizeof(CanLogRecord) != 0) {
+    bleExportEnd();
+    return BleExportStatus::ReadError;
+  }
+  bleExportLimit_ = (fileSize - sizeof(CaptureHeader)) / sizeof(CanLogRecord);
+  if (startRecord >= bleExportLimit_) {
+    bleExportEnd();
+    return BleExportStatus::End;
   }
 
   bleCursor_ = startRecord;
   bleActive_ = true;
-  bleChecksumOk_ = true;
-  return true;
+  return BleExportStatus::Ready;
 }
 
-bool CanRecorder::bleExportNext(CanLogRecord& out, uint32_t& recordIndex) {
-  if (!bleActive_) return false;
-  auto& sm = StorageManager::instance();
-  const uint32_t recs = totalRecords();
-  if (bleCursor_ >= recs) {
-    bleActive_ = false;
+CanRecorder::BleExportStatus CanRecorder::bleExportNext(CanLogRecord& out, uint32_t& recordIndex) {
+  if (!bleActive_) return BleExportStatus::End;
+  if (bleCursor_ >= bleExportLimit_) {
     bleExportEnd();
-    return false;
-  }
-
-  if (!bleExportFileOpen_) {
-    bleExportFile_ = sm.open(CAPTURE_PATH, "r");
-    bleExportFileOpen_ = static_cast<bool>(bleExportFile_);
-    if (!bleExportFileOpen_) {
-      bleActive_ = false;
-      return false;
-    }
+    return BleExportStatus::End;
   }
 
   const size_t offset = sizeof(CaptureHeader) + (size_t(bleCursor_) * sizeof(CanLogRecord));
   if (!bleExportFile_.seek(offset, SeekSet) ||
-      bleExportFile_.read(reinterpret_cast<uint8_t*>(&out), sizeof(out)) != sizeof(out)) {
+      bleExportFile_.read(reinterpret_cast<uint8_t*>(&out), sizeof(out)) != sizeof(out) ||
+      out.checksum != computeCrc16(reinterpret_cast<const uint8_t*>(&out), 18) || out.dlc > 8) {
     bleExportEnd();
-    bleActive_ = false;
-    return false;
+    return BleExportStatus::ReadError;
   }
 
-  recordIndex = bleCursor_;
-  ++bleCursor_;
-  const uint16_t expected = computeCrc16(reinterpret_cast<const uint8_t*>(&out), 18);
-  if (out.checksum != expected) bleChecksumOk_ = false;
-  return true;
+  recordIndex = bleCursor_++;
+  return BleExportStatus::Ready;
 }
 
 void CanRecorder::bleExportEnd() {
+  bleActive_ = false;
   if (bleExportFileOpen_) {
     bleExportFile_.close();
     bleExportFileOpen_ = false;
