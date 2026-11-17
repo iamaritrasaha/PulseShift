@@ -462,6 +462,8 @@ private:
       printStatus();
     } else if (strcasecmp(cmd, "BLE STATUS") == 0) {
       BleManager::instance().printStatus();
+    } else if (strcasecmp(cmd, "LED STATUS") == 0) {
+      ledController_.printStatus(millis());
     } else if (strcasecmp(cmd, "RPM STATUS") == 0) {
       candidateMonitor_.printStatus(millis(), transport_.healthy(), transport_.bitrate(), transport_.hasTraffic(millis()));
     } else if (strcasecmp(cmd, "RPM MONITOR ON") == 0) {
@@ -660,6 +662,7 @@ private:
     Serial.println("  STATUS          : Comprehensive system status & intelligent troubleshooting");
     Serial.println("  LOGS            : Dump persistent diagnostic event log");
     Serial.println("  BLE STATUS      : Bluetooth Low Energy peripheral & connection status");
+    Serial.println("  LED STATUS      : Physical WS2812B LED driver, layer arbitration & frame buffers");
     Serial.println("  CONFIG STATUS   : Display active BLE configuration, security & transaction state");
     Serial.println("  CONFIG RESET    : Restore lighting/decoder defaults (owner credentials preserved)");
     Serial.println("  CONFIG SAVE     : Persist current lighting/decoder settings to flash NVS");
@@ -794,9 +797,15 @@ private:
                     (unsigned)candidateMonitor_.minObservedRaw(),
                     (unsigned)candidateMonitor_.maxObservedRaw());
     }
+    const LedActiveLayer ledLayer = ledController_.ledEffects().activeLayer();
+    const bool shiftLightsRendering =
+        ledLayer == LedActiveLayer::RpmBar ||
+        ledLayer == LedActiveLayer::ProvisionalRpm ||
+        ledLayer == LedActiveLayer::Warning;
+
     Serial.printf("Calibration: %s | Physical Shift Lights: %s | CAN TX: SOFTWARE MUTED (Verify CTX->3V3 & GPIO17 air-gap)\r\n",
                   candidateMonitor_.isCalibrated() ? "VERIFIED" : "UNVERIFIED",
-                  ledController_.isTestRpmActive() ? "BENCH TEST OVERRIDE" : "DISABLED");
+                  ledController_.isTestRpmActive() ? "BENCH TEST OVERRIDE" : (shiftLightsRendering ? "ACTIVE" : "STANDBY"));
 
     Serial.println("\n--- Bluetooth Low Energy (PulseShift BLE v1 + v2) ---");
     Serial.printf("Enabled: %s | Advertising: %s | Device Name: PulseShift\r\n",
@@ -813,6 +822,8 @@ private:
                   (unsigned long)BleManager::instance().logNotifyCount(),
                   (unsigned long)BleManager::instance().dropCount(),
                   (unsigned long)BleManager::instance().droppedCommandCount());
+
+    ledController_.printStatus(now);
 
     Serial.println("\n--- Intelligent Diagnostics & Troubleshooting ---");
     if (!sm.isMounted() || sm.mountFailed()) {

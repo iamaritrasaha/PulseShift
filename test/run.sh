@@ -33,6 +33,17 @@ g++ $CXXFLAGS \
     test/test_led_effects.cpp -o "$BUILD_DIR/test_led_effects"
 "$BUILD_DIR/test_led_effects"
 
+# LedController tests: tri-state buffer architecture, transmission failure recovery,
+# periodic complete-frame refresh, mock driver assertions.
+g++ $CXXFLAGS \
+    -DPULSESHIFT_TEST_BUILD -DPULSESHIFT_SERIAL_DIAGNOSTICS=0 \
+    -Itest/stubs -IPulseShift -IPulseShift/src \
+    PulseShift/src/rpm_candidate.cpp PulseShift/src/config_manager.cpp \
+    PulseShift/src/led_effects.cpp PulseShift/src/led_driver.cpp \
+    PulseShift/src/led_controller.cpp \
+    test/test_led_controller.cpp -o "$BUILD_DIR/test_led_controller"
+"$BUILD_DIR/test_led_controller"
+
 # BLE v2 command dispatch tests through the real BleManager dispatcher
 # (auth binding, staged transactions, calibration workflow, device commands).
 g++ $CXXFLAGS \

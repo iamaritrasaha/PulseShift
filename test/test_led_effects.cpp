@@ -564,6 +564,92 @@ static void boot_button_auth_window_does_not_obscure_active_rpm() {
   CHECK(countLit(e) == 3);
 }
 
+static void bench_test_overrides_startup_and_commissioning_window() {
+  LedEffectEngine e;
+  e.reset(0);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  LedFrameInput input;
+
+  // Case 1: Startup animation running (t = 500 ms, duration = 2000 ms),
+  // and owner commissioning window is OPEN (authWindowOpen = true).
+  // Bench test at 4,500 RPM MUST take precedence over commissioning and startup!
+  input.authWindowOpen = true;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+  e.update(500, cfg, LiveRpmSnapshot{}, input);
+
+  CHECK(e.activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(countLit(e) == 4);
+  CHECK(e.isStartupComplete()); // Startup superseded
+
+  // Case 2: 0 RPM test while auth window is open:
+  input.testRpm = 0;
+  e.update(600, cfg, LiveRpmSnapshot{}, input);
+  CHECK(e.activeLayer() == LedActiveLayer::BenchTest);
+  CHECK(countLit(e) == 0); // All 6 LEDs commanded OFF (black)
+
+  // Case 3: Test expires after 10s:
+  input.testRpmActive = false;
+  input.testRpm = 0;
+  e.update(10600, cfg, LiveRpmSnapshot{}, input);
+  // Auth window is still open (60s window), so it transitions to commissioning pulse
+  CHECK(e.activeLayer() == LedActiveLayer::Commissioning);
+
+  // Auth window closes at t = 70000:
+  input.authWindowOpen = false;
+  e.update(70000, cfg, LiveRpmSnapshot{}, input);
+  // Live engine not running on verified mode -> safeguard blank
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
+
+  // Engine runs at 3500 RPM:
+  e.update(71000, cfg, freshVerifiedSnapshot(3500), input);
+  CHECK(e.activeLayer() == LedActiveLayer::RpmBar);
+  CHECK(countLit(e) == 3);
+}
+
+static void master_power_off_overrides_bench_test() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.isPowerOn = false; // Master power turned OFF
+  LedFrameInput input;
+  input.testRpmActive = true;
+  input.testRpm = 4500;
+
+  e.update(3000, cfg, LiveRpmSnapshot{}, input);
+  // Master power switch off wins over bench test
+  CHECK(e.activeLayer() == LedActiveLayer::Off);
+  CHECK(countLit(e) == 0);
+}
+
+static void test_4500_to_0_rpm_transitions() {
+  LedEffectEngine e;
+  e.reset(0);
+  completeStartup(e);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  LedFrameInput input;
+  input.testRpmActive = true;
+
+  // 4500 RPM -> 4 LEDs
+  input.testRpm = 4500;
+  e.update(3000, cfg, LiveRpmSnapshot{}, input);
+  CHECK(countLit(e) == 4);
+
+  // Transition to 0 RPM -> 0 LEDs
+  input.testRpm = 0;
+  e.update(3100, cfg, LiveRpmSnapshot{}, input);
+  CHECK(countLit(e) == 0);
+  for (uint8_t i = 0; i < 6; ++i) {
+    CHECK((e.getPixel(i) == RgbColor{0, 0, 0}));
+  }
+
+  // Transition back to 4500 RPM -> 4 LEDs
+  input.testRpm = 4500;
+  e.update(3200, cfg, LiveRpmSnapshot{}, input);
+  CHECK(countLit(e) == 4);
+}
+
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
@@ -580,6 +666,9 @@ int main() {
   warning_hysteresis_no_chatter();
   direction_and_brightness_scaling();
   bench_test_preview_is_explicit();
+  bench_test_overrides_startup_and_commissioning_window();
+  master_power_off_overrides_bench_test();
+  test_4500_to_0_rpm_transitions();
   master_power_off();
   change_detection_flags();
   std::printf("PASS unified LED engine priorities, safeguard, hysteresis, warnings: %u checks\n", checks);

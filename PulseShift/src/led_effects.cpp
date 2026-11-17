@@ -14,7 +14,7 @@ LedEffectEngine::LedEffectEngine() {
   for (uint8_t i = 0; i < LED_COUNT; ++i) {
     logicalPixels_[i] = RgbColor{0, 0, 0};
     outputPixels_[i] = RgbColor{0, 0, 0};
-    lastOutputPixels_[i] = RgbColor{0, 0, 0};
+    lastCalculatedOutputPixels_[i] = RgbColor{0, 0, 0};
     barLatched_[i] = false;
   }
 }
@@ -246,14 +246,34 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     return finishFrame(nowMs, cfg);
   }
 
-  // ---- Priority 3: RPM validity safeguard ------------------------------
+  // ---- Priority 3: Master power switch ---------------------------------
+  // Explicit master power-off semantics: when turned off, strip is dark.
+  // Hardware safety protections (P1 fault and P2 feedback) win over power-off.
+  if (!cfg.isPowerOn) {
+    activeLayer_ = LedActiveLayer::Off;
+    setAllPixels(RgbColor{0, 0, 0});
+    return finishFrame(nowMs, cfg);
+  }
+
+  // ---- Priority 4: Authorized bench-test preview -----------------------
+  // An explicitly requested synthetic bench test takes precedence over
+  // startup animations and owner commissioning indication, ensuring the
+  // authorized bench test runs for its intended visible duration without
+  // being silently obscured by cyan pulse or boot wipes.
+  if (input.testRpmActive) {
+    activeLayer_ = LedActiveLayer::BenchTest;
+    startupComplete_ = true; // Mark startup complete so test expiration returns to normal operation
+    renderRpmBar(nowMs, cfg, input.testRpm);
+    return finishFrame(nowMs, cfg);
+  }
+
+  // ---- Priority 5: RPM validity safeguard ------------------------------
   // Effect 4 is the protected, calibrated shift light. Effect 5 is a
   // separate, explicitly UNVERIFIED diagnostic preview of the live CAN signal.
   // Neither mode is allowed to display stale, unavailable or invalid RPM.
-  // A provisional preview must still show non-RPM startup/commissioning
-  // indications without a bike connected. Do not apply this exception to
-  // the verified shift-light mode. Once startup finishes and no owner window
-  // is open, stale/invalid RPM is strictly blanked as before.
+  // The missing-signal safeguard blanks the strip when an RPM mode is active,
+  // EXCEPT when the owner commissioning window is open (which displays cyan pairing pulse)
+  // or when an initial provisional preview startup animation is playing.
   const bool verifiedBar = cfg.effect == 4;
   const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
       (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
@@ -261,11 +281,11 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   const bool liveRpmActive = (cfg.effect == 4 || cfg.effect == 5) &&
                              sampleQualified && rpm.engineRunning;
 
-  const bool previewIndicatorActive = cfg.effect == 5 &&
-      (input.authWindowOpen || (cfg.isPowerOn && !startupComplete_));
-  if (!input.testRpmActive &&
-      (cfg.effect == 4 || (cfg.effect == 5 && !previewIndicatorActive))) {
-    if (!sampleQualified) {
+  const bool commissioningActive = input.authWindowOpen && !liveRpmActive;
+  const bool previewStartupActive = (cfg.effect == 5) && (cfg.isPowerOn && !startupComplete_);
+
+  if (cfg.effect == 4 || cfg.effect == 5) {
+    if (!commissioningActive && !previewStartupActive && !sampleQualified) {
       // Reset threshold latches so a recovered signal starts from fresh data.
       for (uint8_t i = 0; i < LED_COUNT; ++i) barLatched_[i] = false;
       warningLatched_ = false;
@@ -275,12 +295,12 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // ---- Priority 4: owner commissioning indication ----------------------
+  // ---- Priority 6: owner commissioning indication ----------------------
   // Displayed when the physical authorization window is open and the engine
   // is NOT actively running with qualified RPM. If the engine is running on an
   // RPM display mode, live RPM rendering takes precedence so a rider tapping
   // or holding the button is never blinded by cyan.
-  if (input.authWindowOpen && !liveRpmActive) {
+  if (commissioningActive) {
     activeLayer_ = LedActiveLayer::Commissioning;
     const uint32_t phase = nowMs % 1000;
     const uint8_t factor = (phase < 500)
@@ -291,14 +311,7 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     return finishFrame(nowMs, cfg);
   }
 
-  // ---- Master power switch ---------------------------------------------
-  if (!cfg.isPowerOn) {
-    activeLayer_ = LedActiveLayer::Off;
-    setAllPixels(RgbColor{0, 0, 0});
-    return finishFrame(nowMs, cfg);
-  }
-
-  // ---- Priority 5: startup indication ----------------------------------
+  // ---- Priority 7: startup indication ----------------------------------
   if (!startupComplete_) {
     renderStartup(nowMs, cfg);
     if (!startupComplete_) {
@@ -307,23 +320,15 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
     }
   }
 
-  // An explicitly requested synthetic bench test takes precedence over
-  // real RPM display modes but not hardware faults, owner feedback, power
-  // or startup. Never treat the test value as a received CAN sample.
-  if (input.testRpmActive) {
-    activeLayer_ = LedActiveLayer::BenchTest;
-    renderRpmBar(nowMs, cfg, input.testRpm);
-    return finishFrame(nowMs, cfg);
-  }
-
-  // ---- Priority 6: verified RPM bar / provisional diagnostic preview ---
+  // ---- Priority 8: verified RPM bar / provisional diagnostic preview ---
   if (cfg.effect == 4 || cfg.effect == 5) {
     activeLayer_ = (cfg.effect == 4) ? LedActiveLayer::RpmBar
                                      : LedActiveLayer::ProvisionalRpm;
     renderRpmBar(nowMs, cfg, rpm.rpm);
     return finishFrame(nowMs, cfg);
   }
-  // ---- Priority 7: manual decorative lighting --------------------------
+
+  // ---- Priority 9: manual decorative lighting --------------------------
   activeLayer_ = LedActiveLayer::Decorative;
   renderEffect(nowMs, cfg);
   return finishFrame(nowMs, cfg);
@@ -331,18 +336,16 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
 
 bool LedEffectEngine::finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg) {
   // Apply LED ordering (direction) & master brightness scaling, then detect
-  // the change against the PREVIOUS physical frame. The previous-frame
-  // buffer is refreshed every call so unchanged frames return false and no
-  // redundant WS2812B write is issued; lit-to-black transitions return true
-  // and therefore always produce a physical leds_.show() call.
+  // the change against the previously calculated frame buffer.
+  // Physical write scheduling and confirmed state management are owned by LedController.
   bool changed = false;
   for (uint8_t i = 0; i < LED_COUNT; ++i) {
     const uint8_t srcIdx = (cfg.ledDirection == 1) ? (LED_COUNT - 1 - i) : i;
     outputPixels_[i] = scaleColor(logicalPixels_[srcIdx], cfg.brightness);
-    if (outputPixels_[i] != lastOutputPixels_[i]) changed = true;
+    if (outputPixels_[i] != lastCalculatedOutputPixels_[i]) changed = true;
   }
   if (changed) {
-    memcpy(lastOutputPixels_, outputPixels_, sizeof(outputPixels_));
+    memcpy(lastCalculatedOutputPixels_, outputPixels_, sizeof(outputPixels_));
   }
   (void)nowMs;
   return changed;
