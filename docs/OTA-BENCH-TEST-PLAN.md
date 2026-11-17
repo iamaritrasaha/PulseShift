@@ -46,12 +46,9 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 - Private keys must **never** be committed to Git.
 - The project private key is stored in `tools/keys/pulseshift_ota_key.pem` (protected by `.gitignore`).
 - The uncompressed 65-byte SEC1 public key is embedded in `PulseShift/src/ota_public_key.h`.
-- To generate a new deployment keypair (if rotating keys):
-  ```bash
-  uv run --with cryptography python tools/sign_firmware.py generate-key \
-    --key tools/keys/pulseshift_ota_key.pem \
-    --header PulseShift/src/ota_public_key.h
-  ```
+- Before signing, derive the public key in memory and compare it to the
+  embedded trust anchor. Withhold signing and deployment when they differ.
+  Keep the existing trust anchor and signing key in place.
 
 ### 2.2 Compilation and Signing Workflow
 1. Compile the firmware binary:
@@ -89,9 +86,17 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 - **Steps:**
   1. Boot ESP32 into `app0` (firmware v2.3.0). Confirm serial shows active BLE advertising.
   2. Open Android companion app and connect to PulseShift.
-  3. Verify Android negotiates MTU 512 (`_currentMtu` updates to 512, chunk size adapts to 215-230 bytes).
-  4. Select `PulseShift_signed.bin` and initiate OTA update.
-  5. Observe transfer progress: ~3,200 chunks transmitted in approximately 35-45 seconds (versus ~68,000 packets / 15 minutes without extended MTU).
+  3. Record the actual negotiated MTU. Android uses up to 230 data bytes per
+     chunk with a large MTU, and 11 data bytes at the baseline MTU.
+  4. Select the compatible signed package and initiate the approved update.
+  5. Record acknowledged bytes, elapsed transfer time, disconnects and errors.
+     Packet count is ceil(package bytes / data bytes per chunk). For a roughly
+     778 KB package, expect about 3,385 chunks at 230 bytes or 70,758 at 11 bytes.
+     At 30-50 ms per acknowledged chunk, ideal transfer time is about 102-169 s
+     or 35-59 minutes respectively. Actual radio performance requires measurement.
+     Each chunk requires matching index and cumulative-byte acknowledgement.
+     Missing or rejected data acknowledgements abort the transfer. A fresh attempt
+     starts at byte zero after the controller has returned to idle.
   6. Confirm ESP32 logs CRC32 match, validates ECDSA P-256 signature, validates `esp_image_verify`, and calls `esp_ota_set_boot_partition(app1)`.
   7. ESP32 reboots into `app1`. Boot status shows `ESP_OTA_IMG_PENDING_VERIFY`.
   8. Firmware self-tests execute successfully (LittleFS mount, NVS config, CAN listen-only, BLE advertising).
