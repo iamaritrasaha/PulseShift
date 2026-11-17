@@ -56,8 +56,11 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 ### 2.2 Compilation and Signing Workflow
 1. Compile the firmware binary:
    ```bash
-   arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 D:\Development\PulseShift-Firmware\PulseShift
+   arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=nvs_flash_init" PulseShift
    ```
+   The linker option guards the installed NVS partition against Arduino-ESP32's
+   automatic erase on NVS initialization errors. The same option is required for
+   production and headless builds.
 2. Sign the binary and attach the 76-byte `PSOT` authentication trailer:
    ```bash
    uv run --with cryptography python tools/sign_firmware.py sign \
