@@ -63,8 +63,8 @@ g++ $CXXFLAGS \
 "$BUILD_DIR/test_ble_commands"
 
 # Passive experimental 0x303[1] voltage hypothesis: byte validity and stale handling.
-g++ $CXXFLAGS \\
-    -IPulseShift -IPulseShift/src \\
+g++ $CXXFLAGS \
+    -IPulseShift -IPulseShift/src \
     test/test_experimental_voltage_probe.cpp -o "$BUILD_DIR/test_experimental_voltage_probe"
 "$BUILD_DIR/test_experimental_voltage_probe"
 
