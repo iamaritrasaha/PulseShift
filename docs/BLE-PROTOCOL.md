@@ -63,7 +63,7 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 **Unverified and disabled until paired firmware is explicitly flashed.** From the
 archived key-on/engine-off capture, CAN ID `0x303` byte 1 ranged from 119 to 122.
 The test-only hypothesis is `volts = rawByte / 10.0`, which would suggest
-11.9–12.2 V during that recording. This is **not** a calibrated voltage or a
+11.9-12.2 V during that recording. This is **not** a calibrated voltage or a
 safe battery/charging warning and must be compared against synchronized
 multimeter readings at several operating points.
 
@@ -72,7 +72,7 @@ length, an optional firmware build uses the previously zero reserved bytes:
 
 | Offset | Value | Meaning |
 |---|---|---|
-| 18 | 0–255 | Raw CAN `0x303[1]` from a standard, non-RTR frame with DLC ≥ 2; only meaningful if byte 19 is `0xA5` |
+| 18 | 0-255 | Raw CAN `0x303[1]` from a standard, non-RTR frame with DLC ≥ 2; only meaningful if byte 19 is `0xA5` |
 | 19 | `0xA5` | Candidate received within the last 1000 ms; Android may show `raw / 10.0` under **EXPERIMENTAL** label |
 | 19 | `0x5A` | Firmware supports probe but frame absent or stale; Android displays unavailable |
 | 19 | `0x00` with byte 18 = 0 | Legacy firmware without probe support; Android displays unavailable |
