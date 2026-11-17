@@ -654,7 +654,7 @@ static void ota_and_capabilities_discovery_tests() {
   ble.testEnqueueCommand(makeCmd(BLE_CFG_OP_OTA_DATA, {0, 0, 1, 0xE9}, 215), 10);
   drain(ble, cand, 300016);
   CHECK(ota.bytesWritten() == 1);
-  ble.onClientDisconnected();
+  ble.testResetDisconnectedLink();
   CHECK(ota.state() == OtaEngineState::Idle);
   CHECK(ota.bytesWritten() == 0);
 }
