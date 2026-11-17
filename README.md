@@ -16,7 +16,7 @@ PulseShift is an autonomous, passive CAN bus shift-light and diagnostic telemetr
 - **6-LED Shift Controller**: Controls an addressable WS2812B array with boot sweep, progressive RPM stages, per-LED hysteresis, warning strobe, and owner commissioning status.
 - **Preserved Capture and Logging**: Saves raw binary CAN frames and structured diagnostic events to LittleFS across dual log archives without risk of overwrite.
 - **Optional BLE and OTA Updates**: Provides authenticated NimBLE GATT telemetry, configuration controls, and dual-partition signed OTA updates when paired with the companion Android app.
-- **Physical Verification Limits**: Software and electrical designs are validated; physical LED display, motorcycle power harness, and live OTA rollback remain pending hands-on verification.
+- **Bench Verification (2026-11-17)**: Updated firmware booted successfully on the real ESP32, and the owner reports the Android companion working with the controller. Physical strip illumination, motorcycle power wiring, and live OTA rollback still require separate hardware tests.
 
 ---
 
@@ -24,13 +24,18 @@ PulseShift is an autonomous, passive CAN bus shift-light and diagnostic telemetr
 
 | Domain | Verification Level | Current Status and Scope |
 |---|---|---|
-| **Software Core & CI** | Software / CI Passed | 104 host tests passed; decoders, state machines, dual builds, and CRC integrity verified. |
-| **Real Motorcycle CAN** | Real Bike Observed | 500 kbps CAN captured on 2025 Pulsar NS125 ABS; candidate 0x301 tracks engine speed. |
-| **Capture Preservation** | Real Bike Observed | 23,370 frames (467,476 bytes) preserved on LittleFS; validated by independent PC backup. |
-| **RPM Calibration** | Observational / Uncalibrated | Provisional preview (Effect 5) estimated at x40.0; not a calibrated shift cue (idle discrepancy remains). |
-| **WS2812B LED Strip** | Not Physically Tested | LED driver and serial bench tests verified in code; physical strip not attached to bench. |
-| **Vehicle Power Harness** | Not Physically Tested | Bench-tested on regulated 5V supply; motorcycle 12V buck harness and inline fuse unverified. |
-| **Live BLE & OTA Rollback** | Not Physically Tested | BLE GATT dispatch and ECDSA P-256 rollback verified in host suite; live phone client unverified. |
+| **Software Core & CI** | Automated tests passed | Production firmware compiled; RMT, controller, BLE and OTA reliability regressions passed in software. |
+| **USB Firmware Installation** | Real ESP32, verified 2026-11-17 | Firmware `4c7fc5b` flashed application-only to `app1` at `0x150000`; the running build stamp matched and the boot state was `VALID`. |
+| **Capture & Settings Preservation** | Real ESP32, verified 2026-11-17 | Two 4 MiB flash backups matched, all 173 SHA-256 inventory entries verified, and 23,370 saved CAN records passed CRC16. Existing LittleFS, NVS owner credentials and diagnostic logs were preserved. |
+| **Android Companion / BLE** | Owner-reported hardware bench test, 2026-11-17 | Owner reports the current Android app and updated ESP32 working together. Individual BLE operations were not independently logged here. |
+| **LED Effect Logic / RMT** | Real ESP32, without LED strip | `RPM TEST 4500` selected logical LEDs 0-3; `RPM TEST 0` requested black on all six; RMT reported `TRANSMIT_OK`. Visible output was not observed. |
+| **Real Motorcycle CAN** | Prior real-bike observation | 500 kbps CAN captured on 2025 Pulsar NS125 ABS; candidate `0x301` tracked engine speed. |
+| **RPM Calibration** | Observational / uncalibrated | Effect 5 uses provisional x40.0 estimation, not a validated shift cue; the idle discrepancy remains. |
+| **Physical WS2812B LED Strip** | Pending physical test | The strip was unavailable for the latest USB bench test. Actual illumination, GPIO27 DIN voltage, and waveforms remain unverified. |
+| **Vehicle Power Harness** | Pending physical test | Motorcycle 12V-to-5V buck harness and inline fuse have not been validated in this bench session. |
+| **Signed BLE OTA & Rollback** | Software-tested only | No live BLE OTA transfer, 120-second rollback, or OTA fault-injection test has been performed on the ESP32. |
+
+The November 17 bench report and full-flash backups are stored privately on the owner's Windows PC, not in this repository. A `VALID` USB-flashed application does **not** constitute a successful OTA or rollback test. Do not commit raw flash images, owner credentials, or signing keys.
 
 ---
 
