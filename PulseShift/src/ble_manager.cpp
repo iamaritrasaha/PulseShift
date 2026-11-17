@@ -7,6 +7,7 @@
 #endif
 
 #include "config.h"
+#include "experimental_voltage_probe.h"
 #include "ble_manager.h"
 #include "storage_manager.h"
 #include "diag_logger.h"
@@ -726,7 +727,9 @@ void BleManager::sendRpmNotification(uint32_t nowMs,
 
   pkt.captureStage = static_cast<uint8_t>(recorder.currentStage());
   pkt.canFramesRx = transport.totalRx();
-  pkt.reserved = 0;
+  // Experimental, signed-off-by-user sensor hypothesis (0x303[1] / 10 V).
+  // Only previously reserved bytes change; all established RPM fields remain intact.
+  pkt.reserved = ExperimentalVoltageProbe::instance().bleReservedWord(nowMs);
 
   s_pRpmChar->setValue(reinterpret_cast<const uint8_t*>(&pkt), sizeof(pkt));
   const uint16_t conn = s_connHandle.load(std::memory_order_acquire);
