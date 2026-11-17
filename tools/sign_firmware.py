@@ -171,6 +171,10 @@ def verify_binary(pubkey_input: str, input_bin: str):
         print(f"Error: Unsupported trailer version: {version}. Expected {TRAILER_VERSION}.", file=sys.stderr)
         sys.exit(1)
 
+    if flags != 0:
+        print(f"Error: Unsupported trailer flags: 0x{flags:02X}. Expected zero.", file=sys.stderr)
+        sys.exit(1)
+
     if sig_len != 64:
         print(f"Error: Invalid signature length in trailer: {sig_len}. Expected 64.", file=sys.stderr)
         sys.exit(1)

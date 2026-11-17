@@ -3,6 +3,7 @@
   #include <Arduino.h>
 #elif defined(PULSESHIFT_TEST_BUILD)
   #include <Arduino.h> // host test stubs provide Serial and millis()
+  #include <stdlib.h>
 #endif
 
 #include "config.h"
@@ -1900,9 +1901,11 @@ bool BleManager::trySendResultNotification(const BleConfigResultPacket& res) {
     --testResultRejections_;
     return false;
   }
-  if (testResultCount_ < sizeof(testResults_) / sizeof(testResults_[0])) {
-    testResults_[testResultCount_++] = res;
+  if (testResultCount_ == sizeof(testResults_) / sizeof(testResults_[0])) {
+    fprintf(stderr, "BLE test result capture capacity exceeded\n");
+    abort();
   }
+  testResults_[testResultCount_++] = res;
   return true;
 #else
   (void)res;

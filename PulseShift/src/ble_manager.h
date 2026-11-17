@@ -284,7 +284,7 @@ class BleManager {
 #if defined(PULSESHIFT_TEST_BUILD)
   // Host-only capture of emitted result packets (NimBLE sendResult is inert
   // without the radio stack). Sized for a full dispatch test sequence.
-  BleConfigResultPacket testResults_[64]{};
+  BleConfigResultPacket testResults_[128]{};
   size_t testResultCount_ = 0;
   uint8_t testResultRejections_ = 0;
   bool testConnected_ = false;

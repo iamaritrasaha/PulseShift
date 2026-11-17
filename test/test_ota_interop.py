@@ -213,7 +213,7 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
 
     def test_fault_injection_bad_trailer_version(self):
-        """Unsupported trailer version is rejected."""
+        """Only PSOT version 1 with zero reserved flags is accepted."""
         raw_payload = bytes([0xE9] + [0x22] * 100)
         input_bin = os.path.join(self.temp_dir.name, "bad_ver.bin")
         output_bin = os.path.join(self.temp_dir.name, "bad_ver.signed.bin")
@@ -223,13 +223,15 @@ class OtaCrossLanguageInteropTests(unittest.TestCase):
 
         sign_firmware.sign_binary(self.priv_pem_path, input_bin, output_bin)
 
-        with open(output_bin, "r+b") as f:
-            f.seek(-72, os.SEEK_END)
-            f.write(bytes([2])) # version 2
+        for version_flags in (bytes([2, 0]), bytes([1, 1])):
+            with self.subTest(version_flags=version_flags):
+                with open(output_bin, "r+b") as f:
+                    f.seek(-72, os.SEEK_END)
+                    f.write(version_flags)
 
-        with self.assertRaises(SystemExit) as cm:
-            sign_firmware.verify_binary(self.pub_pem_path, output_bin)
-        self.assertEqual(cm.exception.code, 1)
+                with self.assertRaises(SystemExit) as cm:
+                    sign_firmware.verify_binary(self.pub_pem_path, output_bin)
+                self.assertEqual(cm.exception.code, 1)
 
     def test_fault_injection_bad_sig_len(self):
         """Invalid signature length in trailer is rejected."""
