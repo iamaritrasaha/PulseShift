@@ -230,7 +230,8 @@ enum BleFeatureMaskBits : uint32_t {
   // Protocol 2.3.0 extensions:
   BLE_FEAT_EXT_STARTUP_ANIM = (1u << 17), // Animations 4 (Center-Out) & 5 (Strobe Rush) supported
   BLE_FEAT_RANGE_DISCOVERY  = (1u << 18), // GET_ARG_RANGES opcode supported
-  BLE_FEAT_OTA_UPDATE       = (1u << 19)  // Dual-slot authenticated OTA engine supported
+  BLE_FEAT_OTA_UPDATE       = (1u << 19), // Dual-slot authenticated OTA engine supported
+  BLE_FEAT_LOOP_STARTUP     = (1u << 20)  // Startup duration bit15 requests continuous looping
 };
 
 // BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires
