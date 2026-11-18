@@ -161,7 +161,7 @@ bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
   if (cfg.effectSpeed > 100) return false;
   if (cfg.ledDirection > 1) return false;
   if (cfg.startupAnimation > 5) return false;
-  if (cfg.startupDurationMs < 100 || cfg.startupDurationMs > 10000) return false;
+  if ((cfg.startupDurationMs & 0x7FFFu) < 100 || (cfg.startupDurationMs & 0x7FFFu) > 10000) return false;
 
   // Thresholds validation: Monotonic ascending and within 0..20,000 RPM
   for (uint8_t i = 0; i < 6; ++i) {
@@ -476,7 +476,8 @@ BleConfigStatusCode ConfigManager::setEffect(uint8_t effectId, uint8_t speed, bo
 BleConfigStatusCode ConfigManager::setStartupAnimation(uint8_t animId, uint16_t durationMs, bool isStaged) {
   // Animations 4 (Center-Out) and 5 (Strobe Rush) ship with firmware 2.2.1;
   // the render paths live in LedEffectEngine::renderStartup.
-  if (animId > 5 || durationMs < 100 || durationMs > 10000) return BLE_CFG_STATUS_INVALID_PARAM;
+  if (animId > 5 || (durationMs & 0x7FFFu) < 100 || (durationMs & 0x7FFFu) > 10000 ||
+      (animId == 0 && (durationMs & 0x8000u) != 0)) return BLE_CFG_STATUS_INVALID_PARAM;
   if (isStaged) {
     if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
     staged_.startupAnimation = animId;
