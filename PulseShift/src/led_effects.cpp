@@ -244,8 +244,12 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
                              const LiveRpmSnapshot& rpm, const LedFrameInput& input) {
   // New startup settings take effect immediately, even if the previous
   // one-shot sequence completed long ago. No reset of RPM hysteresis.
-  if (cfg.startupAnimation != observedStartupAnimation_ ||
-      cfg.startupDurationMs != observedStartupDurationMs_) {
+  if (observedStartupAnimation_ == 0xFF) {
+    // First update after reset() must keep its original boot start timestamp.
+    observedStartupAnimation_ = cfg.startupAnimation;
+    observedStartupDurationMs_ = cfg.startupDurationMs;
+  } else if (cfg.startupAnimation != observedStartupAnimation_ ||
+             cfg.startupDurationMs != observedStartupDurationMs_) {
     observedStartupAnimation_ = cfg.startupAnimation;
     observedStartupDurationMs_ = cfg.startupDurationMs;
     startupStartMs_ = nowMs;
