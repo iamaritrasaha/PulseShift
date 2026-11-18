@@ -2,14 +2,19 @@
 
 This guide describes verification testing for PulseShift: interactive Arduino Serial Monitor diagnostic commands and automated regression test suites.
 
-## 1. Primary Development Workflow: Arduino IDE
-The production firmware is completely self-contained C++ built in standard Arduino IDE:
-- Open `PulseShift/PulseShift.ino` in Arduino IDE.
-- Board: **ESP32 Dev Module**
-- Partition Scheme: **Default 4MB with spiffs** (or LittleFS)
-- Serial Monitor: **115200 baud**
+## 1. Build the firmware with Arduino CLI
 
-No Python, PlatformIO, or WSL runtime is required for firmware compilation or field operation.
+Install Arduino-ESP32 3.3.12 and NimBLE-Arduino 2.3.8. Use the DevKit V1
+with its default 4 MB partition scheme. The link flag routes NVS startup errors
+around Arduino-ESP32's automatic NVS erase path.
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=nvs_flash_init" PulseShift
+```
+
+The same flag applies to a headless copy. For bench diagnostics, use the
+Arduino Serial Monitor at 115200 baud. Firmware compilation and field
+operation require neither Python nor WSL.
 
 ## 2. Interactive Serial Monitor Commands (115200 baud)
 

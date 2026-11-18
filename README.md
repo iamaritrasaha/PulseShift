@@ -14,6 +14,7 @@ PulseShift is an autonomous, passive CAN bus shift-light and diagnostic telemetr
 - **Passive Listen-Only CAN Reception**: Receives 500 kbps motorcycle CAN traffic through hardware listen-only TWAI, forced recessive transceiver bias, and an air-gapped TX line to guarantee zero bus interference.
 - **Field-Correlated RPM Estimation**: Decodes live candidate engine-speed frames from vehicle CAN traffic to drive real-time shift light indications.
 - **6-LED Shift Controller**: Controls an addressable WS2812B array with boot sweep, progressive RPM stages, per-LED hysteresis, warning strobe, and owner commissioning status.
+- **Optional Continuous Ignition Animation**: The companion Android app offers a loop setting for startup animations on compatible firmware. A selected 100 ms-10 s cycle repeats while parked, but engine RPM, faults and power-off override it. Save to NVS to retain the selection after reboot.
 - **Preserved Capture and Logging**: Saves raw binary CAN frames and structured diagnostic events to LittleFS across dual log archives without risk of overwrite.
 - **Optional BLE and OTA Updates**: Provides authenticated NimBLE GATT telemetry, configuration controls, and dual-partition signed OTA updates when paired with the companion Android app.
 - **Bench Verification (2026-11-17)**: Updated firmware booted successfully on the real ESP32, and the owner reports the Android companion working with the controller. Physical strip illumination, motorcycle power wiring, and live OTA rollback still require separate hardware tests.
@@ -62,13 +63,15 @@ For complete electrical schematics, noise filtering, and circuit protection, see
 
 ## Quick Start (Windows / Arduino)
 
-1. **Environment Setup**: Install Arduino IDE with ESP32 Arduino Core **3.3.12** (ESP-IDF 5.3+).
-2. **Install Pinned Libraries**:
-   - `NimBLE-Arduino` version **2.3.8**
-3. **Board Configuration**: Select **ESP32 Dev Module** from the Boards menu.
-4. **Partition Scheme**: Select **Default 4MB with spiffs** (allocates dual 1.25 MB `app0`/`app1` slots and 1.43 MB LittleFS partition).
-5. **Serial Monitor**: Set baud rate to **115200 baud** with CRLF line endings.
-6. **Flash Safety Rule**: When flashing an update to an existing unit, **do NOT change the partition scheme** and **do NOT erase flash**. Doing so destroys NVS credentials and wipes the preserved 23,370-record field capture.
+1. Install Arduino CLI with Arduino-ESP32 **3.3.12** (ESP-IDF 5.5.5) and
+   `NimBLE-Arduino` **2.3.8**.
+2. Follow the [build instructions](docs/TESTING.md#1-build-the-firmware-with-arduino-cli)
+   for the **ESP32 DevKit V1** and the NVS startup guard. The default 4 MB
+   layout has two 1.25 MiB app slots and a separate LittleFS partition.
+3. Use the Serial Monitor at **115200 baud** with CRLF line endings.
+4. On an existing device, use an approved application-only update procedure
+   with a verified backup. Preserve the bootloader, partition table, NVS,
+   and LittleFS.
 
 ---
 

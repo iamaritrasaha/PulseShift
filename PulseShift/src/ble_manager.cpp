@@ -7,6 +7,7 @@
 #endif
 
 #include "config.h"
+#include "experimental_voltage_probe.h"
 #include "ble_manager.h"
 #include "storage_manager.h"
 #include "diag_logger.h"
@@ -330,7 +331,7 @@ void BleManager::updateCapabilitiesChar() {
                          BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
                          BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
                          BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
-                         BLE_FEAT_RANGE_DISCOVERY;
+                         BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_LOOP_STARTUP;
   if (dualSlotDetected && PULSESHIFT_OTA_ENABLED) {
     featureMask |= BLE_FEAT_OTA_UPDATE;
   }
@@ -511,6 +512,7 @@ void BleManager::poll(uint32_t nowMs,
 #endif
     return;
   }
+  if (recorder.isRecording()) ota.abortOta();
   ota.serviceTransfer(candidate, transport, nowMs);
 
   if (linkResetPending_.exchange(false, std::memory_order_acq_rel)) {
@@ -726,7 +728,8 @@ void BleManager::sendRpmNotification(uint32_t nowMs,
 
   pkt.captureStage = static_cast<uint8_t>(recorder.currentStage());
   pkt.canFramesRx = transport.totalRx();
-  pkt.reserved = 0;
+  // Publish the optional raw voltage candidate without changing the RPM fields.
+  pkt.reserved = ExperimentalVoltageProbe::instance().bleReservedWord(nowMs);
 
   s_pRpmChar->setValue(reinterpret_cast<const uint8_t*>(&pkt), sizeof(pkt));
   const uint16_t conn = s_connHandle.load(std::memory_order_acquire);
@@ -1721,6 +1724,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
         status = BLE_CFG_STATUS_INVALID_PARAM;
         break;
       }
+      if (recorder.isRecording()) {
+        status = BLE_CFG_STATUS_INVALID_STATE;
+        break;
+      }
       const uint32_t totalSize = static_cast<uint32_t>(pkt.payload[2]) |
                                  (static_cast<uint32_t>(pkt.payload[3]) << 8) |
                                  (static_cast<uint32_t>(pkt.payload[4]) << 16) |
@@ -1869,7 +1876,9 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   res.resultFlags = resFlags;
   res.activeRevision = ConfigManager::instance().activeRevision();
   sendResult(res, nowMs);
-  updateCapabilitiesChar();
+  // Capabilities cannot change during a data write. Avoid checking rollback
+  // viability against the partially written inactive image for every chunk.
+  if (pkt.opcode != BLE_CFG_OP_OTA_DATA) updateCapabilitiesChar();
 }
 
 void BleManager::sendResult(const BleConfigResultPacket& res, uint32_t nowMs) {
@@ -2178,6 +2187,10 @@ size_t BleManager::buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen, uint32_t
     putU32(&v[8], cfgMgr.active().calFingerprint);
     appendTlv(BLE_DIAG_TLV_CALIBRATION, v, 13);
   }
+
+  uint8_t rawCandidates[5];
+  ExperimentalVoltageProbe::instance().diagnosticsSnapshot(nowMs, rawCandidates);
+  appendTlv(BLE_DIAG_TLV_EXPERIMENTAL, rawCandidates, sizeof(rawCandidates));
 
   // Trailing CRC32 over everything serialized so far
   const uint32_t crc = ConfigManager::computeCrc32(outBuf, offset);

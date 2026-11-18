@@ -56,7 +56,31 @@ PulseShift BLE Protocol defines the Bluetooth Low Energy GATT communication betw
 | 11 | `captureStage` | `uint8_t` | Current field stage: `0`=Standby, `1`=KeyOn, `2`=Idling, `3`=GentleRPM |
 | 12..15 | `canFramesRx` | `uint32_t` | Cumulative count of total CAN frames received by TWAI driver |
 | 16..17 | `candidateAgeMs` | `uint16_t` | Milliseconds elapsed since last candidate frame. `65535` = never received |
-| 18..19 | `reserved` | `uint16_t` | Reserved for alignment; always zero |
+| 18..19 | `experimentalProbe` | `uint16_t` | Optional experimental, uncalibrated standard CAN `0x303` byte 1, encoded as below. Legacy firmware leaves it zero. |
+
+#### 3.1.0 Optional experimental battery-voltage hypothesis
+
+**Unverified. Available on paired firmware with a fresh sample.** From the
+archived key-on/engine-off capture, CAN ID `0x303` byte 1 ranged from 119 to 122.
+The test-only hypothesis is `volts = rawByte / 10.0`, which would suggest
+11.9-12.2 V during that recording. This is **not** a calibrated voltage or a
+safe battery/charging warning and must be compared against synchronized
+multimeter readings at several operating points.
+
+To avoid a new GATT service or any change to the existing 20-byte packet
+length, an optional firmware build uses the previously zero reserved bytes:
+
+| Offset | Value | Meaning |
+|---|---|---|
+| 18 | 0-255 | Raw CAN `0x303[1]` from a standard, non-RTR frame with DLC ≥ 2; only meaningful if byte 19 is `0xA5` |
+| 19 | `0xA5` | Candidate received within the last 1000 ms; Android may show `raw / 10.0` under **EXPERIMENTAL** label |
+| 19 | `0x5A` | Firmware supports probe but frame absent or stale; Android displays unavailable |
+| 19 | `0x00` with byte 18 = 0 | Legacy firmware without probe support; Android displays unavailable |
+
+All other RPM, health, configuration and OTA fields retain their documented
+meaning and offsets. The dedicated RPM decoder remains locked to the existing
+candidate configuration. The probe never writes NVS/LittleFS or transmits CAN.
+DO NOT infer an accurate battery voltage from visual agreement at one point.
 
 #### 3.1.1 Status Flags Bitmask (`statusFlags`)
 - `Bit 0` (`0x01`): `BLE_RPM_FLAG_CANDIDATE_FRESH` (Candidate frame received within the freshness timeout, default 250 ms)
@@ -169,6 +193,7 @@ transfer and disclose nothing.
 - `Bit 17` (`0x20000`): `BLE_FEAT_EXT_STARTUP_ANIM` (startup animations 4 Center Out and 5 Strobe Rush)
 - `Bit 18` (`0x40000`): `BLE_FEAT_RANGE_DISCOVERY` (supports opcode 0x03 GET_ARG_RANGES)
 - `Bit 19` (`0x80000`): `BLE_FEAT_OTA_UPDATE` (supports dual-slot authenticated firmware OTA)
+- `Bit 20` (`0x100000`): `BLE_FEAT_LOOP_STARTUP` (startup duration bit 15 allows continuous looping)
 
 ---
 
@@ -217,6 +242,8 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x13` | `SET_LED_RGB` | `[index: u8 (0..5), R, G, B]` | Set individual LED color |
 | `0x14` | `SET_EFFECT` | `[effectId: u8 (0..5), speed: u8 (0..100)]` | 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=Verified RPM Bar, **5=Provisional CAN RPM Preview (unverified)** |
 | `0x15` | `SET_STARTUP` | `[animId: u8 (0..5), durationMs: u16 LE]` | 0=None, 1=Sweep, 2=Wave, 3=Pulse, 4=CenterOut, 5=Strobe Rush |
+
+**Optional loop extension:** On firmware advertising feature bit 20, the 16-bit startup duration uses bit 15 (`0x8000`) as `loopEnabled`. The low 15 bits remain the animation cycle length (100..10000 ms). With bit 15 cleared, the startup animation plays once as before. This uses the existing Config V2 packet, snapshot and schema-3 NVS blob without changing their sizes. Looping is invalid with animation 0 (None). Old firmware does not advertise the bit and must not receive loop-enabled settings. While enabled, fault, master power-off, commissioning/feedback, bench test, and active RPM or missing-RPM safeguards retain priority. Persist this setting with authenticated `SAVE_CONFIG` after `SET_STARTUP` or the preset transaction. Active RAM settings alone do not survive reboot.
 | `0x16` | `SET_LED_THRESHOLD`| `[index: u8 (0..5), rpm: u16 LE]` | Set threshold for LED index (must remain monotonic) |
 | `0x17` | `SET_SHIFT_WARNING`| `[warningRpm: u16 LE, patternId: u8]` | Pattern: 0=Flash (10 Hz), 1=Strobe (20 Hz), 2=Solid, 3=Off |
 | `0x18` | `SET_RPM_MULTIPLIER`| `[multX1000: u32 LE]` | Provisional multiplier (0.1..1000.0). **Invalidates calibration!** |
@@ -248,7 +275,7 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x54` | `SET_CAPTURE_STAGE` | `[stage: u8 (1..3)]` | Label subsequent CAN capture records: 1=KeyOn, 2=Idle, 3=RPM sweep. Does not change operation or synthesize CAN data. |
 | `0x55` | `SET_LED_TEST_RPM` | `[testRpm: u16 LE (0..20000), enable: u8 (0 or 1)]` | Authenticated, temporary 10-second synthetic six-LED bench test. `enable=0` stops it; independent of real CAN data. Does not persist or inject CAN frames. |
 | `0x60` | `OTA_BEGIN` | `[0xA5, 0x5C, size: u32 LE, shaPrefix: u8[4]]` | Begin authenticated dual-slot OTA update to inactive partition. Validates image size and stationary safety interlock. |
-| `0x61` | `OTA_DATA` | `[chunkIdx: u16 LE, dataLen: u8, data...]` | Stream chunked image data (up to 11 bytes/packet). Validates sequential chunk indexing. |
+| `0x61` | `OTA_DATA` | `[chunkIdx: u16 LE, dataLen: u8, data...]` | Stream sequential image chunks. The Android client uses 11 data bytes at the baseline ATT MTU and up to 230 with a larger negotiated MTU. |
 | `0x62` | `OTA_END` | `[shaTail: u8[4], crc32: u32 LE]` | Conclude transfer, verify full-image FIPS 180-2 SHA-256 hash, set boot partition, schedule restart (1.5s delay). |
 | `0x63` | `OTA_ABORT` | None | Cancel active update, discard written data and return OTA engine to Idle state. |
 | `0x64` | `OTA_CONFIRM` | `[0xA5, 0x5C]` | Cancel bootloader rollback after successful boot self-test. |
@@ -346,6 +373,7 @@ All 12 mandatory tags (`0x10` through `0x1B`) are always emitted; schema-3 tags 
 | `0x47` | Capture Info | 9 | `[stage: u8, sessionId: u32, bootCount: u32]` |
 | `0x48` | Last Error | <= 96 | UTF-8 text of the last Error/Critical event this session (absent when none) |
 | `0x49` | Calibration State | 13 | `[sessionActive: u8, points: u8, captureActive: u8, samples: u16, calVerified: u8, pointsUsed: u8, maxResidualRpm: u8, fingerprint: u32]` |
+| `0x4A` | Experimental CAN bytes | 5 | Freshness bitmask followed by raw `0x302[1]`, `0x302[5]`, `0x452[7]`, `0x540[3]`. Bit index matches byte order. A clear bit means unavailable at snapshot time. Standard non-RTR frames, max sample age 1000 ms. |
 
 ---
 

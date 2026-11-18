@@ -330,6 +330,9 @@ void OtaManager::finishSha256(uint8_t output[32]) {
 
 namespace {
 bool otaStationary(const RpmCandidateMonitor& rpmMon, const CanTransport& transport, uint32_t nowMs) {
+#if defined(ARDUINO)
+  if (!transport.healthy()) return false;
+#endif
   return !(rpmMon.isFresh(nowMs) && rpmMon.estimatedRpm(nowMs) > 0) &&
          !(transport.totalRx() > 0 && uint32_t(nowMs - transport.lastRxMs()) < 3000);
 }
@@ -387,9 +390,19 @@ BleConfigStatusCode OtaManager::startOta(uint32_t totalSize, const uint8_t sha25
   const esp_partition_t* running = esp_ota_get_running_partition();
   const esp_partition_t* updatePart = esp_ota_get_next_update_partition(nullptr);
   if (!running || !updatePart || updatePart->address == running->address ||
+      (running->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0 &&
+       running->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_1) ||
       (updatePart->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0 &&
        updatePart->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_1)) {
     return BLE_CFG_STATUS_STORAGE_ERROR;
+  }
+  // Keep a known-valid running app available as the first rollback target.
+  esp_ota_img_states_t runningState = ESP_OTA_IMG_UNDEFINED;
+  const esp_partition_t* boot = esp_ota_get_boot_partition();
+  if (!boot || boot->address != running->address ||
+      esp_ota_get_state_partition(running, &runningState) != ESP_OK ||
+      runningState != ESP_OTA_IMG_VALID) {
+    return BLE_CFG_STATUS_INVALID_STATE;
   }
   targetSlot_ = updatePart->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1 ? 1 : 0;
 

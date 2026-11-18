@@ -49,8 +49,15 @@ struct BleRpmPacket {
   uint8_t  captureStage;     // Offset 11: Field capture stage (0=Standby, 1=KeyOn, 2=Idle, 3=GentleRPM)
   uint32_t canFramesRx;      // Offset 12-15: Total CAN frames received
   uint16_t candidateAgeMs;   // Offset 16-17: Milliseconds since candidate update; 65535 = unavailable
-  uint16_t reserved;         // Offset 18-19: Reserved (0)
+  uint16_t reserved;         // Offset 18-19: Optional experimental 0x303[1] probe (see below)
 };
+
+// Reserved-byte experiment (only when supported by updated firmware):
+// offset 18: raw unsigned data[1] of standard CAN ID 0x303.
+// offset 19: 0xA5 when fresh (<=1000 ms), 0x5A if supported but stale/absent.
+// Legacy firmware emits both bytes zero: voltage probe unsupported.
+// Hypothesized volts = raw / 10.0, NOT yet validated against a multimeter.
+// Never interpret 0x5A, 0x00, or missing frames as 0 V.
 
 // --- Health Packet (UUID: ...d212) ---
 // Fixed 20-byte binary packet. Properties: READ, NOTIFY.
@@ -223,7 +230,8 @@ enum BleFeatureMaskBits : uint32_t {
   // Protocol 2.3.0 extensions:
   BLE_FEAT_EXT_STARTUP_ANIM = (1u << 17), // Animations 4 (Center-Out) & 5 (Strobe Rush) supported
   BLE_FEAT_RANGE_DISCOVERY  = (1u << 18), // GET_ARG_RANGES opcode supported
-  BLE_FEAT_OTA_UPDATE       = (1u << 19)  // Dual-slot authenticated OTA engine supported
+  BLE_FEAT_OTA_UPDATE       = (1u << 19), // Dual-slot authenticated OTA engine supported
+  BLE_FEAT_LOOP_STARTUP     = (1u << 20)  // Startup duration bit15 requests continuous looping
 };
 
 // BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires
@@ -317,9 +325,10 @@ enum BleDiagnosticsTlvId : uint8_t {
                                      // ownerEnrolled u8, sessionAuthorized u8 (5 bytes)
   BLE_DIAG_TLV_CAPTURE_INFO  = 0x47, // stage u8, sessionId u32, bootCount u32 (9 bytes)
   BLE_DIAG_TLV_LAST_ERROR    = 0x48, // UTF-8 string (<= 96 bytes)
-  BLE_DIAG_TLV_CALIBRATION   = 0x49  // sessionActive u8, points u8, captureActive u8,
+  BLE_DIAG_TLV_CALIBRATION   = 0x49, // sessionActive u8, points u8, captureActive u8,
                                      // samples u16 LE, calVerified u8, pointsUsed u8,
                                      // maxResidual u8, fingerprint u32 LE (13 bytes)
+  BLE_DIAG_TLV_EXPERIMENTAL = 0x4A  // freshness mask, then raw 0x302[1], 0x302[5], 0x452[7], 0x540[3]
 };
 
 // Binary Capabilities Packet (UUID: ...d218, exactly 20 bytes)

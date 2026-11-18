@@ -91,6 +91,8 @@ class LedEffectEngine {
 
   bool startupComplete_ = false;
   uint32_t startupStartMs_ = 0;
+  uint8_t observedStartupAnimation_ = 0xFF;
+  uint16_t observedStartupDurationMs_ = 0;
   bool barFromBenchTest_ = false;
 
   // Per-LED hysteresis latch: LED i stays lit until rpm falls below

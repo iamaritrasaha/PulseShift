@@ -20,6 +20,8 @@ LedEffectEngine::LedEffectEngine() {
 void LedEffectEngine::reset(uint32_t nowMs) {
   startupStartMs_ = nowMs;
   startupComplete_ = false;
+  observedStartupAnimation_ = 0xFF;
+  observedStartupDurationMs_ = 0;
   barFromBenchTest_ = false;
   resetRpmLatches();
 }
@@ -56,10 +58,12 @@ void LedEffectEngine::setAllPixels(RgbColor color) {
 }
 
 void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg) {
-  const uint32_t elapsed = nowMs - startupStartMs_;
-  const uint32_t dur = (cfg.startupDurationMs > 0) ? cfg.startupDurationMs : 2000;
+  const uint32_t dur = cfg.startupDurationMs & 0x7FFFu;
+  const bool looping = (cfg.startupDurationMs & 0x8000u) != 0;
+  const uint32_t totalElapsed = nowMs - startupStartMs_;
+  const uint32_t elapsed = looping ? totalElapsed % dur : totalElapsed;
 
-  if (elapsed >= dur || cfg.startupAnimation == 0) {
+  if ((!looping && totalElapsed >= dur) || cfg.startupAnimation == 0) {
     startupComplete_ = true;
     return;
   }
@@ -240,6 +244,20 @@ bool LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg,
 
 bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
                              const LiveRpmSnapshot& rpm, const LedFrameInput& input) {
+  // New startup settings take effect immediately, even if the previous
+  // one-shot sequence completed long ago. No reset of RPM hysteresis.
+  if (observedStartupAnimation_ == 0xFF) {
+    // First update after reset() must keep its original boot start timestamp.
+    observedStartupAnimation_ = cfg.startupAnimation;
+    observedStartupDurationMs_ = cfg.startupDurationMs;
+  } else if (cfg.startupAnimation != observedStartupAnimation_ ||
+             cfg.startupDurationMs != observedStartupDurationMs_) {
+    observedStartupAnimation_ = cfg.startupAnimation;
+    observedStartupDurationMs_ = cfg.startupDurationMs;
+    startupStartMs_ = nowMs;
+    startupComplete_ = false;
+  }
+
   // ---- Priority 1: hardware fault / safety state -----------------------
   // Cannot be masked by master power, decorative effects or commissioning.
   if (!input.canHealthy) {
@@ -313,7 +331,12 @@ bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
   }
 
   // ---- Priority 7: startup indication ----------------------------------
-  if (!startupComplete_ && (!verifiedBar || sampleQualified)) {
+  const bool loopStartup = (cfg.startupDurationMs & 0x8000u) != 0 && cfg.startupAnimation != 0;
+  // Never mask active engine RPM or its missing-signal safeguard with a
+  // looping decorative sequence. These layers retain priority during rides.
+  const bool rpmPriority = loopStartup && rpmMode &&
+      (rpm.engineRunning || !sampleQualified);
+  if ((!startupComplete_ || loopStartup) && (!verifiedBar || sampleQualified) && !rpmPriority) {
     renderStartup(nowMs, cfg);
     if (!startupComplete_) {
       activeLayer_ = LedActiveLayer::Startup;

@@ -46,18 +46,18 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 - Private keys must **never** be committed to Git.
 - The project private key is stored in `tools/keys/pulseshift_ota_key.pem` (protected by `.gitignore`).
 - The uncompressed 65-byte SEC1 public key is embedded in `PulseShift/src/ota_public_key.h`.
-- To generate a new deployment keypair (if rotating keys):
-  ```bash
-  uv run --with cryptography python tools/sign_firmware.py generate-key \
-    --key tools/keys/pulseshift_ota_key.pem \
-    --header PulseShift/src/ota_public_key.h
-  ```
+- Before signing, derive the public key in memory and compare it to the
+  embedded trust anchor. Withhold signing and deployment when they differ.
+  Keep the existing trust anchor and signing key in place.
 
 ### 2.2 Compilation and Signing Workflow
 1. Compile the firmware binary:
    ```bash
-   arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 D:\Development\PulseShift-Firmware\PulseShift
+   arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=nvs_flash_init" PulseShift
    ```
+   The linker option guards the installed NVS partition against Arduino-ESP32's
+   automatic erase on NVS initialization errors. The same option is required for
+   production and headless builds.
 2. Sign the binary and attach the 76-byte `PSOT` authentication trailer:
    ```bash
    uv run --with cryptography python tools/sign_firmware.py sign \
@@ -86,9 +86,17 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 - **Steps:**
   1. Boot ESP32 into `app0` (firmware v2.3.0). Confirm serial shows active BLE advertising.
   2. Open Android companion app and connect to PulseShift.
-  3. Verify Android negotiates MTU 512 (`_currentMtu` updates to 512, chunk size adapts to 215-230 bytes).
-  4. Select `PulseShift_signed.bin` and initiate OTA update.
-  5. Observe transfer progress: ~3,200 chunks transmitted in approximately 35-45 seconds (versus ~68,000 packets / 15 minutes without extended MTU).
+  3. Record the actual negotiated MTU. Android uses up to 230 data bytes per
+     chunk with a large MTU, and 11 data bytes at the baseline MTU.
+  4. Select the compatible signed package and initiate the approved update.
+  5. Record acknowledged bytes, elapsed transfer time, disconnects and errors.
+     Packet count is ceil(package bytes / data bytes per chunk). For a roughly
+     778 KB package, expect about 3,385 chunks at 230 bytes or 70,758 at 11 bytes.
+     At 30-50 ms per acknowledged chunk, ideal transfer time is about 102-169 s
+     or 35-59 minutes respectively. Actual radio performance requires measurement.
+     Each chunk requires matching index and cumulative-byte acknowledgement.
+     Missing or rejected data acknowledgements abort the transfer. A fresh attempt
+     starts at byte zero after the controller has returned to idle.
   6. Confirm ESP32 logs CRC32 match, validates ECDSA P-256 signature, validates `esp_image_verify`, and calls `esp_ota_set_boot_partition(app1)`.
   7. ESP32 reboots into `app1`. Boot status shows `ESP_OTA_IMG_PENDING_VERIFY`.
   8. Firmware self-tests execute successfully (LittleFS mount, NVS config, CAN listen-only, BLE advertising).
@@ -156,6 +164,7 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
   1. Build firmware with the boot-failure fault injection flag:
      ```bash
      arduino-cli compile --fqbn esp32:esp32:esp32doit-devkit-v1 \
+       --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=nvs_flash_init" \
        --build-property "compiler.cpp.extra_flags=-DPULSESHIFT_TEST_FORCE_BOOT_FAIL=1" \
        PulseShift
      ```
@@ -184,36 +193,30 @@ The PulseShift OTA pipeline enforces cryptographic image authenticity using NIST
 
 ---
 
-## 4. Universal USB Fallback Recovery Procedure
+## 4. Data-preserving recovery on an existing controller
 
-> **CRITICAL ARCHITECTURAL DISTINCTION:** Writing only the application binary at `0x10000` is **NOT** a universal recovery procedure. If a power cut or partition corruption damages the bootloader, partition table, or `otadata` slots, writing only `0x10000` will result in an unbootable boot loop.
+1. Keep the unit on stable bench power and record its present active slot,
+   OTA image state, reported firmware and reset reason. Capture the serial
+   transcript and verify both historical backups and their recorded SHA-256.
+2. If the prior app is running after rollback, verify owner authentication,
+   LittleFS mount, CAN capture count and checksum, receive-only telemetry and
+   LED behavior. Keep that working slot in place.
+3. If the device does not boot, inspect the partition table and OTA metadata
+   with read-only USB tools. An app-only restore requires verification of the
+   same device, layout, affected slot, original app image and offset, plus
+   explicit owner authorization. If the evidence cannot identify the slot or
+   indicates damage outside it, stop and preserve the evidence.
 
-Universal recovery requires flashing all 4 foundational flash components or executing a full flash erase.
-
-### 4.1 Full Four-Artifact Recovery Flash
-Locate the compiled binaries from the Arduino IDE build cache or ESP-IDF build directory and flash using `esptool.py`:
-```bash
-esptool.py --chip esp32 --port <PORT> --baud 921600 write_flash \
-  0x1000  bootloader.bin \
-  0x8000  partitions.bin \
-  0xe000  boot_app0.bin \
-  0x10000 PulseShift.ino.bin
-```
-
-### 4.2 Factory Erase and Clean Reflash (When Flash Layout is Corrupted)
-If partition table corruption or filesystem damage occurs:
-1. Completely erase flash:
-   ```bash
-   esptool.py --chip esp32 --port <PORT> erase_flash
-   ```
-2. Reflash the complete build using Arduino IDE (Upload) or via the four-artifact `write_flash` command above.
-3. Open Serial Monitor at 115200 baud. Type `STATUS` to verify LittleFS initialization and clean NVS profile generation.
+Keep the bootloader, partition table, NVS, LittleFS and capture data intact.
+OTA payload writes target the inactive app slot. Boot selection and confirmed
+rollback status use `otadata`. Ordinary application boot updates diagnostic
+metadata and logs.
 
 ---
 
-## 4.2 Arduino-ESP32 deferred OTA confirmation check
+## 5. Arduino-ESP32 deferred OTA confirmation check
 
-Arduino-ESP32 core 2.0.x invokes a weak `verifyRollbackLater()` hook before
+Arduino-ESP32 core 3.3.12 invokes a weak `verifyRollbackLater()` hook before
 the sketch's `setup()`. Without an override, the core can immediately mark a
 new OTA image VALID, bypassing the product's 120-second owner-confirmation gate.
 PulseShift now provides a strong C-linkage override returning `true`, leaving

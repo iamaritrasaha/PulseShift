@@ -11,13 +11,8 @@
 // (BLE) is the complete command interface; the serial port below is an
 // optional bench diagnostic console.
 //
-// Arduino IDE Setup:
-//   1. Open PulseShift.ino in Arduino IDE.
-//   2. Tools -> Board -> ESP32 Arduino -> "ESP32 Dev Module"
-//   3. Tools -> Partition Scheme -> "Default 4MB with spiffs"
-//   4. Tools -> Upload Speed -> "921600"
-//   5. Tools -> Port -> (Select your ESP32 COM port)
-//   6. Click Upload (Ctrl+U).
+// Arduino build: ESP32 DevKit V1, default 4 MB partition layout.
+// See the release build instructions for the required NVS startup linker guard.
 //
 // Serial Monitor (115200 baud) - bench diagnostics only, not required to run:
 //   STATUS / HELP / LOGS / BLE STATUS / CONFIG STATUS / CONFIG RESET / AUTH
@@ -37,6 +32,7 @@
 #include "src/storage_manager.h"
 #include "src/diag_logger.h"
 #include "src/can_recorder.h"
+#include "src/experimental_voltage_probe.h"
 #include "src/button_handler.h"
 #include "src/serial_protocol.h"
 #include "src/rpm_candidate.h"
@@ -49,6 +45,7 @@
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 #include <esp_ota_ops.h>
+#include <nvs_flash.h>
 #endif
 
 // Do not ship an OTA-capable image with app-level rollback compiled out.
@@ -63,6 +60,33 @@
 #if defined(ARDUINO) && defined(CONFIG_APP_ROLLBACK_ENABLE)
 extern "C" bool verifyRollbackLater(void) {
   return true;
+}
+#endif
+
+#if defined(ARDUINO)
+namespace {
+bool startupNvsChecked = false;
+esp_err_t startupNvsResult = ESP_FAIL;
+}
+
+// Arduino-ESP32's initArduino() erases the NVS partition when initialization
+// reports NO_FREE_PAGES or NEW_VERSION_FOUND. Preserve the data on either error.
+extern "C" esp_err_t __real_nvs_flash_init(void);
+extern "C" esp_err_t __wrap_nvs_flash_init(void) {
+  startupNvsResult = __real_nvs_flash_init();
+  startupNvsChecked = true;
+  if (startupNvsResult == ESP_ERR_NVS_NO_FREE_PAGES ||
+      startupNvsResult == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    return ESP_FAIL;
+  }
+  return startupNvsResult;
+}
+
+static bool nvsReady() {
+  // Retain a reference to the wrapper, so a link without --wrap fails on
+  // __real_nvs_flash_init instead of silently omitting the erase protection.
+  if (!startupNvsChecked) __wrap_nvs_flash_init();
+  return startupNvsResult == ESP_OK;
 }
 #endif
 
@@ -82,6 +106,12 @@ public:
 #endif
 
     // Initialize non-volatile persistent storage (LittleFS & Preferences NVS)
+#if defined(ARDUINO)
+    const bool nvsOk = nvsReady();
+#if PULSESHIFT_SERIAL_DIAGNOSTICS
+    if (!nvsOk) Serial.printf("[NVS] Initialization failed (0x%X). NVS retained.\r\n", startupNvsResult);
+#endif
+#endif
     auto& sm = StorageManager::instance();
     const bool fsOk = sm.begin(false);  // Non-destructive mount
 
@@ -148,7 +178,7 @@ public:
 #endif
         esp_ota_mark_app_invalid_rollback_and_reboot();
 #else
-        const bool selfTestsPass = fsOk &&
+        const bool selfTestsPass = fsOk && nvsOk &&
                                    ConfigManager::validateConfig(ConfigManager::instance().active()) &&
                                    transport_.healthy() &&
                                    (BleManager::instance().isAdvertising() ||
@@ -212,6 +242,8 @@ public:
     for (unsigned i = 0; i < 256; ++i) {
       if (!transport_.receive(f, now)) break;
 
+      // Independent read-only sensor hypothesis; does not touch RPM settings.
+      ExperimentalVoltageProbe::instance().ingest(f, now);
       const bool candMatched = candidateMonitor_.ingest(f, now);
       if (candMatched && candidateMonitor_.hasRawUpdate()) {
         const auto snap = candidateMonitor_.snapshot(now);
