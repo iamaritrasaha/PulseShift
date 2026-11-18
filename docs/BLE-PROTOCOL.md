@@ -193,6 +193,7 @@ transfer and disclose nothing.
 - `Bit 17` (`0x20000`): `BLE_FEAT_EXT_STARTUP_ANIM` (startup animations 4 Center Out and 5 Strobe Rush)
 - `Bit 18` (`0x40000`): `BLE_FEAT_RANGE_DISCOVERY` (supports opcode 0x03 GET_ARG_RANGES)
 - `Bit 19` (`0x80000`): `BLE_FEAT_OTA_UPDATE` (supports dual-slot authenticated firmware OTA)
+- `Bit 20` (`0x100000`): `BLE_FEAT_LOOP_STARTUP` (startup duration bit 15 allows continuous looping)
 
 ---
 
@@ -241,6 +242,8 @@ Incoming commands are queued through a bounded SPSC ring (4 entries); overflowed
 | `0x13` | `SET_LED_RGB` | `[index: u8 (0..5), R, G, B]` | Set individual LED color |
 | `0x14` | `SET_EFFECT` | `[effectId: u8 (0..5), speed: u8 (0..100)]` | 0=Static, 1=Breathing, 2=Rainbow, 3=Chase, 4=Verified RPM Bar, **5=Provisional CAN RPM Preview (unverified)** |
 | `0x15` | `SET_STARTUP` | `[animId: u8 (0..5), durationMs: u16 LE]` | 0=None, 1=Sweep, 2=Wave, 3=Pulse, 4=CenterOut, 5=Strobe Rush |
+
+**Optional loop extension:** On firmware advertising feature bit 20, the 16-bit startup duration uses bit 15 (`0x8000`) as `loopEnabled`. The low 15 bits remain the animation cycle length (100..10000 ms). With bit 15 cleared, the startup animation plays once as before. This uses the existing Config V2 packet, snapshot and schema-3 NVS blob without changing their sizes. Looping is invalid with animation 0 (None). Old firmware does not advertise the bit and must not receive loop-enabled settings. While enabled, fault, master power-off, commissioning/feedback, bench test, and active RPM or missing-RPM safeguards retain priority. Persist this setting with authenticated `SAVE_CONFIG` after `SET_STARTUP` or the preset transaction. Active RAM settings alone do not survive reboot.
 | `0x16` | `SET_LED_THRESHOLD`| `[index: u8 (0..5), rpm: u16 LE]` | Set threshold for LED index (must remain monotonic) |
 | `0x17` | `SET_SHIFT_WARNING`| `[warningRpm: u16 LE, patternId: u8]` | Pattern: 0=Flash (10 Hz), 1=Strobe (20 Hz), 2=Solid, 3=Off |
 | `0x18` | `SET_RPM_MULTIPLIER`| `[multX1000: u32 LE]` | Provisional multiplier (0.1..1000.0). **Invalidates calibration!** |
