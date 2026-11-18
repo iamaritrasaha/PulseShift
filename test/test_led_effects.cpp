@@ -736,6 +736,68 @@ static void test_zero_hysteresis_uses_exact_threshold() {
   CHECK(countLit(e) == 3);
 }
 
+
+static void optional_startup_loops_without_masking_rpm_or_safety() {
+  LedEffectEngine engine;
+  engine.reset(0);
+  PulseShiftConfig cfg = verifiedBarConfig();
+  cfg.effect = 1; // Decorative: startup is allowed to loop continuously.
+  cfg.startupAnimation = 2; // Wave
+  cfg.startupDurationMs = static_cast<uint16_t>(0x8000u | 1000u);
+  CHECK(ConfigManager::validateConfig(cfg));
+  engine.update(200, cfg, LiveRpmSnapshot{}, LedFrameInput{});
+  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
+  const RgbColor phase1 = engine.getPixel(0);
+  engine.update(1200, cfg, LiveRpmSnapshot{}, LedFrameInput{});
+  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
+  CHECK(engine.getPixel(0) == phase1);
+  CHECK(!engine.isStartupComplete());
+
+  LedFrameInput off{};
+  cfg.isPowerOn = false;
+  engine.update(1500, cfg, LiveRpmSnapshot{}, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::Off);
+  cfg.isPowerOn = true;
+
+  off.canHealthy = false;
+  engine.update(1600, cfg, LiveRpmSnapshot{}, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::Fault);
+  off.canHealthy = true;
+  engine.update(1700, cfg, LiveRpmSnapshot{}, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
+
+  // Switching on Loop after the one-shot ends must restart it on that frame.
+  cfg.startupDurationMs = 1000;
+  engine.update(2800, cfg, LiveRpmSnapshot{}, off);
+  engine.update(3900, cfg, LiveRpmSnapshot{}, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::Decorative);
+  cfg.startupDurationMs = static_cast<uint16_t>(0x8000u | 1000u);
+  engine.update(4000, cfg, LiveRpmSnapshot{}, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
+
+  // On the motorcycle, live RPM must win while the engine is running.
+  cfg.effect = 5;
+  auto running = freshVerifiedSnapshot(4500);
+  engine.update(4100, cfg, running, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::ProvisionalRpm);
+  CHECK(countLit(engine) == 4);
+  auto stopped = freshVerifiedSnapshot(0);
+  engine.update(4200, cfg, stopped, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
+
+  auto stale = stopped;
+  stale.available = false;
+  stale.fresh = false;
+  engine.update(4300, cfg, stale, off);
+  CHECK(engine.activeLayer() == LedActiveLayer::SafeguardBlank);
+  CHECK(allBlack(engine));
+
+  cfg.startupAnimation = 0;
+  CHECK(!ConfigManager::validateConfig(cfg)); // Cannot loop a disabled sequence.
+  cfg.startupDurationMs = 1000;
+  CHECK(ConfigManager::validateConfig(cfg));
+}
+
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
@@ -746,6 +808,7 @@ int main() {
   boot_button_auth_window_does_not_obscure_active_rpm();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
+  optional_startup_loops_without_masking_rpm_or_safety();
   startup_animations_center_out_and_strobe();
   rpm_bar_latches_and_hysteresis();
   warning_patterns();
