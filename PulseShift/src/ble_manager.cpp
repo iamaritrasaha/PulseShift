@@ -331,7 +331,7 @@ void BleManager::updateCapabilitiesChar() {
                          BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
                          BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
                          BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
-                         BLE_FEAT_RANGE_DISCOVERY;
+                         BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_LOOP_STARTUP;
   if (dualSlotDetected && PULSESHIFT_OTA_ENABLED) {
     featureMask |= BLE_FEAT_OTA_UPDATE;
   }
