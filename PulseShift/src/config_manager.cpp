@@ -161,6 +161,7 @@ bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
   if (cfg.effectSpeed > 100) return false;
   if (cfg.ledDirection > 1) return false;
   if (cfg.startupAnimation > 5) return false;
+  if (cfg.startupAnimation == 0 && (cfg.startupDurationMs & 0x8000u) != 0) return false;
   if ((cfg.startupDurationMs & 0x7FFFu) < 100 || (cfg.startupDurationMs & 0x7FFFu) > 10000) return false;
 
   // Thresholds validation: Monotonic ascending and within 0..20,000 RPM
