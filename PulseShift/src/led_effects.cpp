@@ -20,6 +20,8 @@ LedEffectEngine::LedEffectEngine() {
 void LedEffectEngine::reset(uint32_t nowMs) {
   startupStartMs_ = nowMs;
   startupComplete_ = false;
+  observedStartupAnimation_ = 0xFF;
+  observedStartupDurationMs_ = 0;
   barFromBenchTest_ = false;
   resetRpmLatches();
 }
