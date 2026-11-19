@@ -214,6 +214,8 @@ void BleManager::onClientDisconnected() {
   snapshotActive_ = false;
   snapshotNotifyFailures_ = 0;
   resultPending_ = false;
+  lightingUpload_ = {};
+  previewPattern_ = 0;
   // Discard any commands still queued by the departed connection. NimBLE
   // commonly reuses connection handles, so residue could otherwise execute
   // later under a new client's freshly-bound session.
@@ -331,7 +333,8 @@ void BleManager::updateCapabilitiesChar() {
                          BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
                          BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
                          BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
-                         BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_LOOP_STARTUP | BLE_FEAT_STRIP_CONFIG | BLE_FEAT_VERIFIED_SAVE;
+                         BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_LOOP_STARTUP | BLE_FEAT_STRIP_CONFIG |
+                         BLE_FEAT_VERIFIED_SAVE | BLE_FEAT_LIGHTING_SETUP;
   if (dualSlotDetected && PULSESHIFT_OTA_ENABLED) {
     featureMask |= BLE_FEAT_OTA_UPDATE;
   }
@@ -345,7 +348,7 @@ void BleManager::updateCapabilitiesChar() {
   caps.maxStartupAnimId = 5;
   caps.maxEffectId = 5;
   caps.otaActiveSlot = OtaManager::instance().activeRunningSlot();
-  caps.protocolMinor = 4;
+  caps.protocolMinor = 5;
   uint8_t otaFlags = 0;
   if (dualSlotDetected) {
     otaFlags |= 0x02; // Bit 1 = Dual-slot OTA partition layout detected
@@ -502,20 +505,26 @@ void BleManager::poll(uint32_t nowMs,
                       RpmCandidateMonitor& candidate,
                       const CanTransport& transport,
                       const CanRecorder& recorder,
-                      bool rpmLightsRendering) {
+                      bool rpmLightsRendering, bool flashAvailable) {
   if (!initialized_) return;
 
   auto& ota = OtaManager::instance();
-  if (ota.rebootDue(nowMs)) {
+  if (flashAvailable && ota.rebootDue(nowMs)) {
 #if defined(ARDUINO)
     esp_restart();
 #endif
     return;
   }
-  if (recorder.isRecording()) ota.abortOta();
-  ota.serviceTransfer(candidate, transport, nowMs);
+  if (flashAvailable) {
+    if (recorder.isRecording()) ota.abortOta();
+    ota.serviceTransfer(candidate, transport, nowMs);
+  }
 
   if (linkResetPending_.exchange(false, std::memory_order_acq_rel)) {
+    if (!flashAvailable) {
+      linkResetPending_.store(true, std::memory_order_release);
+      return;
+    }
     onClientDisconnected();
 #if defined(ARDUINO) && defined(PULSESHIFT_BLE_ENABLED) && (PULSESHIFT_BLE_ENABLED == 1)
     NimBLEDevice::startAdvertising();
@@ -524,7 +533,7 @@ void BleManager::poll(uint32_t nowMs,
   if (!isClientConnected()) return;
 
   // 0a. Drain decoupled control commands received via BLE write callbacks.
-  drainControlQueue(nowMs);
+  if (flashAvailable) drainControlQueue(nowMs);
 
   // Preserve one unsent result across transient errors. Leave subsequent
   // commands queued until their result can be sent in order.
@@ -540,7 +549,7 @@ void BleManager::poll(uint32_t nowMs,
         ++dropCount_;
       }
     }
-  } else {
+  } else if (flashAvailable) {
     processConfigCommand(nowMs, candidate, transport, recorder);
   }
 
@@ -558,7 +567,7 @@ void BleManager::poll(uint32_t nowMs,
     if (snapshotActive_) {
       lastLogNotifyMs_ = nowMs;
       processSnapshotStream();
-    } else if (logsSubscribed) {
+    } else if (logsSubscribed && flashAvailable) {
       if (histPageEopPending_) {
         lastLogNotifyMs_ = nowMs;
         processHistoricalPageRead();
@@ -1144,7 +1153,8 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
                             pkt.opcode == BLE_CFG_OP_GET_DIAGNOSTICS ||
                             pkt.opcode == BLE_CFG_OP_CAL_STATUS ||
                             pkt.opcode == BLE_CFG_OP_CAL_CAPTURE_STATUS ||
-                            pkt.opcode == BLE_CFG_OP_OTA_STATUS);
+                            pkt.opcode == BLE_CFG_OP_OTA_STATUS ||
+                            pkt.opcode == BLE_CFG_OP_AMBIENT_STATUS);
   const bool isAuthFlow = (pkt.opcode == BLE_CFG_OP_AUTHENTICATE ||
                            pkt.opcode == BLE_CFG_OP_REQUEST_CHALLENGE ||
                            pkt.opcode == BLE_CFG_OP_ENROLL_OWNER);
@@ -1166,13 +1176,18 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_GET_SNAPSHOT: {
+      if (pkt.payloadLength > 1 || (pkt.payloadLength == 1 && pkt.payload[0] != LIGHTING_SETUP_VERSION)) {
+        status = BLE_CFG_STATUS_VERSION_MISMATCH;
+        break;
+      }
       if (snapshotActive_ && isConfigSnapshotSubscribed()) {
         status = BLE_CFG_STATUS_BUSY;
         break;
       }
       status = BLE_CFG_STATUS_OK;
       resFlags = 0;
-      snapshotLen_ = ConfigManager::instance().serializeSnapshot(snapshotBuf_, sizeof(snapshotBuf_));
+      snapshotLen_ = ConfigManager::instance().serializeSnapshot(
+          snapshotBuf_, sizeof(snapshotBuf_), pkt.payloadLength == 1);
       snapshotId_ = pkt.sequence;
       snapshotTotalChunks_ = static_cast<uint8_t>((snapshotLen_ + 13) / 14);
       snapshotChunkIdx_ = 0;
@@ -1180,6 +1195,44 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       snapshotActive_ = true;
       break;
     }
+
+    case BLE_CFG_OP_LIGHTING_BEGIN:
+    case BLE_CFG_OP_LIGHTING_DATA:
+    case BLE_CFG_OP_LIGHTING_SAVE:
+    case BLE_CFG_OP_LIGHTING_CANCEL:
+      processLightingUpload(pkt, connId, nowMs, res);
+      status = res.statusCode;
+      resFlags = res.resultFlags;
+      break;
+
+    case BLE_CFG_OP_AMBIENT_STATUS:
+      if (isStaged || pkt.payloadLength != 1 || pkt.payload[0] != LIGHTING_SETUP_VERSION) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      res.payload[0] = LIGHTING_SETUP_VERSION;
+      res.payload[1] = static_cast<uint8_t>(ambientStatus_);
+      res.payload[2] = animationPreviewAllowed_;
+      res.payloadLength = 3;
+      break;
+
+    case BLE_CFG_OP_ANIMATION_PREVIEW:
+      if (isStaged || pkt.payloadLength != 4 || pkt.payload[0] != LIGHTING_SETUP_VERSION ||
+          pkt.payload[1] < 1 || pkt.payload[1] > 5) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      if (const uint16_t duration = pkt.payload[2] | (pkt.payload[3] << 8);
+          duration < 100 || duration > 10000) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+      } else if (!animationPreviewAllowed_ || OtaManager::instance().state() != OtaEngineState::Idle) {
+        status = BLE_CFG_STATUS_INVALID_STATE;
+      } else {
+        previewPattern_ = pkt.payload[1];
+        previewDurationMs_ = duration;
+        resFlags = BLE_CFG_RESULT_FLAG_APPLIED;
+      }
+      break;
 
     case BLE_CFG_OP_GET_ARG_RANGES: {
       status = BLE_CFG_STATUS_OK;
@@ -1511,7 +1564,11 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_BEGIN_TRANSACTION: {
-      const bool ok = ConfigManager::instance().beginTransaction();
+      if (pkt.payloadLength > 1 || (pkt.payloadLength == 1 && pkt.payload[0] != LIGHTING_SETUP_VERSION)) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      const bool ok = ConfigManager::instance().beginTransaction(pkt.payloadLength == 1);
       status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_INVALID_STATE;
       if (ok) resFlags |= BLE_CFG_RESULT_FLAG_STAGED;
       break;
@@ -1908,6 +1965,91 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
   // Capabilities cannot change during a data write. Avoid checking rollback
   // viability against the partially written inactive image for every chunk.
   if (pkt.opcode != BLE_CFG_OP_OTA_DATA) updateCapabilitiesChar();
+}
+
+void BleManager::processLightingUpload(const BleConfigExtCommandPacket& pkt, uint16_t connId,
+                                       uint32_t now, BleConfigResultPacket& result) {
+  auto& upload = lightingUpload_;
+  auto& config = ConfigManager::instance();
+  const auto read16 = [](const uint8_t* bytes) -> uint16_t {
+    return bytes[0] | (bytes[1] << 8);
+  };
+  const auto read32 = [&](const uint8_t* bytes) -> uint32_t {
+    return read16(bytes) | (static_cast<uint32_t>(read16(bytes + 2)) << 16);
+  };
+  if (upload.active && uint32_t(now - upload.startedMs) >= 30000) upload.active = false;
+  result.statusCode = BLE_CFG_STATUS_INVALID_PARAM;
+  if (pkt.flags != 0) return;
+
+  if (pkt.opcode == BLE_CFG_OP_LIGHTING_BEGIN) {
+    if (pkt.payloadLength != 11) return;
+    if (pkt.payload[0] != LIGHTING_SETUP_VERSION) {
+      result.statusCode = BLE_CFG_STATUS_VERSION_MISMATCH;
+      return;
+    }
+    const uint16_t length = read16(pkt.payload + 1);
+    if (length < LIGHTING_SETUP_HEADER || length > LIGHTING_SETUP_MAX) return;
+    if (upload.active || config.isStagedTransactionActive() ||
+        OtaManager::instance().state() != OtaEngineState::Idle) {
+      result.statusCode = BLE_CFG_STATUS_BUSY;
+      return;
+    }
+    const uint32_t revision = read32(pkt.payload + 7);
+    const uint16_t distance = pkt.sequence - upload.id;
+    if (revision != config.activeRevision() ||
+        (upload.startedOnLink && (distance == 0 || distance >= 0x8000))) {
+      result.statusCode = BLE_CFG_STATUS_INVALID_STATE;
+      return;
+    }
+    upload.active = upload.startedOnLink = true;
+    upload.id = pkt.sequence;
+    upload.connection = connId;
+    upload.length = length;
+    upload.received = 0;
+    upload.crc = read32(pkt.payload + 3);
+    upload.revision = revision;
+    upload.startedMs = now;
+    result.statusCode = BLE_CFG_STATUS_OK;
+    result.resultFlags = BLE_CFG_RESULT_FLAG_STAGED;
+    return;
+  }
+
+  if (pkt.payloadLength < 2) return;
+  if (!upload.active || upload.connection != connId || read16(pkt.payload) != upload.id) {
+    result.statusCode = BLE_CFG_STATUS_INVALID_STATE;
+    return;
+  }
+  if (pkt.opcode == BLE_CFG_OP_LIGHTING_DATA) {
+    if (pkt.payloadLength <= 4 || read16(pkt.payload + 2) != upload.received) return;
+    const uint16_t count = pkt.payloadLength - 4;
+    if (upload.received + count > upload.length) return;
+    memcpy(upload.data + upload.received, pkt.payload + 4, count);
+    upload.received += count;
+    result.statusCode = BLE_CFG_STATUS_OK;
+    result.resultFlags = BLE_CFG_RESULT_FLAG_STAGED;
+    return;
+  }
+  if (pkt.payloadLength != 2) return;
+  upload.active = false;
+  if (pkt.opcode == BLE_CFG_OP_LIGHTING_CANCEL) {
+    result.statusCode = BLE_CFG_STATUS_OK;
+    return;
+  }
+  if (upload.length != upload.received || config.activeRevision() != upload.revision) {
+    result.statusCode = BLE_CFG_STATUS_INVALID_STATE;
+  } else if (ConfigManager::computeCrc32(upload.data, upload.length) != upload.crc) {
+    result.statusCode = BLE_CFG_STATUS_INTEGRITY_ERROR;
+  } else if (OtaManager::instance().state() != OtaEngineState::Idle) {
+    result.statusCode = BLE_CFG_STATUS_BUSY;
+  } else {
+    result.statusCode = config.saveLightingSetup(upload.data, upload.length);
+    if (result.statusCode == BLE_CFG_STATUS_OK) {
+      result.resultFlags = BLE_CFG_RESULT_FLAG_APPLIED | BLE_CFG_RESULT_FLAG_PERSISTED;
+    } else if (result.statusCode == BLE_CFG_STATUS_STORAGE_ERROR) {
+      result.payload[0] = static_cast<uint8_t>(config.saveStatus());
+      result.payloadLength = 1;
+    }
+  }
 }
 
 void BleManager::sendResult(const BleConfigResultPacket& res, uint32_t nowMs) {

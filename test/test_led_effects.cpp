@@ -704,7 +704,7 @@ static void test_provisional_startup_ends_in_safeguard_with_invalid_rpm() {
   e.reset(UINT32_MAX - 55);
 
   e.update(UINT32_MAX - 1, cfg, invalidRpm, LedFrameInput{});
-  CHECK(e.activeLayer() == LedActiveLayer::Startup);
+  CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
   e.update(44, cfg, invalidRpm, LedFrameInput{});
   CHECK(e.isStartupComplete());
   CHECK(e.activeLayer() == LedActiveLayer::SafeguardBlank);
@@ -738,72 +738,142 @@ static void test_zero_hysteresis_uses_exact_threshold() {
 }
 
 
-static void optional_startup_loops_without_masking_rpm_or_safety() {
+static void ambient_eligibility_and_priority() {
   LedEffectEngine engine;
   engine.reset(0);
   PulseShiftConfig cfg = verifiedBarConfig();
-  cfg.effect = 1; // Decorative: startup is allowed to loop continuously.
-  cfg.startupAnimation = 2; // Wave
-  cfg.startupDurationMs = static_cast<uint16_t>(0x8000u | 1000u);
-  CHECK(ConfigManager::validateConfig(cfg));
-  engine.update(200, cfg, LiveRpmSnapshot{}, LedFrameInput{});
-  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
-  const RgbColor phase1 = engine.getPixel(0);
-  engine.update(1200, cfg, LiveRpmSnapshot{}, LedFrameInput{});
-  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
-  CHECK(engine.getPixel(0) == phase1);
-  CHECK(!engine.isStartupComplete());
-
-  LedFrameInput off{};
-  cfg.isPowerOn = false;
-  engine.update(1500, cfg, LiveRpmSnapshot{}, off);
-  CHECK(engine.activeLayer() == LedActiveLayer::Off);
-  cfg.isPowerOn = true;
-
-  off.canHealthy = false;
-  engine.update(1600, cfg, LiveRpmSnapshot{}, off);
-  CHECK(engine.activeLayer() == LedActiveLayer::Fault);
-  off.canHealthy = true;
-  engine.update(1700, cfg, LiveRpmSnapshot{}, off);
-  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
-
-  // Switching on Loop after the one-shot ends must restart it on that frame.
-  cfg.startupDurationMs = 1000;
-  engine.update(2800, cfg, LiveRpmSnapshot{}, off);
-  engine.update(3900, cfg, LiveRpmSnapshot{}, off);
-  CHECK(engine.activeLayer() == LedActiveLayer::Decorative);
-  cfg.startupDurationMs = static_cast<uint16_t>(0x8000u | 1000u);
-  engine.update(4000, cfg, LiveRpmSnapshot{}, off);
-  CHECK(engine.activeLayer() == LedActiveLayer::Startup);
-
-  // On the motorcycle, live RPM must win while the engine is running.
   cfg.effect = 5;
-  auto running = freshVerifiedSnapshot(4500);
-  engine.update(4100, cfg, running, off);
-  CHECK(engine.activeLayer() == LedActiveLayer::ProvisionalRpm);
-  CHECK(countLit(engine) == 4);
-  auto stopped = freshVerifiedSnapshot(0);
-  engine.update(4200, cfg, stopped, off);
+  cfg.ambient = {true, 2, 1000};
+  LedFrameInput input{};
+  engine.update(100, cfg, {}, input);
   CHECK(engine.activeLayer() == LedActiveLayer::Startup);
+  engine.update(2000, cfg, {}, input);
+  CHECK(engine.activeLayer() == LedActiveLayer::Ambient && engine.isStartupComplete());
+  CHECK(engine.ambientStatus() == AmbientStatus::Playing);
+  cfg.startupAnimation = 5;
+  engine.update(5000, cfg, {}, input);
+  CHECK(engine.activeLayer() == LedActiveLayer::Ambient); // edits cannot restart boot
 
-  auto stale = stopped;
-  stale.available = false;
-  stale.fresh = false;
-  engine.update(4300, cfg, stale, off);
+  input.canTrafficSeen = true;
+  engine.update(5100, cfg, {}, input);
+  CHECK(engine.activeLayer() == LedActiveLayer::SafeguardBlank && allBlack(engine));
+  CHECK(engine.ambientStatus() == AmbientStatus::SuppressedBySafety);
+  engine.update(5200, cfg, freshVerifiedSnapshot(4500), input);
+  CHECK(engine.activeLayer() == LedActiveLayer::ProvisionalRpm && countLit(engine) == 4);
+  CHECK(engine.ambientStatus() == AmbientStatus::PausedByRpm);
+  input.authWindowOpen = true;
+  engine.update(5300, cfg, {}, input);
+  CHECK(engine.activeLayer() == LedActiveLayer::SafeguardBlank && allBlack(engine));
+  input.authWindowOpen = false;
+  engine.update(5400, cfg, freshVerifiedSnapshot(0), input);
+  CHECK(engine.activeLayer() == LedActiveLayer::Ambient);
+
+  cfg.isPowerOn = false;
+  engine.update(5500, cfg, {}, input);
+  CHECK(engine.activeLayer() == LedActiveLayer::Off && allBlack(engine));
+  input.canHealthy = false;
+  engine.update(5600, cfg, {}, input);
+  CHECK(engine.activeLayer() == LedActiveLayer::Fault);
+  input.canHealthy = cfg.isPowerOn = true;
+  engine.update(5650, cfg, {}, input);
   CHECK(engine.activeLayer() == LedActiveLayer::SafeguardBlank);
-  CHECK(allBlack(engine));
+  engine.update(5700, cfg, freshVerifiedSnapshot(0), input);
+  CHECK(engine.activeLayer() == LedActiveLayer::Ambient);
+}
 
-  cfg.startupAnimation = 0;
-  CHECK(!ConfigManager::validateConfig(cfg)); // Cannot loop a disabled sequence.
-  cfg.startupDurationMs = 1000;
+static void all_ambient_patterns_keep_time() {
+  for (uint8_t pattern = 1; pattern <= 5; ++pattern) {
+    for (uint8_t pixels : {1, 6, 64}) {
+      LedEffectEngine engine;
+      const uint32_t start = UINT32_MAX - 517;
+      engine.reset(start, pixels);
+      PulseShiftConfig cfg = verifiedBarConfig();
+      cfg.bootEnabled = false;
+      cfg.installedLedCount = pixels;
+      cfg.ambient = {true, pattern, 1000};
+      RgbColor first[64]{};
+      bool changes = false;
+      engine.update(start, cfg, {}, {});
+      for (uint8_t i = 0; i < pixels; ++i) first[i] = engine.getPixel(i);
+      for (uint32_t delta = 50; delta <= 601000; delta += 50) {
+        engine.update(start + delta, cfg, {}, {});
+        CHECK(engine.activeLayer() == LedActiveLayer::Ambient);
+        for (uint8_t i = 0; i < pixels; ++i) {
+          if (delta % 1000 == 0) CHECK(first[i] == engine.getPixel(i));
+          else changes |= first[i] != engine.getPixel(i);
+        }
+      }
+      CHECK(changes);
+    }
+  }
+}
+
+static void dynamic_thresholds_and_inactive_pixels() {
+  for (uint8_t count : {1, 2, 3, 6, 12, 24, 32, 64}) {
+    PulseShiftConfig cfg = verifiedBarConfig();
+    cfg.installedLedCount = count;
+    auto& m = cfg.rpmMapping;
+    m.mode = RpmMappingMode::Individual;
+    m.activeLedCount = count;
+    m.entries = count;
+    for (uint8_t i = 0; i < count; ++i) m.thresholds[i] = 1000 + i * 50;
+    CHECK(ConfigManager::validateConfig(cfg));
+    LedEffectEngine engine;
+    engine.reset(0, count);
+    for (uint8_t step = 0; step < count; ++step) {
+      engine.update(step * 50, cfg, freshVerifiedSnapshot(m.thresholds[step]), {});
+      for (uint8_t pixel = 0; pixel < count; ++pixel) {
+        CHECK((engine.getPixel(pixel) != RgbColor{}) == (pixel <= step));
+      }
+    }
+    engine.update(4000, cfg, freshVerifiedSnapshot(m.thresholds[count - 1] - 149), {});
+    CHECK(engine.getPixel(count - 1) != RgbColor{});
+    engine.update(4010, cfg, freshVerifiedSnapshot(m.thresholds[count - 1] - 151), {});
+    CHECK(engine.getPixel(count - 1) == RgbColor{});
+  }
+  auto cfg = verifiedBarConfig();
+  cfg.installedLedCount = 24;
+  cfg.ledDirection = 1;
+  auto& m = cfg.rpmMapping;
+  m.activeLedCount = 12;
+  m.mode = RpmMappingMode::Grouped;
+  m.entries = 6;
+  const uint8_t sizes[] = {3, 3, 2, 2, 1, 1};
+  for (uint8_t i = 0; i < 6; ++i) {
+    m.groupSizes[i] = sizes[i];
+    m.thresholds[i] = (i + 1) * 1000;
+  }
   CHECK(ConfigManager::validateConfig(cfg));
+  LedEffectEngine engine;
+  engine.reset(0, 24);
+  engine.update(0, cfg, freshVerifiedSnapshot(3000), {});
+  for (uint8_t i = 0; i < 24; ++i) CHECK((engine.getPixel(i) != RgbColor{}) == (i >= 16));
+  engine.update(30, cfg, freshVerifiedSnapshot(7000), {});
+  CHECK(engine.activeLayer() == LedActiveLayer::Warning);
+  for (uint8_t i = 0; i < 24; ++i) CHECK(engine.getPixel(i) == (i >= 12 ? cfg.warningColor : RgbColor{}));
+  ++m.groupSizes[0];
+  CHECK(!ConfigManager::validateConfig(cfg));
+
+  m.mode = RpmMappingMode::Automatic;
+  m.entries = 2;
+  m.thresholds[0] = 2000;
+  m.thresholds[1] = 8000;
+  CHECK(!ConfigManager::validateConfig(cfg));
+  cfg.warningRpm = 8001;
+  CHECK(ConfigManager::validateConfig(cfg));
+  uint16_t thresholds[64]{};
+  m.expand(thresholds, 12, cfg.rpmThresholds);
+  const uint16_t expected[] = {2000, 2545, 3091, 3636, 4182, 4727, 5273, 5818, 6364, 6909, 7455, 8000};
+  CHECK(memcmp(thresholds, expected, sizeof(expected)) == 0);
+  m.expand(thresholds, 1, cfg.rpmThresholds);
+  CHECK(thresholds[0] == 2000);
 }
 
 static void effects_and_warning_scale_to_strip() {
   const uint8_t counts[] = {1, 2, 3, 6, 12, 24, 32, 64};
   for (uint8_t count : counts) {
     PulseShiftConfig cfg = verifiedBarConfig();
-    cfg.physicalLedCount = count;
+    cfg.installedLedCount = count;
     for (uint8_t zone = 0; zone < config::rpmStages; ++zone) {
       cfg.ledColors[zone] = RgbColor{static_cast<uint8_t>(50 + 20 * zone), 0, 0};
     }
@@ -823,15 +893,14 @@ static void effects_and_warning_scale_to_strip() {
       CHECK(reverse.getPixel(255) == RgbColor{});
     };
     for (uint8_t animation = 1; animation <= 5; ++animation) {
-      cfg.startupAnimation = animation;
-      cfg.startupDurationMs = 0x8000 | 2000;
+      cfg.bootEnabled = false;
+      cfg.ambient = {true, animation, 2000};
       cfg.effect = 0;
       for (uint32_t elapsed : {0u, 674u, 1300u, 1975u, 2674u}) {
-        renderBoth(animation * 3000 + elapsed, {}, LedActiveLayer::Startup);
+        renderBoth(animation * 3000 + elapsed, {}, LedActiveLayer::Ambient);
       }
     }
-    cfg.startupAnimation = 0;
-    cfg.startupDurationMs = 2000;
+    cfg.ambient.enabled = false;
     for (uint8_t effect = 0; effect <= 3; ++effect) {
       cfg.effect = effect;
       renderBoth(20000, {}, LedActiveLayer::Decorative);
@@ -871,7 +940,9 @@ int main() {
   boot_button_auth_window_does_not_obscure_active_rpm();
   feedback_overrides_decorative_not_fault();
   startup_then_decorative();
-  optional_startup_loops_without_masking_rpm_or_safety();
+  ambient_eligibility_and_priority();
+  all_ambient_patterns_keep_time();
+  dynamic_thresholds_and_inactive_pixels();
   startup_animations_center_out_and_strobe();
   rpm_bar_latches_and_hysteresis();
   warning_patterns();

@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include "ble_protocol.h"
 #include "led_color.h"
+#include "lighting_setup.h"
 
 // Schema version 3: adds decoder extension fields (byte width, byte order,
 // offset, validity clamp), threshold hysteresis and the bound calibration
@@ -49,7 +50,10 @@ struct PulseShiftConfigV3 {
 };
 
 struct PulseShiftConfig : PulseShiftConfigV3 {
-  uint8_t physicalLedCount = config::ledCount;
+  uint8_t installedLedCount = config::ledCount;
+  RpmMapping rpmMapping{};
+  bool bootEnabled = true;
+  AmbientAnimation ambient{};
 };
 
 enum class ConfigLoadStatus : uint8_t {
@@ -104,7 +108,7 @@ class ConfigManager {
 
   // Transaction Management
   bool isStagedTransactionActive() const { return stagedTxActive_; }
-  bool beginTransaction();
+  bool beginTransaction(bool useLegacyRpmMapping = false);
   bool commitTransaction();
   void abortTransaction();
 
@@ -129,10 +133,11 @@ class ConfigManager {
   // Persistence (NVS). Returns false when the save failed; callers must not
   // report persisted success unless this returned true.
   bool saveToNvs();
+  BleConfigStatusCode saveLightingSetup(const uint8_t* data, size_t length);
   bool restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved = nullptr);
 
   // Snapshot Serialization
-  size_t serializeSnapshot(uint8_t* outBuf, size_t maxLen) const;
+  size_t serializeSnapshot(uint8_t* outBuf, size_t maxLen, bool includeSetup = false) const;
 
   // Validation
   static bool validateConfig(const PulseShiftConfig& cfg);
@@ -240,6 +245,7 @@ class ConfigManager {
 
   bool nvsAvailable_ = true;
   uint8_t runningLedCount_ = config::ledCount;
+  uint8_t savedInstalledLedCount_ = 0;
   ConfigLoadStatus bootLoadStatus_ = ConfigLoadStatus::Unavailable;
   ConfigSaveStatus saveStatus_ = ConfigSaveStatus::NoAttempt;
   bool activeMatchesNvs_ = false;
@@ -250,6 +256,7 @@ class ConfigManager {
   void applySafeDefaults(PulseShiftConfig& cfg);
   void loadOwnerSecurity();
   ConfigLoadStatus loadConfigBlob(PulseShiftConfig& out);
+  bool persistConfig(const PulseShiftConfig& config, bool appliesToActive);
   // Invalidate the verification record; if an RPM-driven effect is active,
   // revert it to a decorative effect so the config always stays valid.
   void invalidateCalibration(PulseShiftConfig& cfg);

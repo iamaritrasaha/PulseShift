@@ -38,7 +38,7 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char* key, void* data, size_t*
 }
 
 esp_err_t nvs_set_blob(nvs_handle_t handle, const char* key, const void* data, size_t size) {
-  CHECK(opened && handle == NVS_READWRITE && std::strcmp(key, "blob4") == 0);
+  CHECK(opened && handle == NVS_READWRITE && std::strcmp(key, "blob5") == 0);
   const auto* bytes = static_cast<const uint8_t*>(data);
   uncommitted.assign(bytes, bytes + size);
   return ESP_OK;
@@ -47,7 +47,7 @@ esp_err_t nvs_set_blob(nvs_handle_t handle, const char* key, const void* data, s
 esp_err_t nvs_commit(nvs_handle_t handle) {
   CHECK(opened && handle == NVS_READWRITE);
   if (failCommit) return ESP_FAIL;
-  flash["blob4"] = uncommitted;
+  flash["blob5"] = uncommitted;
   return ESP_OK;
 }
 
@@ -94,7 +94,9 @@ int main() {
   cfg.begin();
   CHECK(cfg.bootLoadStatus() == ConfigLoadStatus::Legacy);
   CHECK(cfg.active().calFingerprint == old.calFingerprint);
-  CHECK(cfg.active().startupDurationMs == old.startupDurationMs);
+  CHECK(cfg.active().startupDurationMs == 1500 && cfg.active().ambient.cycleMs == 1500);
+  CHECK(cfg.active().bootEnabled && cfg.active().ambient.enabled && cfg.active().ambient.pattern == 2);
+  CHECK(cfg.active().rpmMapping.mode == RpmMappingMode::LegacyGrouped);
 
   // Stage and commit the same kinds of fields that the Android preset writes.
   CHECK(cfg.beginTransaction());
@@ -104,8 +106,8 @@ int main() {
   CHECK(cfg.setEffect(3, 78, true) == BLE_CFG_STATUS_OK);
   CHECK(cfg.setLedRgb(5, {43, 211, 101}, true) == BLE_CFG_STATUS_OK);
   CHECK(cfg.setPhysicalLedCount(64, true) == BLE_CFG_STATUS_OK);
-  CHECK(cfg.active().brightness == 108 && cfg.active().physicalLedCount == 6);
-  CHECK(!cfg.saveToNvs() && flash.count("blob4") == 0);
+  CHECK(cfg.active().brightness == 108 && cfg.active().installedLedCount == 6);
+  CHECK(!cfg.saveToNvs() && flash.count("blob5") == 0);
   CHECK(cfg.commitTransaction() && cfg.saveToNvs());
   CHECK(cfg.activeMatchesNvs() && cfg.savedRevision() == 21 && cfg.runningLedCount() == 6);
   CHECK(flash["blob"] == preserved);
@@ -115,7 +117,7 @@ int main() {
   CHECK(cfg.activeMatchesNvs() && cfg.saveStatus() == ConfigSaveStatus::NoAttempt);
   CHECK(cfg.active().brightness == 192 && cfg.active().effect == 3 && cfg.active().effectSpeed == 78);
   CHECK((cfg.active().ledColors[5] == RgbColor{43, 211, 101}));
-  CHECK(cfg.active().startupAnimation == 4 && cfg.active().startupDurationMs == (0x8000 | 3400));
+  CHECK(cfg.active().startupAnimation == 4 && cfg.active().startupDurationMs == 3400 && cfg.active().ambient.cycleMs == 3400);
   CHECK(cfg.runningLedCount() == 64);
   CHECK(cfg.active().calibrationVerified && cfg.active().calFingerprint == old.calFingerprint);
 
@@ -133,12 +135,44 @@ int main() {
   CHECK(!cfg.activeMatchesNvs());
   failReadback = false;
 
-  auto& blob = flash["blob4"];
-  blob[blob.size() - 5] = 65;
+  uint8_t setup[LIGHTING_SETUP_HEADER + 128]{1, 64, 64, 2, 64, 0, 3, 0xD0, 7,
+      1, 5, 0x10, 0x27, 0x28, 0x23}; // 9000 RPM warning
+  for (uint8_t i = 0; i < 64; ++i) {
+    const uint16_t rpm = 1000 + i * 100;
+    setup[LIGHTING_SETUP_HEADER + i * 2] = rpm & 0xff;
+    setup[LIGHTING_SETUP_HEADER + i * 2 + 1] = rpm >> 8;
+  }
+  const uint32_t originalRevision = cfg.activeRevision();
+  failCommit = true;
+  CHECK(cfg.saveLightingSetup(setup, sizeof(setup)) == BLE_CFG_STATUS_STORAGE_ERROR);
+  CHECK(cfg.activeRevision() == originalRevision && cfg.active().rpmMapping.mode == RpmMappingMode::LegacyGrouped);
+  failCommit = false;
+  CHECK(cfg.saveLightingSetup(setup, sizeof(setup) - 1) == BLE_CFG_STATUS_VALIDATION_FAILED);
+  CHECK(cfg.saveLightingSetup(setup, sizeof(setup)) == BLE_CFG_STATUS_OK);
+  CHECK(cfg.activeMatchesNvs() && cfg.savedRevision() == originalRevision + 1);
+  cfg.begin();
+  CHECK(cfg.activeMatchesNvs() && cfg.runningLedCount() == 64 && cfg.active().rpmMapping.entries == 64);
+  CHECK(cfg.active().rpmMapping.thresholds[63] == 7300 && !cfg.active().bootEnabled);
+  CHECK(cfg.active().ambient.enabled && cfg.active().ambient.pattern == 5 && cfg.active().ambient.cycleMs == 10000);
+  CHECK(cfg.active().rpmMultiplier == 40.0f && cfg.active().calFingerprint == old.calFingerprint);
+
+  auto v4 = preserved;
+  v4.insert(v4.end() - 4, 12);
+  v4[4] = 4;
+  v4[6] = static_cast<uint8_t>(v4.size());
+  putCrc(v4);
+  flash["blob4"] = v4;
+  auto& blob = flash["blob5"];
+  blob[8 + sizeof(PulseShiftConfigV3) + 2] = 65; // invalid installed count
   putCrc(blob);
   cfg.begin();
-  CHECK(cfg.bootLoadStatus() == ConfigLoadStatus::CountDefaulted);
-  CHECK(cfg.runningLedCount() == 6 && cfg.active().brightness == 192);
+  CHECK(cfg.bootLoadStatus() == ConfigLoadStatus::RecoveredLegacy);
+  CHECK(cfg.runningLedCount() == 12 && cfg.active().ambient.enabled && cfg.active().rpmMapping.entries == 0);
+  flash["blob4"][flash["blob4"].size() - 5] = 65;
+  putCrc(flash["blob4"]);
+  cfg.begin();
+  CHECK(cfg.bootLoadStatus() == ConfigLoadStatus::CountDefaulted && cfg.runningLedCount() == 6);
+  flash.erase("blob4");
   blob.back() ^= 0x01;
   cfg.begin();
   CHECK(cfg.bootLoadStatus() == ConfigLoadStatus::RecoveredLegacy);

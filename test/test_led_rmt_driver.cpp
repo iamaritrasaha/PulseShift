@@ -99,6 +99,9 @@ static void test_grb_with_latch() {
                      {0, 0, 0}, {0, 0, 0}, {0x7e, 0x23, 0x5d}};
   CHECK(!driver.write(pixels, 7));
   CHECK(driver.write(pixels, 6));
+  CHECK(hal.now == 0 && driver.pollTransmission() == LedDriverStatus::Busy);
+  ++hal.now;
+  CHECK(driver.pollTransmission() == LedDriverStatus::TransmitOk);
   CHECK(hal.length == 145);
   CHECK(hal.length + 1 <= 4 * 64); // The HAL/IDF appends one EOF symbol.
   const uint8_t expectedGrb[]{0x82, 0xA1, 0x03, 0, 0, 0, 0, 0, 0,
@@ -146,8 +149,10 @@ static void test_timeout_does_not_reuse_pending_payload() {
   hal.completeAfterMs = 40;
   RgbColor lit[6]{{0, 0xff, 0}};
   RgbColor clear[6]{};
-  CHECK(!driver.write(lit, 6));
-  CHECK(driver.lastStatus() == LedDriverStatus::Timeout);
+  CHECK(driver.write(lit, 6));
+  CHECK(driver.pollTransmission() == LedDriverStatus::Busy);
+  hal.now += 20;
+  CHECK(driver.pollTransmission() == LedDriverStatus::Timeout);
   CHECK(driver.isReady() && hal.active);
   CHECK(uint32_t(hal.now - hal.submitTime) == 20);
   CHECK(hal.data[0].duration0 == 8);
@@ -160,7 +165,8 @@ static void test_timeout_does_not_reuse_pending_payload() {
   CHECK(rmtTransmitCompleted(27));
   hal.completeAfterMs = 1;
   CHECK(driver.write(clear, 6));
-  CHECK(driver.lastStatus() == LedDriverStatus::TransmitOk);
+  ++hal.now;
+  CHECK(driver.pollTransmission() == LedDriverStatus::TransmitOk);
   CHECK(hal.data[0].duration0 == 3);
 }
 
@@ -185,8 +191,10 @@ static void test_permanent_stall_stops_output_without_releasing_payload() {
   hal.completeAfterMs = UINT32_MAX;
   RgbColor lit[6]{{0, 0xff, 0}};
   RgbColor clear[6]{};
-  CHECK(!driver.write(lit, 6));
-  CHECK(driver.lastStatus() == LedDriverStatus::Timeout);
+  CHECK(driver.write(lit, 6));
+  CHECK(driver.pollTransmission() == LedDriverStatus::Busy);
+  hal.now += 20;
+  CHECK(driver.pollTransmission() == LedDriverStatus::Timeout);
 
   hal.now = hal.submitTime + 99;
   CHECK(!driver.write(clear, 6));
@@ -227,8 +235,12 @@ static void test_supported_frame_lengths_and_timing() {
     CHECK(latch.level0 == 0 && latch.level1 == 0);
     CHECK(latch.duration0 + latch.duration1 == 3000);
     CHECK(ticks == 24u * count * 13u);
+    ++hal.now;
+    CHECK(driver.pollTransmission() == LedDriverStatus::TransmitOk);
     hal.completeAfterMs = 40;
-    CHECK(!driver.write(pixels, count));
+    CHECK(driver.write(pixels, count));
+    hal.now += 20;
+    CHECK(driver.pollTransmission() == LedDriverStatus::Timeout);
     const auto* inFlight = hal.data;
     CHECK(!driver.begin(27, count == 64 ? 63 : count + 1));
     pixels[0] = {};
