@@ -8,16 +8,9 @@ constexpr uint16_t WARNING_FLASH_PERIOD_MS = 100;   // 10 Hz flash
 constexpr uint16_t WARNING_STROBE_PERIOD_MS = 50;   // 20 Hz strobe
 }  // namespace
 
-LedEffectEngine::LedEffectEngine() {
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
-    logicalPixels_[i] = RgbColor{0, 0, 0};
-    outputPixels_[i] = RgbColor{0, 0, 0};
-    lastCalculatedOutputPixels_[i] = RgbColor{0, 0, 0};
-    barLatched_[i] = false;
-  }
-}
-
-void LedEffectEngine::reset(uint32_t nowMs) {
+void LedEffectEngine::reset(uint32_t nowMs, uint8_t pixelCount) {
+  pixelCount_ = pixelCount >= config::minPhysicalLeds && pixelCount <= config::maxPhysicalLeds
+      ? pixelCount : config::ledCount;
   startupStartMs_ = nowMs;
   startupComplete_ = false;
   observedStartupAnimation_ = 0xFF;
@@ -52,7 +45,7 @@ RgbColor LedEffectEngine::hsvToRgb(uint8_t h, uint8_t s, uint8_t v) {
 }
 
 void LedEffectEngine::setAllPixels(RgbColor color) {
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+  for (uint8_t i = 0; i < pixelCount_; ++i) {
     logicalPixels_[i] = color;
   }
 }
@@ -61,38 +54,39 @@ void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg)
   const uint32_t dur = cfg.startupDurationMs & 0x7FFFu;
   const bool looping = (cfg.startupDurationMs & 0x8000u) != 0;
   const uint32_t totalElapsed = nowMs - startupStartMs_;
-  const uint32_t elapsed = looping ? totalElapsed % dur : totalElapsed;
-
-  if ((!looping && totalElapsed >= dur) || cfg.startupAnimation == 0) {
+  if (dur < 100 || (!looping && totalElapsed >= dur) || cfg.startupAnimation == 0) {
     startupComplete_ = true;
     return;
   }
 
-  // Animation 1: Sweep (Sequential ignition wipe across LEDs 0..5)
+  startupComplete_ = false;
+  const uint32_t elapsed = looping ? totalElapsed % dur : totalElapsed;
+
+  // Animation 1: Sweep
   if (cfg.startupAnimation == 1) {
     const uint32_t half = dur / 2;
     if (elapsed < half) {
       // Forward wipe
-      const uint32_t activeIdx = elapsed * LED_COUNT / half;
-      for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        logicalPixels_[i] = (i <= activeIdx) ? cfg.ledColors[i] : RgbColor{0, 0, 0};
+      const uint32_t activeIdx = elapsed * pixelCount_ / half;
+      for (uint8_t i = 0; i < pixelCount_; ++i) {
+        logicalPixels_[i] = (i <= activeIdx) ? cfg.ledColors[zoneForPixel(i)] : RgbColor{0, 0, 0};
       }
     } else {
       // Fade into active color
       const uint32_t dt = elapsed - half;
       const uint8_t factor = static_cast<uint8_t>(255 - (dt * 155 / half));
-      for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        logicalPixels_[i] = scaleColor(cfg.ledColors[i], factor);
+      for (uint8_t i = 0; i < pixelCount_; ++i) {
+        logicalPixels_[i] = scaleColor(cfg.ledColors[zoneForPixel(i)], factor);
       }
     }
   }
   // Animation 2: Wave (Dual-crested spatial wave)
   else if (cfg.startupAnimation == 2) {
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      const float phase = (elapsed * 6.28318f / dur) + (i * 1.047f);
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      const float phase = (elapsed * 6.28318f / dur) + (i * 6.28318f / pixelCount_);
       const float sinVal = (sinf(phase) + 1.0f) * 0.5f; // 0.0 .. 1.0
       const uint8_t brightness = static_cast<uint8_t>(sinVal * 255.0f);
-      logicalPixels_[i] = scaleColor(cfg.ledColors[i], brightness);
+      logicalPixels_[i] = scaleColor(cfg.ledColors[zoneForPixel(i)], brightness);
     }
   }
   // Animation 3: Pulse (Heartbeat dual pulse)
@@ -105,28 +99,26 @@ void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg)
           ? static_cast<uint8_t>(phaseMs * 255 / (pulseDur / 2))
           : static_cast<uint8_t>((pulseDur - phaseMs) * 255 / (pulseDur / 2));
     }
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      logicalPixels_[i] = scaleColor(cfg.ledColors[i], factor);
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      logicalPixels_[i] = scaleColor(cfg.ledColors[zoneForPixel(i)], factor);
     }
   }
-  // Animation 4: Center-Out (Staging Tree - expanding from center LEDs 2,3 outward to 0,5)
+  // Animation 4: Center-Out, expanding symmetrically one ring at a time.
   else if (cfg.startupAnimation == 4) {
-    const uint32_t stepDur = (dur > 3) ? (dur / 3) : 1;
-    const uint32_t step = (elapsed >= dur) ? 2 : (elapsed / stepDur);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      bool active = false;
-      if (step == 0 && (i == 2 || i == 3)) active = true;
-      else if (step == 1 && (i >= 1 && i <= 4)) active = true;
-      else if (step >= 2) active = true;
-      logicalPixels_[i] = active ? cfg.ledColors[i] : RgbColor{0, 0, 0};
+    const uint8_t rings = (pixelCount_ + 1) / 2;
+    const uint8_t visibleRings = elapsed * rings / dur + 1;
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      const uint8_t opposite = pixelCount_ - 1 - i;
+      const uint8_t ring = rings - 1 - (i < opposite ? i : opposite);
+      logicalPixels_[i] = ring < visibleRings ? cfg.ledColors[zoneForPixel(i)] : RgbColor{};
     }
   }
   // Animation 5: Strobe Rush (F1 Grid Start - multi-burst sequence transitioning to full solid)
   else if (cfg.startupAnimation == 5) {
     const uint32_t flashPeriod = (dur > 6) ? (dur / 6) : 1;
     const bool flashOn = (elapsed >= (dur * 2) / 3) || ((elapsed / flashPeriod) % 2 == 0);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      logicalPixels_[i] = flashOn ? cfg.ledColors[i] : RgbColor{0, 0, 0};
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      logicalPixels_[i] = flashOn ? cfg.ledColors[zoneForPixel(i)] : RgbColor{0, 0, 0};
     }
   }
 }
@@ -134,8 +126,8 @@ void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg)
 void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) {
   // Effect 0: Static Color
   if (cfg.effect == 0) {
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      logicalPixels_[i] = cfg.ledColors[i];
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      logicalPixels_[i] = cfg.ledColors[zoneForPixel(i)];
     }
   }
   // Effect 1: Breathing (Perceptually smooth sinusoidal pulse)
@@ -144,8 +136,8 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
     const float phase = (period > 0) ? ((nowMs % period) * 6.2831853f / period) : 0.0f;
     const float sinVal = (sinf(phase) + 1.0f) * 0.45f + 0.1f; // 0.1 .. 1.0
     const uint8_t factor = static_cast<uint8_t>(sinVal * 255.0f);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      logicalPixels_[i] = scaleColorGamma(cfg.ledColors[i], factor);
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      logicalPixels_[i] = scaleColorGamma(cfg.ledColors[zoneForPixel(i)], factor);
     }
   }
   // Effect 2: Rainbow (Smooth full-spectrum HSV color wave)
@@ -153,20 +145,20 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
     // Speed: 0..100 maps to hue rate
     const uint32_t speedFactor = (cfg.effectSpeed > 0) ? cfg.effectSpeed : 10;
     const uint8_t baseHue = static_cast<uint8_t>((nowMs % (40 * 256)) * speedFactor / 40);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      const uint8_t hue = (baseHue + (i * 256 / LED_COUNT)) % 256;
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      const uint8_t hue = (baseHue + (i * 256 / pixelCount_)) % 256;
       logicalPixels_[i] = hsvToRgb(hue, 255, 255);
     }
   }
   // Effect 3: Color Chase (Smooth runner traversing LEDs with anti-aliasing)
   else if (cfg.effect == 3) {
     const uint32_t stepMs = (cfg.effectSpeed <= 100) ? (350 - (cfg.effectSpeed * 3)) : 50;
-    const uint32_t totalDur = (stepMs > 0) ? (stepMs * LED_COUNT) : 300;
+    const uint32_t totalDur = (stepMs > 0) ? (stepMs * pixelCount_) : 300;
     const float pos = (totalDur > 0 && stepMs > 0) ? (static_cast<float>(nowMs % totalDur) / static_cast<float>(stepMs)) : 0.0f;
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
       float dist = fabsf(static_cast<float>(i) - pos);
-      if (dist > static_cast<float>(LED_COUNT) / 2.0f) {
-        dist = static_cast<float>(LED_COUNT) - dist;
+      if (dist > static_cast<float>(pixelCount_) / 2.0f) {
+        dist = static_cast<float>(pixelCount_) - dist;
       }
       float intensity = 0.0f;
       if (dist < 1.0f) {
@@ -175,13 +167,13 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
         intensity = 0.3f * (1.6f - dist) / 0.6f;
       }
       const uint8_t factor = static_cast<uint8_t>(intensity * 255.0f);
-      logicalPixels_[i] = (factor > 0) ? scaleColorGamma(cfg.ledColors[i], factor) : RgbColor{0, 0, 0};
+      logicalPixels_[i] = (factor > 0) ? scaleColorGamma(cfg.ledColors[zoneForPixel(i)], factor) : RgbColor{0, 0, 0};
     }
   }
   else {
     // Unknown effect id: fall back to static.
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-      logicalPixels_[i] = cfg.ledColors[i];
+    for (uint8_t i = 0; i < pixelCount_; ++i) {
+      logicalPixels_[i] = cfg.ledColors[zoneForPixel(i)];
     }
   }
 }
@@ -199,15 +191,14 @@ bool LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg,
   }
   const uint16_t hyst = cfg.rpmHysteresis;
 
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+  for (uint8_t i = 0; i < config::rpmStages; ++i) {
     const uint16_t onAt = cfg.rpmThresholds[i];
     const uint16_t offBelow = (onAt > hyst) ? static_cast<uint16_t>(onAt - hyst) : 0;
-    if (!barLatched_[i]) {
-      if (rpm >= onAt) barLatched_[i] = true;
-    } else if (rpm < offBelow) {
-      barLatched_[i] = false;
-    }
-    logicalPixels_[i] = barLatched_[i] ? cfg.ledColors[i] : RgbColor{0, 0, 0};
+    barLatched_[i] = barLatched_[i] ? rpm >= offBelow : rpm >= onAt;
+  }
+  for (uint8_t i = 0; i < pixelCount_; ++i) {
+    const uint8_t zone = zoneForPixel(i);
+    logicalPixels_[i] = barLatched_[zone] ? cfg.ledColors[zone] : RgbColor{};
   }
 
   // Configurable shift warning with hysteresis, rendered above the bar.
@@ -368,13 +359,13 @@ bool LedEffectEngine::finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg) {
   // the change against the previously calculated frame buffer.
   // Physical write scheduling and confirmed state management are owned by LedController.
   bool changed = false;
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
-    const uint8_t srcIdx = (cfg.ledDirection == 1) ? (LED_COUNT - 1 - i) : i;
+  for (uint8_t i = 0; i < pixelCount_; ++i) {
+    const uint8_t srcIdx = (cfg.ledDirection == 1) ? (pixelCount_ - 1 - i) : i;
     outputPixels_[i] = scaleColor(logicalPixels_[srcIdx], cfg.brightness);
     if (outputPixels_[i] != lastCalculatedOutputPixels_[i]) changed = true;
   }
   if (changed) {
-    memcpy(lastCalculatedOutputPixels_, outputPixels_, sizeof(outputPixels_));
+    memcpy(lastCalculatedOutputPixels_, outputPixels_, pixelCount_ * sizeof(RgbColor));
   }
   (void)nowMs;
   return changed;

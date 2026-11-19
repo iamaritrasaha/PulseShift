@@ -55,19 +55,15 @@ struct LedFrameInput {
 
 class LedEffectEngine {
  public:
-  static constexpr uint8_t LED_COUNT = 6;
-
-  LedEffectEngine();
-
   // Restart the startup animation clock (called once from Dashboard::begin).
-  void reset(uint32_t nowMs);
+  void reset(uint32_t nowMs, uint8_t pixelCount = config::ledCount);
 
   // Render one frame. Returns true when the visible output changed.
   bool update(uint32_t nowMs, const PulseShiftConfig& cfg,
               const LiveRpmSnapshot& rpm, const LedFrameInput& input);
 
   RgbColor getPixel(uint8_t index) const {
-    if (index >= LED_COUNT) return RgbColor{0, 0, 0};
+    if (index >= pixelCount_) return RgbColor{0, 0, 0};
     return outputPixels_[index];
   }
 
@@ -97,7 +93,7 @@ class LedEffectEngine {
 
   // Per-LED hysteresis latch: LED i stays lit until rpm falls below
   // thresholds[i] - hysteresis, preventing flicker around a threshold.
-  bool barLatched_[LED_COUNT] = {};
+  bool barLatched_[config::rpmStages] = {};
   // Warning latch with its own hysteresis so the alert does not chatter
   // around the warning threshold.
   bool warningLatched_ = false;
@@ -105,7 +101,10 @@ class LedEffectEngine {
 
   LedActiveLayer activeLayer_ = LedActiveLayer::Off;
 
-  RgbColor logicalPixels_[LED_COUNT]{};
-  RgbColor outputPixels_[LED_COUNT]{};
-  RgbColor lastCalculatedOutputPixels_[LED_COUNT]{};
+  uint8_t zoneForPixel(uint8_t pixel) const { return pixel * config::rpmStages / pixelCount_; }
+
+  uint8_t pixelCount_ = config::ledCount;
+  RgbColor logicalPixels_[config::maxPhysicalLeds]{};
+  RgbColor outputPixels_[config::maxPhysicalLeds]{};
+  RgbColor lastCalculatedOutputPixels_[config::maxPhysicalLeds]{};
 };

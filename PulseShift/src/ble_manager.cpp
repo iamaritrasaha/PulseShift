@@ -320,7 +320,7 @@ void BleManager::updateCapabilitiesChar() {
   if (!s_pCapabilitiesChar) return;
   BleCapabilitiesPacket caps{};
   caps.version = PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION;
-  caps.physicalLedCount = 6;
+  caps.physicalLedCount = ConfigManager::instance().runningLedCount();
   const bool dualSlotDetected = OtaManager::instance().isDualSlotSupported();
   uint32_t featureMask = BLE_FEAT_INDIVIDUAL_RGB | BLE_FEAT_EFFECTS |
                          BLE_FEAT_STARTUP_ANIM | BLE_FEAT_RPM_THRESHOLDS |
@@ -331,7 +331,7 @@ void BleManager::updateCapabilitiesChar() {
                          BLE_FEAT_CAL_WORKFLOW | BLE_FEAT_DIAGNOSTICS_TLV |
                          BLE_FEAT_CAPTURE_EXPORT | BLE_FEAT_CAPTURE_STAGE |
                          BLE_FEAT_LED_BENCH_TEST | BLE_FEAT_EXT_STARTUP_ANIM |
-                         BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_LOOP_STARTUP;
+                         BLE_FEAT_RANGE_DISCOVERY | BLE_FEAT_LOOP_STARTUP | BLE_FEAT_STRIP_CONFIG | BLE_FEAT_VERIFIED_SAVE;
   if (dualSlotDetected && PULSESHIFT_OTA_ENABLED) {
     featureMask |= BLE_FEAT_OTA_UPDATE;
   }
@@ -345,7 +345,7 @@ void BleManager::updateCapabilitiesChar() {
   caps.maxStartupAnimId = 5;
   caps.maxEffectId = 5;
   caps.otaActiveSlot = OtaManager::instance().activeRunningSlot();
-  caps.protocolMinor = 3;
+  caps.protocolMinor = 4;
   uint8_t otaFlags = 0;
   if (dualSlotDetected) {
     otaFlags |= 0x02; // Bit 1 = Dual-slot OTA partition layout detected
@@ -1190,7 +1190,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       res.payload[3] = 255;  // maxBrightness
       res.payload[4] = 0x20; res.payload[5] = 0x4E; // maxRpmThreshold = 20000 (u16 LE)
       res.payload[6] = 0xD0; res.payload[7] = 0x07; // maxHysteresis = 2000 (u16 LE)
-      res.payload[8] = 6;    // physicalLedCount
+      res.payload[8] = ConfigManager::instance().runningLedCount();
       res.payloadLength = 9;
       break;
     }
@@ -1440,11 +1440,42 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       break;
     }
 
+    case BLE_CFG_OP_SET_LED_COUNT: {
+      if (pkt.payloadLength != 2 || pkt.payload[0] != 1) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      status = ConfigManager::instance().setPhysicalLedCount(pkt.payload[1], isStaged);
+      if (status == BLE_CFG_STATUS_OK) {
+        resFlags = isStaged ? BLE_CFG_RESULT_FLAG_STAGED : BLE_CFG_RESULT_FLAG_APPLIED;
+      }
+      break;
+    }
+
     case BLE_CFG_OP_SAVE_CONFIG: {
-      const bool ok = ConfigManager::instance().saveToNvs();
+      auto& cfg = ConfigManager::instance();
+      if (isStaged || (pkt.payloadLength != 0 && pkt.payloadLength != 4)) {
+        status = BLE_CFG_STATUS_INVALID_PARAM;
+        break;
+      }
+      if (cfg.isStagedTransactionActive()) {
+        status = BLE_CFG_STATUS_INVALID_STATE;
+        break;
+      }
+      if (pkt.payloadLength == 4) {
+        const uint32_t expected = uint32_t(pkt.payload[0]) | (uint32_t(pkt.payload[1]) << 8) |
+            (uint32_t(pkt.payload[2]) << 16) | (uint32_t(pkt.payload[3]) << 24);
+        if (expected != cfg.activeRevision()) {
+          status = BLE_CFG_STATUS_INVALID_STATE;
+          break;
+        }
+      }
+      const bool ok = cfg.saveToNvs();
       status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_STORAGE_ERROR;
-      if (ok) {
-        resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
+      if (ok) resFlags = BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
+      if (pkt.payloadLength == 4) {
+        res.payload[0] = static_cast<uint8_t>(cfg.saveStatus());
+        res.payloadLength = 1;
       }
       break;
     }
@@ -1455,6 +1486,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
       } else {
         bool nvsSaved = false;
         const bool ok = ConfigManager::instance().restoreDefaults(pkt.payload[0], pkt.payload[1], &nvsSaved);
+        if (ok) syncDecoderToMonitor(candidate);
         if (!ok) {
           status = BLE_CFG_STATUS_INVALID_PARAM;
         } else if (!nvsSaved) {
@@ -1463,9 +1495,6 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
         } else {
           status = BLE_CFG_STATUS_OK;
           resFlags |= BLE_CFG_RESULT_FLAG_PERSISTED | BLE_CFG_RESULT_FLAG_APPLIED;
-          // Lighting preferences were reset; the decoder pipeline is rebuilt
-          // from the (reset) configuration. Owner credentials are preserved.
-          syncDecoderToMonitor(candidate);
         }
       }
       break;
@@ -2068,6 +2097,12 @@ size_t BleManager::buildDiagnosticsBlob(uint8_t* outBuf, size_t maxLen, uint32_t
   auto& sm = StorageManager::instance();
   auto& diag = DiagLogger::instance();
   auto& cfgMgr = ConfigManager::instance();
+
+  uint8_t nvs[8] = {1, static_cast<uint8_t>(cfgMgr.bootLoadStatus()),
+                   static_cast<uint8_t>(cfgMgr.saveStatus()),
+                   static_cast<uint8_t>(cfgMgr.activeMatchesNvs())};
+  putU32(&nvs[4], cfgMgr.savedRevision());
+  appendTlv(BLE_DIAG_TLV_CONFIG_NVS, nvs, sizeof(nvs));
 
   // TLV 0x40: uptime
   {

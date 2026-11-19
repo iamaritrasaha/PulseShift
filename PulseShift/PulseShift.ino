@@ -123,7 +123,11 @@ public:
 
     // Initialize persistent configuration FIRST so the very first rendered
     // LED frame already reflects the saved (NVS) user settings.
+#if defined(ARDUINO)
+    ConfigManager::instance().begin(nvsOk);
+#else
     ConfigManager::instance().begin();
+#endif
     BleManager::syncDecoderToMonitor(candidateMonitor_);
 
     // Initialize the raw CAN recorder (capture subsystem; runtime toggled).
@@ -150,7 +154,7 @@ public:
                     (unsigned long)sm.usedBytes(), (unsigned long)sm.totalBytes(), (unsigned long)sm.freeBytes());
     }
     Serial.printf("TARGET: %s / %s / %u WS2812B LEDs\r\n",
-                  config::vehicle, config::transceiver, config::ledCount);
+                  config::vehicle, config::transceiver, ConfigManager::instance().runningLedCount());
     Serial.println("RECEIVE ONLY: Breakout CTX tied to 3V3 directly, GPIO17 disconnected, software listen-only");
 #endif
 

@@ -190,6 +190,29 @@ static void staged_transaction_over_ble() {
   CHECK(lastResult(ble).statusCode == BLE_CFG_STATUS_OK);
   CHECK(lastResult(ble).resultFlags & BLE_CFG_RESULT_FLAG_APPLIED);
   CHECK(cm.active().isPowerOn == false); // applied atomically
+
+  auto request = [&](uint8_t opcode, std::vector<uint8_t> payload, bool staged = false) {
+    ble.testEnqueueCommand(makeCmd(opcode, payload, 33, staged), 7);
+    drain(ble, cand, 80004);
+    return lastResult(ble);
+  };
+  for (const auto& payload : std::vector<std::vector<uint8_t>>{{}, {1}, {1, 0}, {1, 65}, {2, 12}}) {
+    CHECK(request(BLE_CFG_OP_SET_LED_COUNT, payload).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  }
+  CHECK(request(BLE_CFG_OP_SET_LED_COUNT, {1, 64}).resultFlags == BLE_CFG_RESULT_FLAG_APPLIED);
+  CHECK(cm.active().physicalLedCount == 64 && cm.runningLedCount() == 6);
+  CHECK(request(BLE_CFG_OP_SAVE_CONFIG, {0, 0, 0, 0}).statusCode == BLE_CFG_STATUS_INVALID_STATE);
+  CHECK(request(BLE_CFG_OP_BEGIN_TRANSACTION, {}).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(request(BLE_CFG_OP_SAVE_CONFIG, {}).statusCode == BLE_CFG_STATUS_INVALID_STATE);
+  CHECK(request(BLE_CFG_OP_ABORT_TRANSACTION, {}).statusCode == BLE_CFG_STATUS_OK);
+  const uint32_t revision = cm.activeRevision();
+  const auto verified = request(BLE_CFG_OP_SAVE_CONFIG,
+      {uint8_t(revision), uint8_t(revision >> 8), uint8_t(revision >> 16), uint8_t(revision >> 24)});
+  CHECK(verified.statusCode == BLE_CFG_STATUS_OK && verified.payloadLength == 1);
+  CHECK(verified.payload[0] == static_cast<uint8_t>(ConfigSaveStatus::Verified));
+  const auto legacy = request(BLE_CFG_OP_SAVE_CONFIG, {});
+  CHECK(legacy.statusCode == BLE_CFG_STATUS_OK && legacy.payloadLength == 0);
+  CHECK(legacy.resultFlags & BLE_CFG_RESULT_FLAG_PERSISTED);
 }
 
 static void calibration_workflow_over_ble() {

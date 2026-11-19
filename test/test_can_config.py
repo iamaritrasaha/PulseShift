@@ -21,7 +21,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_conflicts_and_invalid_settings_rejected(self):
         cases=[{"PULSESHIFT_LED_DATA_GPIO":"16"},{"PULSESHIFT_LED_DATA_GPIO":"17"},
            {"PULSESHIFT_LED_DATA_GPIO":"20"},{"PULSESHIFT_LED_COUNT":"0"},
-           {"PULSESHIFT_LED_COUNT":"7"},
+           {"PULSESHIFT_LED_COUNT":"65"},
            {"PULSESHIFT_CAN_RX_GPIO":"17"},{"PULSESHIFT_CAN_BITRATE":"123456"},
            {"PULSESHIFT_SERIAL_DIAGNOSTICS":"2"},{"PULSESHIFT_BLE_ENABLED":"2"}]
         for changes in cases:
