@@ -779,6 +779,14 @@ BleConfigStatusCode ConfigManager::saveLightingSetup(const uint8_t* data, size_t
   return BLE_CFG_STATUS_OK;
 }
 
+BleConfigStatusCode ConfigManager::stageLightingSetup(const uint8_t* data, size_t length) {
+  if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
+  PulseShiftConfig candidate = staged_;
+  if (!data || !decodeLightingSetup(data, length, candidate)) return BLE_CFG_STATUS_VALIDATION_FAILED;
+  staged_ = candidate;
+  return BLE_CFG_STATUS_OK;
+}
+
 bool ConfigManager::persistConfig(const PulseShiftConfig& config, bool appliesToActive) {
   lastNvsSaveMs_ = millis();
   if (!validateConfig(config)) {
@@ -803,6 +811,7 @@ bool ConfigManager::persistConfig(const PulseShiftConfig& config, bool appliesTo
   blob.setupLength = static_cast<uint8_t>(encodeLightingSetup(config, blob.setup));
   blob.crc32 = computeCrc32(reinterpret_cast<const uint8_t*>(&blob), offsetof(NvsConfigBlobV5, crc32));
   activeMatchesNvs_ = false;
+  savedInstalledLedCount_ = 0; // A failed write or readback leaves flash unconfirmed.
   const bool written = nvs_set_blob(handle, NVS_KEY_V5, &blob, sizeof(blob)) == ESP_OK &&
       nvs_commit(handle) == ESP_OK;
   nvs_close(handle);

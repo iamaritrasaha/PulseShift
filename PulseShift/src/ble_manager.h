@@ -298,6 +298,7 @@ class BleManager {
   struct LightingUpload {
     bool active = false;
     bool startedOnLink = false;
+    bool staged = false;
     uint16_t id = 0;
     uint16_t connection = 0;
     uint16_t length = 0;

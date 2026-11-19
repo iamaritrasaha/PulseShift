@@ -1568,6 +1568,11 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
         status = BLE_CFG_STATUS_INVALID_PARAM;
         break;
       }
+      if (lightingUpload_.active && uint32_t(nowMs - lightingUpload_.startedMs) < 30000) {
+        status = BLE_CFG_STATUS_BUSY;
+        break;
+      }
+      lightingUpload_.active = false;
       const bool ok = ConfigManager::instance().beginTransaction(pkt.payloadLength == 1);
       status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_INVALID_STATE;
       if (ok) resFlags |= BLE_CFG_RESULT_FLAG_STAGED;
@@ -1575,6 +1580,10 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_COMMIT_TRANSACTION: {
+      if (lightingUpload_.active && lightingUpload_.staged) {
+        status = BLE_CFG_STATUS_BUSY;
+        break;
+      }
       const bool ok = ConfigManager::instance().commitTransaction();
       status = ok ? BLE_CFG_STATUS_OK : BLE_CFG_STATUS_VALIDATION_FAILED;
       if (ok) {
@@ -1585,6 +1594,7 @@ void BleManager::processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candi
     }
 
     case BLE_CFG_OP_ABORT_TRANSACTION: {
+      if (lightingUpload_.staged) lightingUpload_.active = false;
       ConfigManager::instance().abortTransaction();
       status = BLE_CFG_STATUS_OK;
       resFlags = 0;
@@ -1979,7 +1989,6 @@ void BleManager::processLightingUpload(const BleConfigExtCommandPacket& pkt, uin
   };
   if (upload.active && uint32_t(now - upload.startedMs) >= 30000) upload.active = false;
   result.statusCode = BLE_CFG_STATUS_INVALID_PARAM;
-  if (pkt.flags != 0) return;
 
   if (pkt.opcode == BLE_CFG_OP_LIGHTING_BEGIN) {
     if (pkt.payloadLength != 11) return;
@@ -1989,7 +1998,8 @@ void BleManager::processLightingUpload(const BleConfigExtCommandPacket& pkt, uin
     }
     const uint16_t length = read16(pkt.payload + 1);
     if (length < LIGHTING_SETUP_HEADER || length > LIGHTING_SETUP_MAX) return;
-    if (upload.active || config.isStagedTransactionActive() ||
+    const bool staged = (pkt.flags & BLE_CFG_FLAG_STAGED) != 0;
+    if (upload.active || config.isStagedTransactionActive() != staged ||
         OtaManager::instance().state() != OtaEngineState::Idle) {
       result.statusCode = BLE_CFG_STATUS_BUSY;
       return;
@@ -2002,6 +2012,7 @@ void BleManager::processLightingUpload(const BleConfigExtCommandPacket& pkt, uin
       return;
     }
     upload.active = upload.startedOnLink = true;
+    upload.staged = staged;
     upload.id = pkt.sequence;
     upload.connection = connId;
     upload.length = length;
@@ -2014,7 +2025,7 @@ void BleManager::processLightingUpload(const BleConfigExtCommandPacket& pkt, uin
     return;
   }
 
-  if (pkt.payloadLength < 2) return;
+  if (pkt.flags != 0 || pkt.payloadLength < 2) return;
   if (!upload.active || upload.connection != connId || read16(pkt.payload) != upload.id) {
     result.statusCode = BLE_CFG_STATUS_INVALID_STATE;
     return;
@@ -2041,6 +2052,9 @@ void BleManager::processLightingUpload(const BleConfigExtCommandPacket& pkt, uin
     result.statusCode = BLE_CFG_STATUS_INTEGRITY_ERROR;
   } else if (OtaManager::instance().state() != OtaEngineState::Idle) {
     result.statusCode = BLE_CFG_STATUS_BUSY;
+  } else if (upload.staged) {
+    result.statusCode = config.stageLightingSetup(upload.data, upload.length);
+    if (result.statusCode == BLE_CFG_STATUS_OK) result.resultFlags = BLE_CFG_RESULT_FLAG_STAGED;
   } else {
     result.statusCode = config.saveLightingSetup(upload.data, upload.length);
     if (result.statusCode == BLE_CFG_STATUS_OK) {

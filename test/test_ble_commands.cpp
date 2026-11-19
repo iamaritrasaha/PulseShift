@@ -1700,8 +1700,8 @@ static void test_lighting_setup_transfer() {
   cfg.begin();
   cfg.triggerAuthWindow(now);
   uint16_t sequence = 500;
-  auto send = [&](uint8_t opcode, const std::vector<uint8_t>& data, uint16_t conn = 9) {
-    ble.testEnqueueCommand(makeCmd(opcode, data, sequence++, false), conn);
+  auto send = [&](uint8_t opcode, const std::vector<uint8_t>& data, bool staged = false) {
+    ble.testEnqueueCommand(makeCmd(opcode, data, sequence++, staged), 9);
     drain(ble, candidate, ++now);
     return lastResult(ble);
   };
@@ -1716,11 +1716,11 @@ static void test_lighting_setup_transfer() {
   auto append32 = [](std::vector<uint8_t>& bytes, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) bytes.push_back(value >> (i * 8));
   };
-  auto begin = [&](uint32_t checksum, uint8_t version = 1) {
+  auto begin = [&](uint32_t checksum, uint8_t version = 1, bool staged = false) {
     std::vector<uint8_t> args{version, static_cast<uint8_t>(data.size()), 0};
     append32(args, checksum);
     append32(args, cfg.activeRevision());
-    return send(BLE_CFG_OP_LIGHTING_BEGIN, args);
+    return send(BLE_CFG_OP_LIGHTING_BEGIN, args, staged);
   };
   auto transaction = [](uint16_t id) {
     return std::vector<uint8_t>{static_cast<uint8_t>(id & 0xff), static_cast<uint8_t>(id >> 8)};
@@ -1770,6 +1770,28 @@ static void test_lighting_setup_transfer() {
   CHECK(oldLen > 0 && extLen == oldLen + 2 + data.size() + 4);
   CHECK(extended[oldLen - 4] == 0x21 && extended[oldLen - 3] == data.size());
   CHECK(memcmp(extended + oldLen - 2, data.data(), data.size()) == 0);
+
+  CHECK(send(BLE_CFG_OP_BEGIN_TRANSACTION, {}).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(send(BLE_CFG_OP_SET_BRIGHTNESS, {51}, true).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  data[9] = 0; // Disable ambient in the preset, retaining the chosen pattern.
+  start = begin(ConfigManager::computeCrc32(data.data(), data.size()), 1, true);
+  CHECK(start.resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(send(BLE_CFG_OP_COMMIT_TRANSACTION, {}).statusCode == BLE_CFG_STATUS_BUSY);
+  transfer(start.sequence);
+  CHECK(send(BLE_CFG_OP_LIGHTING_SAVE, transaction(start.sequence)).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(cfg.active().ambient.enabled && cfg.active().brightness == 200 && cfg.activeRevision() == 2);
+  CHECK(send(BLE_CFG_OP_COMMIT_TRANSACTION, {}).resultFlags == BLE_CFG_RESULT_FLAG_APPLIED);
+  CHECK(!cfg.active().ambient.enabled && cfg.active().brightness == 51 && !cfg.activeMatchesNvs());
+
+  CHECK(send(BLE_CFG_OP_ANIMATION_PREVIEW, {1, 4, 0xD0, 7}).statusCode == BLE_CFG_STATUS_INVALID_STATE);
+  ble.publishAnimationState(AmbientStatus::Waiting, true);
+  const auto status = send(BLE_CFG_OP_AMBIENT_STATUS, {1});
+  CHECK(status.payloadLength == 3 && status.payload[1] == static_cast<uint8_t>(AmbientStatus::Waiting));
+  CHECK(send(BLE_CFG_OP_ANIMATION_PREVIEW, {1, 4, 0xD0, 7}).resultFlags == BLE_CFG_RESULT_FLAG_APPLIED);
+  uint16_t duration = 0;
+  CHECK(ble.takeAnimationPreview(duration) == 4 && duration == 2000);
+  CHECK(ble.takeAnimationPreview(duration) == 0);
+  CHECK(cfg.activeRevision() == 3);
   CHECK(ble.testResultCount() < 128);
 }
 

@@ -473,7 +473,7 @@ Multi-byte fields below use little endian.
 | --- | --- | --- |
 | `GET_SNAPSHOT` (`02`) | Empty for legacy, `[1]` for extended | Adds TLV `21` (setup) and `22` (version, saved count or zero if unconfirmed) to the existing CRC-protected stream |
 | `LIGHTING_BEGIN` (`70`) | Version u8, payload length u16, IEEE CRC-32 u32, base revision u32 | Staged; command sequence is the upload ID |
-| `LIGHTING_DATA` (`71`) | Upload ID u16, byte offset u16, 1–10 data bytes | Staged, contiguous offsets only |
+| `LIGHTING_DATA` (`71`) | Upload ID u16, byte offset u16, 1-10 data bytes | Staged, contiguous offsets only |
 | `LIGHTING_SAVE` (`72`) | Upload ID u16 | Applied + persisted only after verified NVS readback; storage errors carry the save status |
 | `LIGHTING_CANCEL` (`73`) | Upload ID u16 | Discards partial upload |
 | `AMBIENT_STATUS` (`74`) | Version u8 | Version, playback status (off 0, playing 1, paused by RPM 2, safety 3, waiting 4), preview eligibility (0/1) |
@@ -494,6 +494,10 @@ wrong transaction ID, invalid offsets, incomplete payloads and CRC mismatches
 fail before changing active settings. Status 11 identifies an integrity error.
 Configuration results reference each command sequence. Clients must check the
 final revision and the full extended snapshot including the flash-match flag.
+An app applying a phone preset can open a standard transaction and set the
+staged flag on `LIGHTING_BEGIN` only. In that case `LIGHTING_SAVE` sets the
+staged copy and acknowledges Staged. The subsequent standard commit and
+verified save retain their existing meanings.
 
 Old snapshots keep the original six thresholds, strip-count extension and
 combined startup field. Legacy startup writes translate the loop bit to the

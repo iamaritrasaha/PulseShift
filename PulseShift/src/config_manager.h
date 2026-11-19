@@ -134,6 +134,7 @@ class ConfigManager {
   // report persisted success unless this returned true.
   bool saveToNvs();
   BleConfigStatusCode saveLightingSetup(const uint8_t* data, size_t length);
+  BleConfigStatusCode stageLightingSetup(const uint8_t* data, size_t length);
   bool restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved = nullptr);
 
   // Snapshot Serialization
