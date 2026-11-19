@@ -16,7 +16,7 @@ The application loads and validates configuration before initializing LED output
 
 The count used by RMT is latched at boot. Setting or reloading a count during a running session changes the configuration and leaves the RMT channel and its in-flight symbols alone. Reboot after a verified save to apply the new count. The physical pixel with logical index i uses zone floor(i × 6 / N), where N is the running count. Direction reverses the complete rendered frame. This preserves six-stage behavior at six LEDs. A short strip can represent only the zones mapped to its available pixels.
 
-The implementation bounds counts to 1–64. For 64 pixels the encoder supplies 1,537 symbols, including a 300 µs reset interval. The encoded frame is at most 2.451 ms at the configured RMT clock. This is an encoded timing bound. The classic ESP32 streams long frames through its non-DMA RMT memory and can be sensitive to interrupt latency. Validate the target strip on GPIO27 under sustained BLE traffic before bench sign-off. Use a suitably sized 5 V strip supply with a common ground and budget up to 60 mA per LED at full white.
+The implementation bounds counts to 1 through 64. For 64 pixels the encoder supplies 1,537 symbols, including a 300 µs reset interval. The encoded frame is at most 2.451 ms at the configured RMT clock. This is an encoded timing bound. The classic ESP32 streams long frames through its non-DMA RMT memory and can be sensitive to interrupt latency. Validate the target strip on GPIO27 under sustained BLE traffic before bench sign-off. Use a suitably sized 5 V strip supply with a common ground and budget up to 60 mA per LED at full white.
 
 ## Rollback
 

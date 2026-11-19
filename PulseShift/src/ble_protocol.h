@@ -114,7 +114,7 @@ struct BleLogChunkPacket {
 
 #define PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION 2
 
-// Firmware version reported in the Capabilities packet (schema 3 / protocol 2.3.0)
+// Firmware version reported in the Capabilities packet.
 #define PULSESHIFT_FW_VERSION_MAJOR 2
 #define PULSESHIFT_FW_VERSION_MINOR 4
 #define PULSESHIFT_FW_VERSION_PATCH 0
@@ -338,18 +338,18 @@ enum BleDiagnosticsTlvId : uint8_t {
 // Binary Capabilities Packet (UUID: ...d218, exactly 20 bytes)
 struct BleCapabilitiesPacket {
   uint8_t  version;                // Byte 0: Configuration protocol version = 2
-  uint8_t  physicalLedCount;       // Byte 1: Physical LED count (6)
+  uint8_t  physicalLedCount;       // Byte 1: Running physical LED count
   uint32_t featureMask;            // Bytes 2-5: Feature capability mask (little-endian)
   uint32_t currentRevision;        // Bytes 6-9: Current active configuration revision (little-endian)
   uint8_t  hardwarePresetCapacity; // Byte 10: Hardware preset storage capacity (0 = phone-managed)
   uint8_t  securityMode;           // Byte 11: Security / Provisioning mode
   uint8_t  firmwareMajor;          // Byte 12: Firmware version major (2)
-  uint8_t  firmwareMinor;          // Byte 13: Firmware version minor (3)
+  uint8_t  firmwareMinor;          // Byte 13: Firmware version minor
   uint8_t  firmwarePatch;          // Byte 14: Firmware version patch (0)
   uint8_t  maxStartupAnimId;       // Byte 15: Maximum supported startup animation ID (5)
   uint8_t  maxEffectId;            // Byte 16: Maximum supported effect ID (5)
   uint8_t  otaActiveSlot;          // Byte 17: Active OTA slot (0 = app0, 1 = app1)
-  uint8_t  protocolMinor;          // Byte 18: Minor protocol revision (3)
+  uint8_t  protocolMinor;          // Byte 18: Minor protocol revision
   uint8_t  otaFlags;               // Byte 19: Bit 0 = OTA available, Bit 1 = Rollback supported
 };
 

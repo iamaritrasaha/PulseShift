@@ -94,6 +94,9 @@ class ConfigManager {
   bool reloadFromNvs();
 
   const PulseShiftConfig& active() const { return active_; }
+#if defined(PULSESHIFT_TEST_BUILD)
+  PulseShiftConfig& activeMutable() { return active_; }
+#endif
 
   uint32_t activeRevision() const { return active_.activeRevision; }
   uint8_t runningLedCount() const { return runningLedCount_; }
