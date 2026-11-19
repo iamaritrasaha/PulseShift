@@ -32,10 +32,12 @@ namespace {
 constexpr const char* NVS_NAMESPACE = "ps_cfg";
 constexpr const char* NVS_KEY_BLOB = "blob";
 constexpr const char* NVS_KEY_V4 = "blob4";
+constexpr const char* NVS_KEY_V5 = "blob5";
 constexpr uint32_t NVS_MAGIC = 0x50534332; // "PSC2" in ASCII (PulseShift Config)
 constexpr uint16_t NVS_SCHEMA_V2 = 2;
 constexpr uint16_t NVS_SCHEMA_V3 = 3;
 constexpr uint16_t NVS_SCHEMA_V4 = 4;
+constexpr uint16_t NVS_SCHEMA_V5 = 5;
 
 constexpr const char* NVS_SEC_NAMESPACE = "ps_sec";
 constexpr const char* NVS_KEY_CREDS = "creds";
@@ -56,6 +58,16 @@ struct NvsConfigBlobV4 {
   uint16_t length;
   uint8_t cfg[sizeof(PulseShiftConfigV3)];
   uint8_t physicalLedCount;
+  uint32_t crc32;
+};
+
+struct NvsConfigBlobV5 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t length;
+  uint8_t cfg[sizeof(PulseShiftConfigV3)];
+  uint8_t setupLength;
+  uint8_t setup[LIGHTING_SETUP_MAX];
   uint32_t crc32;
 };
 
@@ -105,6 +117,77 @@ bool validLedCount(uint8_t count) {
   return count >= config::minPhysicalLeds && count <= config::maxPhysicalLeds;
 }
 
+void applyLegacyAnimation(PulseShiftConfig& cfg, uint8_t pattern, uint16_t duration) {
+  cfg.bootEnabled = pattern != 0;
+  cfg.startupAnimation = pattern ? pattern : 1;
+  cfg.startupDurationMs = duration & 0x7FFFu;
+  cfg.ambient.enabled = (duration & 0x8000u) && pattern != 0;
+  if (pattern != 0) cfg.ambient.pattern = pattern;
+  cfg.ambient.cycleMs = cfg.startupDurationMs;
+}
+
+bool validDuration(uint16_t ms) { return ms >= 100 && ms <= 10000; }
+
+uint16_t readU16(const uint8_t* data) {
+  return static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
+}
+
+void writeU16(uint8_t* data, uint16_t value) {
+  data[0] = static_cast<uint8_t>(value);
+  data[1] = static_cast<uint8_t>(value >> 8);
+}
+
+size_t encodeLightingSetup(const PulseShiftConfig& cfg, uint8_t* data) {
+  const auto& mapping = cfg.rpmMapping;
+  data[0] = LIGHTING_SETUP_VERSION;
+  data[1] = cfg.installedLedCount;
+  data[2] = mapping.activeLedCount;
+  data[3] = static_cast<uint8_t>(mapping.mode);
+  data[4] = mapping.entries;
+  data[5] = cfg.bootEnabled;
+  data[6] = cfg.startupAnimation;
+  writeU16(data + 7, cfg.startupDurationMs);
+  data[9] = cfg.ambient.enabled;
+  data[10] = cfg.ambient.pattern;
+  writeU16(data + 11, cfg.ambient.cycleMs);
+  writeU16(data + 13, cfg.warningRpm);
+  size_t offset = LIGHTING_SETUP_HEADER;
+  for (uint8_t i = 0; i < mapping.entries; ++i) {
+    writeU16(data + offset, mapping.thresholds[i]);
+    offset += 2;
+    if (mapping.mode == RpmMappingMode::Grouped) data[offset++] = mapping.groupSizes[i];
+  }
+  return offset;
+}
+
+bool decodeLightingSetup(const uint8_t* data, size_t length, PulseShiftConfig& cfg) {
+  if (length < LIGHTING_SETUP_HEADER || length > LIGHTING_SETUP_MAX ||
+      data[0] != LIGHTING_SETUP_VERSION || data[4] > config::maxPhysicalLeds ||
+      data[5] > 1 || data[9] > 1) return false;
+  const auto mode = static_cast<RpmMappingMode>(data[3]);
+  const bool grouped = mode == RpmMappingMode::Grouped;
+  if (length != LIGHTING_SETUP_HEADER + data[4] * (grouped ? 3u : 2u)) return false;
+  cfg.installedLedCount = data[1];
+  cfg.rpmMapping = RpmMapping{};
+  cfg.rpmMapping.activeLedCount = data[2];
+  cfg.rpmMapping.mode = mode;
+  cfg.rpmMapping.entries = data[4];
+  cfg.bootEnabled = data[5];
+  cfg.startupAnimation = data[6];
+  cfg.startupDurationMs = readU16(data + 7);
+  cfg.ambient.enabled = data[9];
+  cfg.ambient.pattern = data[10];
+  cfg.ambient.cycleMs = readU16(data + 11);
+  cfg.warningRpm = readU16(data + 13);
+  size_t offset = LIGHTING_SETUP_HEADER;
+  for (uint8_t i = 0; i < cfg.rpmMapping.entries; ++i) {
+    cfg.rpmMapping.thresholds[i] = readU16(data + offset);
+    offset += 2;
+    if (grouped) cfg.rpmMapping.groupSizes[i] = data[offset++];
+  }
+  return ConfigManager::validateConfig(cfg);
+}
+
 bool loadedConfiguration(ConfigLoadStatus status) {
   return status == ConfigLoadStatus::Loaded || status == ConfigLoadStatus::Legacy ||
       status == ConfigLoadStatus::RecoveredLegacy || status == ConfigLoadStatus::CountDefaulted;
@@ -118,13 +201,25 @@ bool validBlob(const Blob& blob, uint16_t version) {
                                                  offsetof(Blob, crc32));
 }
 
-bool decodeV3(const uint8_t* data, PulseShiftConfig& cfg) {
+bool decodeV3Fields(const uint8_t* data, PulseShiftConfig& cfg) {
   if (data[offsetof(PulseShiftConfigV3, isPowerOn)] > 1 ||
       data[offsetof(PulseShiftConfigV3, candidateLittleEndian)] > 1 ||
       data[offsetof(PulseShiftConfigV3, isExtendedFrame)] > 1 ||
       data[offsetof(PulseShiftConfigV3, calibrationVerified)] > 1) return false;
   memcpy(static_cast<PulseShiftConfigV3*>(&cfg), data, sizeof(PulseShiftConfigV3));
+  return true;
+}
+
+bool decodeV3(const uint8_t* data, PulseShiftConfig& cfg) {
+  if (!decodeV3Fields(data, cfg)) return false;
+  if (cfg.startupAnimation == 0 && (cfg.startupDurationMs & 0x8000u)) return false;
+  applyLegacyAnimation(cfg, cfg.startupAnimation, cfg.startupDurationMs);
   return ConfigManager::validateConfig(cfg);
+}
+
+bool decodeV5(const NvsConfigBlobV5& blob, PulseShiftConfig& cfg) {
+  return validBlob(blob, NVS_SCHEMA_V5) && decodeV3Fields(blob.cfg, cfg) &&
+      decodeLightingSetup(blob.setup, blob.setupLength, cfg);
 }
 #endif
 } // namespace
@@ -159,7 +254,7 @@ uint32_t ConfigManager::computeCrc32(const uint8_t* data, size_t length) {
 }
 
 bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
-  if (cfg.schemaVersion != 3 || !validLedCount(cfg.physicalLedCount)) return false;
+  if (cfg.schemaVersion != 3 || !validLedCount(cfg.installedLedCount)) return false;
   if (cfg.effect > 5) return false; // 5 is the unverified, standalone RPM preview
   // Safety rule: RPM Bar (effect 4) requires a bound verification record with
   // enough operating points to be meaningful.
@@ -170,15 +265,17 @@ bool ConfigManager::validateConfig(const PulseShiftConfig& cfg) {
   if (cfg.effectSpeed > 100) return false;
   if (cfg.ledDirection > 1) return false;
   if (cfg.startupAnimation > 5) return false;
-  if (cfg.startupAnimation == 0 && (cfg.startupDurationMs & 0x8000u) != 0) return false;
-  if ((cfg.startupDurationMs & 0x7FFFu) < 100 || (cfg.startupDurationMs & 0x7FFFu) > 10000) return false;
+  if (!validDuration(cfg.startupDurationMs) || !validDuration(cfg.ambient.cycleMs) ||
+      cfg.ambient.pattern < 1 || cfg.ambient.pattern > 5) return false;
 
   // Thresholds validation: Monotonic ascending and within 0..20,000 RPM
   for (uint8_t i = 0; i < config::rpmStages; ++i) {
     if (cfg.rpmThresholds[i] > 20000) return false;
     if (i > 0 && cfg.rpmThresholds[i] < cfg.rpmThresholds[i - 1]) return false;
   }
-  if (cfg.warningRpm < cfg.rpmThresholds[config::rpmStages - 1] || cfg.warningRpm > 20000) return false;
+  if (cfg.warningRpm > 20000 || !cfg.rpmMapping.valid(cfg.installedLedCount, cfg.warningRpm)) return false;
+  if (cfg.rpmMapping.mode == RpmMappingMode::LegacyGrouped &&
+      cfg.warningRpm < cfg.rpmThresholds[config::rpmStages - 1]) return false;
   if (cfg.warningPatternId > 3) return false;
   if (cfg.rpmHysteresis > 2000) return false;
 
@@ -214,17 +311,28 @@ ConfigLoadStatus ConfigManager::loadConfigBlob(PulseShiftConfig& out) {
   if (opened == ESP_ERR_NVS_NOT_FOUND) return ConfigLoadStatus::Missing;
   if (opened != ESP_OK) return ConfigLoadStatus::Unavailable;
 
-  NvsConfigBlobV4 current{};
-  size_t size = sizeof(current);
-  const esp_err_t currentResult = nvs_get_blob(handle, NVS_KEY_V4, &current, &size);
+  NvsConfigBlobV5 newest{};
+  size_t size = sizeof(newest);
+  const auto newestResult = nvs_get_blob(handle, NVS_KEY_V5, &newest, &size);
   PulseShiftConfig decoded{};
+  if (newestResult == ESP_OK && size == sizeof(newest) && decodeV5(newest, decoded)) {
+    nvs_close(handle);
+    out = decoded;
+    return ConfigLoadStatus::Loaded;
+  }
+  decoded = PulseShiftConfig{};
+  NvsConfigBlobV4 current{};
+  size = sizeof(current);
+  const esp_err_t currentResult = nvs_get_blob(handle, NVS_KEY_V4, &current, &size);
   if (currentResult == ESP_OK && size == sizeof(current) &&
       validBlob(current, NVS_SCHEMA_V4) && decodeV3(current.cfg, decoded)) {
     const bool validCount = validLedCount(current.physicalLedCount);
-    decoded.physicalLedCount = validCount ? current.physicalLedCount : config::rpmStages;
+    decoded.installedLedCount = validCount ? current.physicalLedCount : config::rpmStages;
     nvs_close(handle);
     out = decoded;
-    return validCount ? ConfigLoadStatus::Loaded : ConfigLoadStatus::CountDefaulted;
+    if (!validCount) return ConfigLoadStatus::CountDefaulted;
+    return newestResult == ESP_ERR_NVS_NOT_FOUND ? ConfigLoadStatus::Legacy
+                                                : ConfigLoadStatus::RecoveredLegacy;
   }
 
   size = 0;
@@ -251,8 +359,7 @@ ConfigLoadStatus ConfigManager::loadConfigBlob(PulseShiftConfig& out) {
       decoded.effect = legacy.cfg.effect == 4 ? 0 : legacy.cfg.effect;
       decoded.effectSpeed = legacy.cfg.effectSpeed;
       decoded.ledDirection = legacy.cfg.ledDirection;
-      decoded.startupAnimation = legacy.cfg.startupAnimation;
-      decoded.startupDurationMs = legacy.cfg.startupDurationMs;
+      applyLegacyAnimation(decoded, legacy.cfg.startupAnimation, legacy.cfg.startupDurationMs);
       for (uint8_t i = 0; i < config::rpmStages; ++i) decoded.rpmThresholds[i] = legacy.cfg.rpmThresholds[i];
       decoded.warningRpm = legacy.cfg.warningRpm;
       decoded.warningPatternId = legacy.cfg.warningPatternId;
@@ -269,12 +376,13 @@ ConfigLoadStatus ConfigManager::loadConfigBlob(PulseShiftConfig& out) {
   }
   nvs_close(handle);
   if (migrated) {
-    decoded.physicalLedCount = config::rpmStages;
+    decoded.installedLedCount = config::rpmStages;
     out = decoded;
-    return currentResult == ESP_ERR_NVS_NOT_FOUND ? ConfigLoadStatus::Legacy
-                                                   : ConfigLoadStatus::RecoveredLegacy;
+    return newestResult == ESP_ERR_NVS_NOT_FOUND && currentResult == ESP_ERR_NVS_NOT_FOUND
+        ? ConfigLoadStatus::Legacy : ConfigLoadStatus::RecoveredLegacy;
   }
-  if (currentResult == ESP_ERR_NVS_NOT_FOUND && legacyResult == ESP_ERR_NVS_NOT_FOUND) {
+  if (newestResult == ESP_ERR_NVS_NOT_FOUND && currentResult == ESP_ERR_NVS_NOT_FOUND &&
+      legacyResult == ESP_ERR_NVS_NOT_FOUND) {
     return ConfigLoadStatus::Missing;
   }
   return ConfigLoadStatus::Invalid;
@@ -291,7 +399,8 @@ bool ConfigManager::begin(bool nvsAvailable) {
   saveStatus_ = ConfigSaveStatus::NoAttempt;
   lastNvsSaveMs_ = 0;
   bootLoadStatus_ = nvsAvailable_ ? loadConfigBlob(active_) : ConfigLoadStatus::Unavailable;
-  runningLedCount_ = active_.physicalLedCount;
+  runningLedCount_ = active_.installedLedCount;
+  savedInstalledLedCount_ = loadedConfiguration(bootLoadStatus_) ? runningLedCount_ : 0;
   activeMatchesNvs_ = bootLoadStatus_ == ConfigLoadStatus::Loaded;
   savedRevision_ = loadedConfiguration(bootLoadStatus_) ? active_.activeRevision : 0;
   matchedRevision_ = active_.activeRevision;
@@ -309,6 +418,7 @@ bool ConfigManager::reloadFromNvs() {
   PulseShiftConfig reloaded;
   const auto status = loadConfigBlob(reloaded);
   if (!loadedConfiguration(status)) return false;
+  savedInstalledLedCount_ = reloaded.installedLedCount;
   savedRevision_ = reloaded.activeRevision;
   reloaded.activeRevision = active_.activeRevision + 1;
   active_ = reloaded;
@@ -377,9 +487,14 @@ void ConfigManager::poll(uint32_t nowMs) {
   }
 }
 
-bool ConfigManager::beginTransaction() {
+bool ConfigManager::beginTransaction(bool useLegacyRpmMapping) {
   if (stagedTxActive_) return false;
   staged_ = active_;
+  if (useLegacyRpmMapping) {
+    const uint8_t activeCount = staged_.rpmMapping.activeLedCount;
+    staged_.rpmMapping = RpmMapping{};
+    staged_.rpmMapping.activeLedCount = activeCount;
+  }
   stagedTxActive_ = true;
   stagedTxStartMs_ = millis();
   return true;
@@ -495,20 +610,16 @@ BleConfigStatusCode ConfigManager::setStartupAnimation(uint8_t animId, uint16_t 
   // the render paths live in LedEffectEngine::renderStartup.
   if (animId > 5 || (durationMs & 0x7FFFu) < 100 || (durationMs & 0x7FFFu) > 10000 ||
       (animId == 0 && (durationMs & 0x8000u) != 0)) return BLE_CFG_STATUS_INVALID_PARAM;
-  if (isStaged) {
-    if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
-    staged_.startupAnimation = animId;
-    staged_.startupDurationMs = durationMs;
-    return BLE_CFG_STATUS_OK;
-  }
-  active_.startupAnimation = animId;
-  active_.startupDurationMs = durationMs;
-  active_.activeRevision++;
+  if (isStaged && !stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
+  applyLegacyAnimation(isStaged ? staged_ : active_, animId, durationMs);
+  if (!isStaged) ++active_.activeRevision;
   return BLE_CFG_STATUS_OK;
 }
 
 BleConfigStatusCode ConfigManager::setLedThreshold(uint8_t index, uint16_t rpm, bool isStaged) {
   if (index >= config::rpmStages || rpm > 20000) return BLE_CFG_STATUS_INVALID_PARAM;
+  if ((isStaged ? staged_ : active_).rpmMapping.mode != RpmMappingMode::LegacyGrouped)
+    return BLE_CFG_STATUS_UNSUPPORTED;
   if (isStaged) {
     if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
     staged_.rpmThresholds[index] = rpm;
@@ -536,7 +647,10 @@ BleConfigStatusCode ConfigManager::setShiftWarning(uint16_t warningRpm, uint8_t 
     staged_.warningPatternId = patternId;
     return BLE_CFG_STATUS_OK;
   }
-  if (warningRpm < active_.rpmThresholds[config::rpmStages - 1]) return BLE_CFG_STATUS_VALIDATION_FAILED;
+  if (!active_.rpmMapping.valid(active_.installedLedCount, warningRpm) ||
+      (active_.rpmMapping.mode == RpmMappingMode::LegacyGrouped &&
+       warningRpm < active_.rpmThresholds[config::rpmStages - 1]))
+    return BLE_CFG_STATUS_VALIDATION_FAILED;
 
   active_.warningRpm = warningRpm;
   active_.warningPatternId = patternId;
@@ -642,16 +756,40 @@ BleConfigStatusCode ConfigManager::setPhysicalLedCount(uint8_t count, bool isSta
   if (!validLedCount(count)) return BLE_CFG_STATUS_INVALID_PARAM;
   if (isStaged && !stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
   auto& target = isStaged ? staged_ : active_;
-  target.physicalLedCount = count;
+  if (!target.rpmMapping.valid(count, target.warningRpm)) return BLE_CFG_STATUS_VALIDATION_FAILED;
+  target.installedLedCount = count;
   if (!isStaged) ++active_.activeRevision;
   return BLE_CFG_STATUS_OK;
 }
 
 bool ConfigManager::saveToNvs() {
   if (stagedTxActive_) return false;
+  return persistConfig(active_, true);
+}
+
+BleConfigStatusCode ConfigManager::saveLightingSetup(const uint8_t* data, size_t length) {
+  if (stagedTxActive_) return BLE_CFG_STATUS_BUSY;
+  PulseShiftConfig candidate = active_;
+  if (!data || !decodeLightingSetup(data, length, candidate)) return BLE_CFG_STATUS_VALIDATION_FAILED;
+  ++candidate.activeRevision;
+  if (!persistConfig(candidate, false)) return BLE_CFG_STATUS_STORAGE_ERROR;
+  active_ = candidate;
+  matchedRevision_ = active_.activeRevision;
+  activeMatchesNvs_ = true;
+  return BLE_CFG_STATUS_OK;
+}
+
+BleConfigStatusCode ConfigManager::stageLightingSetup(const uint8_t* data, size_t length) {
+  if (!stagedTxActive_) return BLE_CFG_STATUS_INVALID_STATE;
+  PulseShiftConfig candidate = staged_;
+  if (!data || !decodeLightingSetup(data, length, candidate)) return BLE_CFG_STATUS_VALIDATION_FAILED;
+  staged_ = candidate;
+  return BLE_CFG_STATUS_OK;
+}
+
+bool ConfigManager::persistConfig(const PulseShiftConfig& config, bool appliesToActive) {
   lastNvsSaveMs_ = millis();
-  activeMatchesNvs_ = false;
-  if (!validateConfig(active_)) {
+  if (!validateConfig(config)) {
     saveStatus_ = ConfigSaveStatus::InvalidConfig;
     return false;
   }
@@ -665,14 +803,16 @@ bool ConfigManager::saveToNvs() {
     saveStatus_ = ConfigSaveStatus::OpenFailed;
     return false;
   }
-  NvsConfigBlobV4 blob{};
+  NvsConfigBlobV5 blob{};
   blob.magic = NVS_MAGIC;
-  blob.version = NVS_SCHEMA_V4;
+  blob.version = NVS_SCHEMA_V5;
   blob.length = sizeof(blob);
-  memcpy(blob.cfg, static_cast<const PulseShiftConfigV3*>(&active_), sizeof(blob.cfg));
-  blob.physicalLedCount = active_.physicalLedCount;
-  blob.crc32 = computeCrc32(reinterpret_cast<const uint8_t*>(&blob), offsetof(NvsConfigBlobV4, crc32));
-  const bool written = nvs_set_blob(handle, NVS_KEY_V4, &blob, sizeof(blob)) == ESP_OK &&
+  memcpy(blob.cfg, static_cast<const PulseShiftConfigV3*>(&config), sizeof(blob.cfg));
+  blob.setupLength = static_cast<uint8_t>(encodeLightingSetup(config, blob.setup));
+  blob.crc32 = computeCrc32(reinterpret_cast<const uint8_t*>(&blob), offsetof(NvsConfigBlobV5, crc32));
+  activeMatchesNvs_ = false;
+  savedInstalledLedCount_ = 0; // A failed write or readback leaves flash unconfirmed.
+  const bool written = nvs_set_blob(handle, NVS_KEY_V5, &blob, sizeof(blob)) == ESP_OK &&
       nvs_commit(handle) == ESP_OK;
   nvs_close(handle);
   if (!written) {
@@ -682,17 +822,21 @@ bool ConfigManager::saveToNvs() {
 
   saveStatus_ = ConfigSaveStatus::ReadbackFailed;
   if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return false;
-  NvsConfigBlobV4 stored{};
+  NvsConfigBlobV5 stored{};
   size_t size = sizeof(stored);
-  const bool read = nvs_get_blob(handle, NVS_KEY_V4, &stored, &size) == ESP_OK;
+  const bool read = nvs_get_blob(handle, NVS_KEY_V5, &stored, &size) == ESP_OK;
   nvs_close(handle);
   PulseShiftConfig decoded{};
-  if (!read || size != sizeof(stored) || !validBlob(stored, NVS_SCHEMA_V4) ||
-      memcmp(&stored, &blob, sizeof(blob)) != 0 || !decodeV3(stored.cfg, decoded)) return false;
+  if (!read || size != sizeof(stored) || memcmp(&stored, &blob, sizeof(blob)) != 0 ||
+      !decodeV5(stored, decoded)) return false;
 #endif
   saveStatus_ = ConfigSaveStatus::Verified;
-  savedRevision_ = matchedRevision_ = active_.activeRevision;
-  activeMatchesNvs_ = true;
+  savedRevision_ = config.activeRevision;
+  savedInstalledLedCount_ = config.installedLedCount;
+  if (appliesToActive) {
+    matchedRevision_ = config.activeRevision;
+    activeMatchesNvs_ = true;
+  }
   return true;
 }
 
@@ -714,8 +858,8 @@ bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved
   return true;
 }
 
-size_t ConfigManager::serializeSnapshot(uint8_t* outBuf, size_t maxLen) const {
-  if (!outBuf || maxLen < 160) return 0;
+size_t ConfigManager::serializeSnapshot(uint8_t* outBuf, size_t maxLen, bool includeSetup) const {
+  if (!outBuf || maxLen < 160 + (includeSetup ? LIGHTING_SETUP_MAX + 6 : 0)) return 0;
 
   size_t offset = 0;
   outBuf[offset++] = active_.schemaVersion; // Byte 0: 3
@@ -759,10 +903,13 @@ size_t ConfigManager::serializeSnapshot(uint8_t* outBuf, size_t maxLen) const {
   appendTlv(0x14, eff, 2);
 
   // TLV 0x15: startupAnimation & durationMs (3 bytes)
+  const uint16_t legacyDuration = active_.ambient.enabled
+      ? (active_.ambient.cycleMs | 0x8000u) : active_.startupDurationMs;
   uint8_t startAnim[3] = {
-    active_.startupAnimation,
-    static_cast<uint8_t>(active_.startupDurationMs & 0xFF),
-    static_cast<uint8_t>((active_.startupDurationMs >> 8) & 0xFF)
+    active_.ambient.enabled ? active_.ambient.pattern :
+        (active_.bootEnabled ? active_.startupAnimation : uint8_t{0}),
+    static_cast<uint8_t>(legacyDuration & 0xFF),
+    static_cast<uint8_t>(legacyDuration >> 8)
   };
   appendTlv(0x15, startAnim, 3);
 
@@ -854,12 +1001,19 @@ size_t ConfigManager::serializeSnapshot(uint8_t* outBuf, size_t maxLen) const {
     appendTlv(0x1E, hyst, 2);
   }
 
-  const uint8_t strip[5] = {1, active_.physicalLedCount, runningLedCount_,
+  const uint8_t strip[5] = {1, active_.installedLedCount, runningLedCount_,
                             config::minPhysicalLeds, config::maxPhysicalLeds};
   appendTlv(0x1F, strip, sizeof(strip));
 
   const uint8_t flashMatch[2] = {1, static_cast<uint8_t>(activeMatchesNvs())};
   appendTlv(0x20, flashMatch, sizeof(flashMatch));
+
+  if (includeSetup) {
+    uint8_t setup[LIGHTING_SETUP_MAX]{};
+    appendTlv(0x21, setup, static_cast<uint8_t>(encodeLightingSetup(active_, setup)));
+    const uint8_t savedCount[2] = {1, savedInstalledLedCount_};
+    appendTlv(0x22, savedCount, sizeof(savedCount));
+  }
 
   // Compute CRC32 over all serialized bytes so far
   const uint32_t crc = computeCrc32(outBuf, offset);

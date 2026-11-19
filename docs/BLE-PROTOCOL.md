@@ -463,3 +463,48 @@ SHA-256 Full Digest (32 bytes):
 Expected Auth Proof (First 8 bytes):
 [0x12, 0x38, 0xa0, 0x9b, 0x10, 0x7e, 0x9d, 0x79] -> Hex string: "1238a09b107e9d79"
 ```
+# Strip, RPM mapping and animation extension (2.5)
+
+Capability bit 23 and protocol minor ≥ 5 advertise version 1 of Lighting Setup.
+Standard Config V2 command, result and snapshot chunk sizes remain 20 bytes.
+Multi-byte fields below use little endian.
+
+| Operation | Request payload | Result |
+| --- | --- | --- |
+| `GET_SNAPSHOT` (`02`) | Empty for legacy, `[1]` for extended | Adds TLV `21` (setup) and `22` (version, saved count or zero if unconfirmed) to the existing CRC-protected stream |
+| `LIGHTING_BEGIN` (`70`) | Version u8, payload length u16, IEEE CRC-32 u32, base revision u32 | Staged; command sequence is the upload ID |
+| `LIGHTING_DATA` (`71`) | Upload ID u16, byte offset u16, 1-10 data bytes | Staged, contiguous offsets only |
+| `LIGHTING_SAVE` (`72`) | Upload ID u16 | Applied + persisted only after verified NVS readback; storage errors carry the save status |
+| `LIGHTING_CANCEL` (`73`) | Upload ID u16 | Discards partial upload |
+| `AMBIENT_STATUS` (`74`) | Version u8 | Version, playback status (off 0, playing 1, paused by RPM 2, safety 3, waiting 4), preview eligibility (0/1) |
+| `ANIMATION_PREVIEW` (`75`) | Version u8, pattern u8, duration u16 | Authenticated one-shot request, subject to current safety eligibility |
+
+Setup payload has a 15-byte header. Fields in order are version, installed count,
+active count (0 follows installed), mapping mode, entry count, boot enabled,
+boot pattern, boot duration u16, ambient enabled, ambient pattern, ambient
+cycle duration u16 and warning RPM u16. The entries after the header are
+min/max u16 for Automatic (mode 0), threshold u16 followed by size u8 for
+each Grouped entry (1), and one u16 per Individual pixel (2). Historical
+grouped mode (3) has no extra entries and uses the six base thresholds. The
+maximum setup size is 207 bytes.
+
+One authenticated, connection-bound upload is kept in RAM for up to 30 seconds.
+Disconnect clears it. Replayed or out-of-order starts, a stale base revision,
+wrong transaction ID, invalid offsets, incomplete payloads and CRC mismatches
+fail before changing active settings. Status 11 identifies an integrity error.
+Configuration results reference each command sequence. Clients must check the
+final revision and the full extended snapshot including the flash-match flag.
+An app applying a phone preset can open a standard transaction and set the
+staged flag on `LIGHTING_BEGIN` only. In that case `LIGHTING_SAVE` sets the
+staged copy and acknowledges Staged. The subsequent standard commit and
+verified save retain their existing meanings.
+
+Old snapshots keep the original six thresholds, strip-count extension and
+combined startup field. Legacy startup writes translate the loop bit to the
+ambient fields. Legacy single-threshold commands return Unsupported on a
+custom map. New clients applying historical six-stage profiles may send
+`BEGIN_TRANSACTION [1]` to stage selection of the legacy map along with the
+other preset fields. Older transactions keep their original empty payload.
+
+See [Strip setup, RPM mapping and ambient animation](LIGHTING-SETUP.md) for
+eligibility, migration and hardware validation.

@@ -50,6 +50,21 @@ void LedController::transmitAttemptedFrame(uint32_t now) {
   lastAttemptMs_ = now;
   ++attemptsCount_;
   if (driver_->write(lastAttemptedPixels_, pixelCount_)) {
+    finishTransmission(now);
+    return;
+  }
+  ++failureCount_;
+  lastAttemptFailed_ = true;
+  ready_ = driver_->isReady();
+  if (!ready_) lastInitAttemptMs_ = now;
+  recordError(now);
+}
+
+void LedController::finishTransmission(uint32_t now) {
+  const auto status = driver_->pollTransmission();
+  transmissionPending_ = status == LedDriverStatus::Busy;
+  if (transmissionPending_) return;
+  if (status == LedDriverStatus::TransmitOk) {
     memcpy(lastConfirmedPixels_, lastAttemptedPixels_, pixelCount_ * sizeof(RgbColor));
     lastConfirmedMs_ = now;
     hasConfirmedFrame_ = true;
@@ -82,7 +97,21 @@ void LedController::recordError(uint32_t now) {
       (unsigned long)failureCount_, (unsigned)initAttempts_, (unsigned)engine_.activeLayer(), frame);
 }
 
-void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy) {
+bool LedController::serviceTransmission(uint32_t now) {
+  if (!driver_) return true;
+  if (transmissionPending_) {
+    finishTransmission(now);
+  } else if (driver_->ownsPendingSymbols()) {
+    driver_->pollTransmission();
+    if (driver_->isTerminalFault()) {
+      ready_ = false;
+      recordError(now);
+    }
+  }
+  return !driver_->ownsPendingSymbols();
+}
+
+void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy, bool canTrafficSeen) {
   if (!driver_) return;
 
   // Safety, power and feedback layers can interrupt the preview. Its request
@@ -103,13 +132,25 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
   input.authWindowOpen = ConfigManager::instance().isAuthWindowOpen(now);
   input.testRpmActive = testRpmActive_;
   input.testRpm = testRpm_;
+  input.canTrafficSeen = canTrafficSeen;
+  const uint32_t previewElapsed = now - previewStartMs_;
+  if (previewElapsed >= previewDurationMs_) previewPattern_ = 0;
+  input.previewPattern = previewPattern_;
+  input.previewDurationMs = previewDurationMs_;
+  input.previewElapsedMs = previewElapsed;
 
   // 1. Calculate authoritative frame into engine
   engine_.update(now, ConfigManager::instance().active(), rpm, input);
+  if (!engine_.animationEligible()) previewPattern_ = 0;
 
   // 2. Fetch the newly calculated pixels
   for (uint8_t i = 0; i < pixelCount_; ++i) {
     calculatedPixels_[i] = engine_.getPixel(i);
+  }
+
+  if (transmissionPending_) {
+    finishTransmission(now);
+    if (transmissionPending_) return;
   }
 
   if (!ready_) {
@@ -181,6 +222,8 @@ void LedController::printStatus(uint32_t now) const {
     case LedActiveLayer::Decorative: layerName = "DECORATIVE (Configured Effect)"; break;
     case LedActiveLayer::Warning: layerName = "WARNING (RPM Shift Warning Overlay)"; break;
     case LedActiveLayer::ProvisionalRpm: layerName = "PROVISIONAL_RPM (Diagnostic Preview)"; break;
+    case LedActiveLayer::Ambient: layerName = "AMBIENT"; break;
+    case LedActiveLayer::AnimationPreview: layerName = "ANIMATION_PREVIEW"; break;
   }
   Serial.printf("Active Layer: %s\r\n", layerName);
   Serial.printf("Bench Test: %s | Test RPM: %u\r\n",

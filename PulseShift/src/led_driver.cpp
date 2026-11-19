@@ -88,16 +88,26 @@ bool Esp32RmtLedDriver::write(const RgbColor* pixels, uint8_t count) {
   }
   txPending_ = true;
   txStartedMs_ = millis();
-  while (!rmtTransmitCompleted(pin_)) {
-    if (uint32_t(millis() - txStartedMs_) >= TRANSMIT_TIMEOUT_MS) {
-      lastStatus_ = LedDriverStatus::Timeout;
-      return false;
-    }
-    delay(1);
-  }
-  txPending_ = false;
-  lastStatus_ = LedDriverStatus::TransmitOk;
+  lastStatus_ = LedDriverStatus::Busy;
   return true;
+}
+
+LedDriverStatus Esp32RmtLedDriver::pollTransmission() {
+  if (!txPending_ || isTerminalFault()) return lastStatus_;
+  if (rmtTransmitCompleted(pin_)) {
+    txPending_ = false;
+    lastStatus_ = LedDriverStatus::TransmitOk;
+  } else {
+    const uint32_t elapsed = millis() - txStartedMs_;
+    if (elapsed >= TRANSMIT_STALL_MS) {
+      // A late or missing TX_DONE does not release the HAL's borrowed buffer.
+      ready_ = false;
+      lastStatus_ = LedDriverStatus::TransmitStalled;
+    } else if (elapsed >= TRANSMIT_TIMEOUT_MS) {
+      lastStatus_ = LedDriverStatus::Timeout;
+    }
+  }
+  return lastStatus_;
 }
 
 const char* Esp32RmtLedDriver::lastStatusString() const {

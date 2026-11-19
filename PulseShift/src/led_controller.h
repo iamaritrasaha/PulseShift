@@ -28,8 +28,16 @@ class LedController {
   ~LedController() = default;
 
   bool begin();
+  // Poll completion before main-task flash I/O can interrupt RMT refills.
+  bool serviceTransmission(uint32_t now);
   // Render one frame and flush to hardware when output changed, retry is due, or periodic refresh is due.
-  void update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy);
+  void update(const LiveRpmSnapshot& rpm, uint32_t now, bool healthy, bool canTrafficSeen = false);
+
+  void previewAnimation(uint8_t pattern, uint16_t duration, uint32_t now) {
+    previewPattern_ = pattern;
+    previewDurationMs_ = duration;
+    previewStartMs_ = now;
+  }
 
   void triggerButtonFeedback(uint32_t now) {
     feedbackStartMs_ = now;
@@ -45,7 +53,7 @@ class LedController {
   uint16_t testRpm() const { return testRpm_; }
   bool isLiveRpmRendering() const {
     const LedActiveLayer layer = engine_.activeLayer();
-    return lastDriverStatus() == LedDriverStatus::TransmitOk &&
+    return hasConfirmedFrame_ && ready_ && !lastAttemptFailed_ &&
            (layer == LedActiveLayer::RpmBar || layer == LedActiveLayer::ProvisionalRpm ||
             layer == LedActiveLayer::Warning);
   }
@@ -93,6 +101,7 @@ class LedController {
  private:
   void initializeDriver(uint32_t now);
   void transmitAttemptedFrame(uint32_t now);
+  void finishTransmission(uint32_t now);
   void recordError(uint32_t now);
 
 #if defined(ARDUINO) && defined(ESP32)
@@ -107,11 +116,15 @@ class LedController {
   uint8_t initAttempts_ = 0;
   uint32_t lastInitAttemptMs_ = 0;
   bool lastAttemptFailed_ = false;
+  bool transmissionPending_ = false;
   uint32_t feedbackStartMs_ = 0;
   bool feedbackActive_ = false;
   uint16_t testRpm_ = 0;
   bool testRpmActive_ = false;
   uint32_t testRpmStartMs_ = 0;
+  uint8_t previewPattern_ = 0;
+  uint16_t previewDurationMs_ = 0;
+  uint32_t previewStartMs_ = 0;
 
   // Tri-state buffer architecture
   uint8_t pixelCount_ = config::ledCount;

@@ -1,5 +1,14 @@
 # PulseShift Firmware Release Notes
 
+## 2.5.0
+
+- Automatic, grouped and individual RPM mapping control up to 64 active pixels within a configurable strip.
+- A one-shot boot animation and an independent controller-side ambient loop use separate settings. Live RPM and safety layers take priority.
+- Config V2 negotiates bounded lighting transfers and versioned readback. Historical configuration loads losslessly into schema 5 on the first verified save.
+- The existing ESP32 RMT driver now polls transmission completion without a blocking wait. Bench acceptance, including loaded 64-pixel timing and real power cycles, remains pending.
+
+See [strip setup and hardware acceptance](docs/LIGHTING-SETUP.md).
+
 ## Unreleased - Reliability audit fixes
 
 - **Security (HIGH)**: v1 control page fetches (`GET_LOG_PAGE` `0x10`, `GET_CAPTURE_PAGE` `0x12`) now require an authenticated owner session bound to the requesting connection -- previously any BLE client in range could stream the raw CAN capture and diagnostic log. Cancel opcodes stay open; unauthenticated requests get an error chunk and a diagnostic event. Documented in `docs/BLE-PROTOCOL.md` §3.4.

@@ -206,13 +206,15 @@ public:
 
   void tick() {
     const uint32_t now = millis();
+    const bool flashAvailable = ledController_.serviceTransmission(now);
 
 #if defined(ARDUINO)
     // Rollback confirmation timeout: If booting from an OTA partition pending
     // verification and no authenticated companion confirmation (or serial OTA CONFIRM)
     // is received within 120 seconds, the new build is deemed unverified and the device
     // automatically rolls back to the prior known-good firmware slot.
-    if (!OtaManager::instance().rollbackConfirmed() && !bootVerificationTimeoutHandled_ && now >= 120000) {
+    if (flashAvailable && !OtaManager::instance().rollbackConfirmed() &&
+        !bootVerificationTimeoutHandled_ && now >= 120000) {
       bootVerificationTimeoutHandled_ = true;
       esp_ota_img_states_t ota_state;
       const esp_partition_t *runningPart = esp_ota_get_running_partition();
@@ -231,11 +233,11 @@ public:
     ConfigManager::instance().poll(now);
 
     // 1. Process physical BOOT button events
-    handleButton(now);
+    if (flashAvailable) handleButton(now);
 
     // 2. Process serial commands (optional bench console)
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
-    handleSerialInput(now);
+    if (flashAvailable) handleSerialInput(now);
 #endif
 
     // 3. Poll hardware transport
@@ -270,31 +272,44 @@ public:
     }
 
     // 5. Service storage queues and periodic diagnostic flushes
-    CanRecorder::instance().pump(now);
-    DiagLogger::instance().pump(now);
+    if (flashAvailable) {
+      CanRecorder::instance().pump(now);
+      DiagLogger::instance().pump(now);
+    }
 
-    // 6. Refresh the unified LED controller from the authoritative RPM snapshot
-    //    BEFORE BLE telemetry so the flag reflects the selected RPM layer
-    //    and the most recent driver result.
+    // BLE reports the last rendered layer and services configuration before
+    // the next RMT transfer. Flash work runs only when no symbols are borrowed.
     logger_.pump();
-    const auto rpmSnap = candidateMonitor_.snapshot(now);
-    ledController_.update(rpmSnap, now, transport_.healthy());
 
     // 5b. Service BLE GATT notifications, command queue and page streaming.
     //     RPM-driven rendering truth comes from the LED engine's current
     //     layer: the verified bar, the unverified provisional preview or the
     //     RPM warning overlay, never decorative effects or the synthetic
     //     bench test.
-    BleManager::instance().poll(now, candidateMonitor_, transport_, CanRecorder::instance(),
-                                ledController_.isLiveRpmRendering());
+    auto& ble = BleManager::instance();
+    auto ambientStatus = ledController_.ledEffects().ambientStatus();
+    if (!ledController_.isReady() && ambientStatus != AmbientStatus::Off)
+      ambientStatus = AmbientStatus::SuppressedBySafety;
+    ble.publishAnimationState(ambientStatus,
+                              ledController_.isReady() && ledController_.ledEffects().animationEligible());
+    ble.poll(now, candidateMonitor_, transport_, CanRecorder::instance(),
+             ledController_.isLiveRpmRendering(), flashAvailable);
 
     // A terminal-style Android app can request the same 10-second LED bench
     // test as Serial, but only through an authenticated BLE v2 command.
     uint16_t requestedTestRpm = 0;
     bool requestedTestActive = false;
-    if (BleManager::instance().takeBenchTestRequest(requestedTestRpm, requestedTestActive)) {
+    if (ble.takeBenchTestRequest(requestedTestRpm, requestedTestActive)) {
       ledController_.setTestRpm(requestedTestRpm, requestedTestActive, now);
     }
+    uint16_t previewDuration = 0;
+    if (const auto pattern = ble.takeAnimationPreview(previewDuration)) {
+      ledController_.previewAnimation(pattern, previewDuration, now);
+    }
+
+    const uint32_t renderNow = millis();
+    ledController_.update(candidateMonitor_.snapshot(renderNow), renderNow,
+                          transport_.healthy(), transport_.totalRx() != 0);
 
 #if PULSESHIFT_SERIAL_DIAGNOSTICS
     // Rate-limited live RPM candidate streaming (10 Hz, 100 ms)

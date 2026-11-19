@@ -139,7 +139,7 @@ class ProductionFirmwareIntegrityTests(unittest.TestCase):
 
         # Firmware version must match the variable strip and verified save release.
         self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MAJOR 2")
-        self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MINOR 4")
+        self.assertRegex(protocol, r"PULSESHIFT_FW_VERSION_MINOR 5")
 
     def test_bounded_command_queues_and_auth_binding(self):
         """Commands queue through a bounded ring; writes check the session's connection."""

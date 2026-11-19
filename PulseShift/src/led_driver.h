@@ -27,6 +27,8 @@ class ILedDriver {
   virtual ~ILedDriver() = default;
   virtual bool begin(uint8_t pin, uint8_t count) = 0;
   virtual bool write(const RgbColor* pixels, uint8_t count) = 0;
+  virtual LedDriverStatus pollTransmission() { return lastStatus(); }
+  virtual bool ownsPendingSymbols() const { return false; }
   virtual bool isReady() const = 0;
   virtual bool isTerminalFault() const { return false; }
   virtual LedDriverStatus lastStatus() const = 0;
@@ -44,6 +46,8 @@ class Esp32RmtLedDriver : public ILedDriver {
 
   bool begin(uint8_t pin, uint8_t count) override;
   bool write(const RgbColor* pixels, uint8_t count) override;
+  LedDriverStatus pollTransmission() override;
+  bool ownsPendingSymbols() const override { return txPending_ && !isTerminalFault(); }
   bool isReady() const override { return ready_; }
   bool isTerminalFault() const override {
     return lastStatus_ == LedDriverStatus::TransmitStalled || lastStatus_ == LedDriverStatus::DeinitFailed;

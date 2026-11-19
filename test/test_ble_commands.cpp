@@ -200,7 +200,7 @@ static void staged_transaction_over_ble() {
     CHECK(request(BLE_CFG_OP_SET_LED_COUNT, payload).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
   }
   CHECK(request(BLE_CFG_OP_SET_LED_COUNT, {1, 64}).resultFlags == BLE_CFG_RESULT_FLAG_APPLIED);
-  CHECK(cm.active().physicalLedCount == 64 && cm.runningLedCount() == 6);
+  CHECK(cm.active().installedLedCount == 64 && cm.runningLedCount() == 6);
   CHECK(request(BLE_CFG_OP_SAVE_CONFIG, {0, 0, 0, 0}).statusCode == BLE_CFG_STATUS_INVALID_STATE);
   CHECK(request(BLE_CFG_OP_BEGIN_TRANSACTION, {}).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
   CHECK(request(BLE_CFG_OP_SAVE_CONFIG, {}).statusCode == BLE_CFG_STATUS_INVALID_STATE);
@@ -1690,6 +1690,111 @@ static void test_capture_read_corruption_does_not_report_eof() {
   CHECK(file[corrupt] == originalCorruptValue);
 }
 
+static void test_lighting_setup_transfer() {
+  auto& ble = BleManager::instance();
+  auto& cfg = ConfigManager::instance();
+  RpmCandidateMonitor candidate;
+  uint32_t now = 750000;
+  ble.testResetDisconnectedLink();
+  ble.testClearResults();
+  cfg.begin();
+  cfg.triggerAuthWindow(now);
+  uint16_t sequence = 500;
+  auto send = [&](uint8_t opcode, const std::vector<uint8_t>& data, bool staged = false) {
+    ble.testEnqueueCommand(makeCmd(opcode, data, sequence++, staged), 9);
+    drain(ble, candidate, ++now);
+    return lastResult(ble);
+  };
+
+  std::vector<uint8_t> data{1, 64, 64, 2, 64, 1, 2, 0xD0, 7, 1, 4, 0xE8, 3, 0x28, 0x23};
+  for (uint8_t i = 0; i < 64; ++i) {
+    const uint16_t rpm = 1200 + i * 100;
+    data.push_back(rpm & 0xff);
+    data.push_back(rpm >> 8);
+  }
+  const uint32_t crc = ConfigManager::computeCrc32(data.data(), data.size());
+  auto append32 = [](std::vector<uint8_t>& bytes, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i) bytes.push_back(value >> (i * 8));
+  };
+  auto begin = [&](uint32_t checksum, uint8_t version = 1, bool staged = false) {
+    std::vector<uint8_t> args{version, static_cast<uint8_t>(data.size()), 0};
+    append32(args, checksum);
+    append32(args, cfg.activeRevision());
+    return send(BLE_CFG_OP_LIGHTING_BEGIN, args, staged);
+  };
+  auto transaction = [](uint16_t id) {
+    return std::vector<uint8_t>{static_cast<uint8_t>(id & 0xff), static_cast<uint8_t>(id >> 8)};
+  };
+  auto chunk = [&](uint16_t id, size_t offset) {
+    auto args = transaction(id);
+    args.push_back(offset & 0xff);
+    args.push_back(offset >> 8);
+    for (size_t i = offset; i < data.size() && i < offset + 10; ++i) args.push_back(data[i]);
+    return args;
+  };
+  auto transfer = [&](uint16_t id) {
+    for (size_t offset = 0; offset < data.size(); offset += 10) {
+      CHECK(send(BLE_CFG_OP_LIGHTING_DATA, chunk(id, offset)).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+    }
+  };
+  CHECK(send(BLE_CFG_OP_GET_SNAPSHOT, {2}).statusCode == BLE_CFG_STATUS_VERSION_MISMATCH);
+  CHECK(begin(crc, 2).statusCode == BLE_CFG_STATUS_VERSION_MISMATCH);
+  auto start = begin(crc);
+  CHECK(start.resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(send(BLE_CFG_OP_LIGHTING_DATA, chunk(start.sequence, 10)).statusCode == BLE_CFG_STATUS_INVALID_PARAM);
+  CHECK(send(BLE_CFG_OP_LIGHTING_SAVE, transaction(start.sequence)).statusCode == BLE_CFG_STATUS_INVALID_STATE);
+  CHECK(cfg.activeRevision() == 1);
+
+  start = begin(crc ^ 1);
+  transfer(start.sequence);
+  CHECK(send(BLE_CFG_OP_LIGHTING_SAVE, transaction(start.sequence)).statusCode == BLE_CFG_STATUS_INTEGRITY_ERROR);
+  CHECK(cfg.activeRevision() == 1);
+
+  start = begin(crc);
+  CHECK(send(BLE_CFG_OP_LIGHTING_DATA, chunk(start.sequence, 0)).statusCode == BLE_CFG_STATUS_OK);
+  ble.testResetDisconnectedLink();
+  cfg.triggerAuthWindow(now);
+  CHECK(send(BLE_CFG_OP_LIGHTING_SAVE, transaction(start.sequence)).statusCode == BLE_CFG_STATUS_INVALID_STATE);
+  start = begin(crc);
+  transfer(start.sequence);
+  const auto saved = send(BLE_CFG_OP_LIGHTING_SAVE, transaction(start.sequence));
+  CHECK(saved.resultFlags == (BLE_CFG_RESULT_FLAG_APPLIED | BLE_CFG_RESULT_FLAG_PERSISTED));
+  CHECK(saved.activeRevision == 2 && cfg.activeMatchesNvs());
+  CHECK(cfg.runningLedCount() == 6 && cfg.active().installedLedCount == 64);
+  CHECK(cfg.active().rpmMapping.thresholds[63] == 7500);
+  CHECK(send(BLE_CFG_OP_SET_LED_THRESHOLD, {0, 0xE8, 3}).statusCode == BLE_CFG_STATUS_UNSUPPORTED);
+
+  uint8_t old[512]{}, extended[512]{};
+  const size_t oldLen = cfg.serializeSnapshot(old, sizeof(old));
+  const size_t extLen = cfg.serializeSnapshot(extended, sizeof(extended), true);
+  CHECK(oldLen > 0 && extLen == oldLen + 2 + data.size() + 4);
+  CHECK(extended[oldLen - 4] == 0x21 && extended[oldLen - 3] == data.size());
+  CHECK(memcmp(extended + oldLen - 2, data.data(), data.size()) == 0);
+
+  CHECK(send(BLE_CFG_OP_BEGIN_TRANSACTION, {}).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(send(BLE_CFG_OP_SET_BRIGHTNESS, {51}, true).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  data[9] = 0; // Disable ambient in the preset, retaining the chosen pattern.
+  start = begin(ConfigManager::computeCrc32(data.data(), data.size()), 1, true);
+  CHECK(start.resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(send(BLE_CFG_OP_COMMIT_TRANSACTION, {}).statusCode == BLE_CFG_STATUS_BUSY);
+  transfer(start.sequence);
+  CHECK(send(BLE_CFG_OP_LIGHTING_SAVE, transaction(start.sequence)).resultFlags == BLE_CFG_RESULT_FLAG_STAGED);
+  CHECK(cfg.active().ambient.enabled && cfg.active().brightness == 200 && cfg.activeRevision() == 2);
+  CHECK(send(BLE_CFG_OP_COMMIT_TRANSACTION, {}).resultFlags == BLE_CFG_RESULT_FLAG_APPLIED);
+  CHECK(!cfg.active().ambient.enabled && cfg.active().brightness == 51 && !cfg.activeMatchesNvs());
+
+  CHECK(send(BLE_CFG_OP_ANIMATION_PREVIEW, {1, 4, 0xD0, 7}).statusCode == BLE_CFG_STATUS_INVALID_STATE);
+  ble.publishAnimationState(AmbientStatus::Waiting, true);
+  const auto status = send(BLE_CFG_OP_AMBIENT_STATUS, {1});
+  CHECK(status.payloadLength == 3 && status.payload[1] == static_cast<uint8_t>(AmbientStatus::Waiting));
+  CHECK(send(BLE_CFG_OP_ANIMATION_PREVIEW, {1, 4, 0xD0, 7}).resultFlags == BLE_CFG_RESULT_FLAG_APPLIED);
+  uint16_t duration = 0;
+  CHECK(ble.takeAnimationPreview(duration) == 4 && duration == 2000);
+  CHECK(ble.takeAnimationPreview(duration) == 0);
+  CHECK(cfg.activeRevision() == 3);
+  CHECK(ble.testResultCount() < 128);
+}
+
 int main() {
   read_queries_do_not_need_authorization();
   writes_require_authorization();
@@ -1723,6 +1828,7 @@ int main() {
   test_capture_retries_exact_wire_packet_and_eop();
   test_control_result_retry_and_snapshot_busy();
   test_capture_read_corruption_does_not_report_eof();
+  test_lighting_setup_transfer();
 
   std::printf("PASS BLE v2 command dispatch, auth binding, calibration, device ops, capture export and backpressure: %u checks\n", checks);
   return 0;

@@ -13,8 +13,11 @@ void LedEffectEngine::reset(uint32_t nowMs, uint8_t pixelCount) {
       ? pixelCount : config::ledCount;
   startupStartMs_ = nowMs;
   startupComplete_ = false;
-  observedStartupAnimation_ = 0xFF;
-  observedStartupDurationMs_ = 0;
+  activeLayer_ = LedActiveLayer::Off;
+  canEvidenceSeen_ = false;
+  engineWasRunning_ = false;
+  animationEligible_ = false;
+  lastBarCount_ = 0;
   barFromBenchTest_ = false;
   resetRpmLatches();
 }
@@ -45,52 +48,42 @@ RgbColor LedEffectEngine::hsvToRgb(uint8_t h, uint8_t s, uint8_t v) {
 }
 
 void LedEffectEngine::setAllPixels(RgbColor color) {
-  for (uint8_t i = 0; i < pixelCount_; ++i) {
+  for (uint8_t i = 0; i < renderCount_; ++i) {
     logicalPixels_[i] = color;
   }
 }
 
-void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg) {
-  const uint32_t dur = cfg.startupDurationMs & 0x7FFFu;
-  const bool looping = (cfg.startupDurationMs & 0x8000u) != 0;
-  const uint32_t totalElapsed = nowMs - startupStartMs_;
-  if (dur < 100 || (!looping && totalElapsed >= dur) || cfg.startupAnimation == 0) {
-    startupComplete_ = true;
-    return;
-  }
-
-  startupComplete_ = false;
-  const uint32_t elapsed = looping ? totalElapsed % dur : totalElapsed;
-
+void LedEffectEngine::renderAnimation(uint8_t pattern, uint32_t dur, uint32_t elapsed,
+                                      const PulseShiftConfig& cfg, bool ambient) {
   // Animation 1: Sweep
-  if (cfg.startupAnimation == 1) {
+  if (pattern == 1) {
     const uint32_t half = dur / 2;
     if (elapsed < half) {
       // Forward wipe
-      const uint32_t activeIdx = elapsed * pixelCount_ / half;
-      for (uint8_t i = 0; i < pixelCount_; ++i) {
-        logicalPixels_[i] = (i <= activeIdx) ? cfg.ledColors[zoneForPixel(i)] : RgbColor{0, 0, 0};
+      const uint32_t activeIdx = elapsed * renderCount_ / half;
+      for (uint8_t i = 0; i < renderCount_; ++i) {
+        logicalPixels_[i] = (i <= activeIdx) ? cfg.ledColors[colorZone(i)] : RgbColor{0, 0, 0};
       }
     } else {
       // Fade into active color
       const uint32_t dt = elapsed - half;
       const uint8_t factor = static_cast<uint8_t>(255 - (dt * 155 / half));
-      for (uint8_t i = 0; i < pixelCount_; ++i) {
-        logicalPixels_[i] = scaleColor(cfg.ledColors[zoneForPixel(i)], factor);
+      for (uint8_t i = 0; i < renderCount_; ++i) {
+        logicalPixels_[i] = scaleColor(cfg.ledColors[colorZone(i)], factor);
       }
     }
   }
   // Animation 2: Wave (Dual-crested spatial wave)
-  else if (cfg.startupAnimation == 2) {
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      const float phase = (elapsed * 6.28318f / dur) + (i * 6.28318f / pixelCount_);
+  else if (pattern == 2) {
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      const float phase = (elapsed * 6.28318f / dur) + (i * 6.28318f / renderCount_);
       const float sinVal = (sinf(phase) + 1.0f) * 0.5f; // 0.0 .. 1.0
       const uint8_t brightness = static_cast<uint8_t>(sinVal * 255.0f);
-      logicalPixels_[i] = scaleColor(cfg.ledColors[zoneForPixel(i)], brightness);
+      logicalPixels_[i] = scaleColor(cfg.ledColors[colorZone(i)], brightness);
     }
   }
   // Animation 3: Pulse (Heartbeat dual pulse)
-  else if (cfg.startupAnimation == 3) {
+  else if (pattern == 3) {
     const uint32_t phaseMs = elapsed % (dur / 2);
     const uint32_t pulseDur = dur / 4;
     uint8_t factor = 0;
@@ -99,26 +92,29 @@ void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg)
           ? static_cast<uint8_t>(phaseMs * 255 / (pulseDur / 2))
           : static_cast<uint8_t>((pulseDur - phaseMs) * 255 / (pulseDur / 2));
     }
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      logicalPixels_[i] = scaleColor(cfg.ledColors[zoneForPixel(i)], factor);
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      logicalPixels_[i] = scaleColor(cfg.ledColors[colorZone(i)], factor);
     }
   }
   // Animation 4: Center-Out, expanding symmetrically one ring at a time.
-  else if (cfg.startupAnimation == 4) {
-    const uint8_t rings = (pixelCount_ + 1) / 2;
+  else if (pattern == 4) {
+    const uint8_t rings = (renderCount_ + 1) / 2;
     const uint8_t visibleRings = elapsed * rings / dur + 1;
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      const uint8_t opposite = pixelCount_ - 1 - i;
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      const uint8_t opposite = renderCount_ - 1 - i;
       const uint8_t ring = rings - 1 - (i < opposite ? i : opposite);
-      logicalPixels_[i] = ring < visibleRings ? cfg.ledColors[zoneForPixel(i)] : RgbColor{};
+      const uint8_t factor = ambient ? static_cast<uint8_t>(
+          255 - (elapsed * 255 / dur)) : 255;
+      logicalPixels_[i] = ring < visibleRings ?
+          scaleColor(cfg.ledColors[colorZone(i)], factor) : RgbColor{};
     }
   }
   // Animation 5: Strobe Rush (F1 Grid Start - multi-burst sequence transitioning to full solid)
-  else if (cfg.startupAnimation == 5) {
+  else if (pattern == 5) {
     const uint32_t flashPeriod = (dur > 6) ? (dur / 6) : 1;
     const bool flashOn = (elapsed >= (dur * 2) / 3) || ((elapsed / flashPeriod) % 2 == 0);
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      logicalPixels_[i] = flashOn ? cfg.ledColors[zoneForPixel(i)] : RgbColor{0, 0, 0};
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      logicalPixels_[i] = flashOn ? cfg.ledColors[colorZone(i)] : RgbColor{0, 0, 0};
     }
   }
 }
@@ -126,8 +122,8 @@ void LedEffectEngine::renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg)
 void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) {
   // Effect 0: Static Color
   if (cfg.effect == 0) {
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      logicalPixels_[i] = cfg.ledColors[zoneForPixel(i)];
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      logicalPixels_[i] = cfg.ledColors[colorZone(i)];
     }
   }
   // Effect 1: Breathing (Perceptually smooth sinusoidal pulse)
@@ -136,8 +132,8 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
     const float phase = (period > 0) ? ((nowMs % period) * 6.2831853f / period) : 0.0f;
     const float sinVal = (sinf(phase) + 1.0f) * 0.45f + 0.1f; // 0.1 .. 1.0
     const uint8_t factor = static_cast<uint8_t>(sinVal * 255.0f);
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      logicalPixels_[i] = scaleColorGamma(cfg.ledColors[zoneForPixel(i)], factor);
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      logicalPixels_[i] = scaleColorGamma(cfg.ledColors[colorZone(i)], factor);
     }
   }
   // Effect 2: Rainbow (Smooth full-spectrum HSV color wave)
@@ -145,20 +141,20 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
     // Speed: 0..100 maps to hue rate
     const uint32_t speedFactor = (cfg.effectSpeed > 0) ? cfg.effectSpeed : 10;
     const uint8_t baseHue = static_cast<uint8_t>((nowMs % (40 * 256)) * speedFactor / 40);
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      const uint8_t hue = (baseHue + (i * 256 / pixelCount_)) % 256;
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      const uint8_t hue = (baseHue + (i * 256 / renderCount_)) % 256;
       logicalPixels_[i] = hsvToRgb(hue, 255, 255);
     }
   }
   // Effect 3: Color Chase (Smooth runner traversing LEDs with anti-aliasing)
   else if (cfg.effect == 3) {
     const uint32_t stepMs = (cfg.effectSpeed <= 100) ? (350 - (cfg.effectSpeed * 3)) : 50;
-    const uint32_t totalDur = (stepMs > 0) ? (stepMs * pixelCount_) : 300;
+    const uint32_t totalDur = (stepMs > 0) ? (stepMs * renderCount_) : 300;
     const float pos = (totalDur > 0 && stepMs > 0) ? (static_cast<float>(nowMs % totalDur) / static_cast<float>(stepMs)) : 0.0f;
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
+    for (uint8_t i = 0; i < renderCount_; ++i) {
       float dist = fabsf(static_cast<float>(i) - pos);
-      if (dist > static_cast<float>(pixelCount_) / 2.0f) {
-        dist = static_cast<float>(pixelCount_) - dist;
+      if (dist > static_cast<float>(renderCount_) / 2.0f) {
+        dist = static_cast<float>(renderCount_) - dist;
       }
       float intensity = 0.0f;
       if (dist < 1.0f) {
@@ -167,18 +163,18 @@ void LedEffectEngine::renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg) 
         intensity = 0.3f * (1.6f - dist) / 0.6f;
       }
       const uint8_t factor = static_cast<uint8_t>(intensity * 255.0f);
-      logicalPixels_[i] = (factor > 0) ? scaleColorGamma(cfg.ledColors[zoneForPixel(i)], factor) : RgbColor{0, 0, 0};
+      logicalPixels_[i] = (factor > 0) ? scaleColorGamma(cfg.ledColors[colorZone(i)], factor) : RgbColor{0, 0, 0};
     }
   }
   else {
     // Unknown effect id: fall back to static.
-    for (uint8_t i = 0; i < pixelCount_; ++i) {
-      logicalPixels_[i] = cfg.ledColors[zoneForPixel(i)];
+    for (uint8_t i = 0; i < renderCount_; ++i) {
+      logicalPixels_[i] = cfg.ledColors[colorZone(i)];
     }
   }
 }
 
-// Six-stage threshold bar with per-LED hysteresis. LED i activates when the
+// Bounded RPM bar with per-LED hysteresis. LED i activates when the
 // RPM rises past thresholds[i] and stays lit until RPM falls below
 // thresholds[i] - hysteresis (no flicker on falling RPM).
 bool LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg,
@@ -191,14 +187,23 @@ bool LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg,
   }
   const uint16_t hyst = cfg.rpmHysteresis;
 
-  for (uint8_t i = 0; i < config::rpmStages; ++i) {
-    const uint16_t onAt = cfg.rpmThresholds[i];
+  uint16_t thresholds[config::maxPhysicalLeds];
+  cfg.rpmMapping.expand(thresholds, renderCount_, cfg.rpmThresholds);
+  const size_t bytes = renderCount_ * sizeof(uint16_t);
+  if (lastBarCount_ != renderCount_ || lastHysteresis_ != hyst ||
+      lastWarningRpm_ != cfg.warningRpm ||
+      memcmp(lastThresholds_, thresholds, bytes) != 0) {
+    resetRpmLatches();
+    memcpy(lastThresholds_, thresholds, bytes);
+    lastBarCount_ = renderCount_;
+    lastHysteresis_ = hyst;
+    lastWarningRpm_ = cfg.warningRpm;
+  }
+  for (uint8_t i = 0; i < renderCount_; ++i) {
+    const uint16_t onAt = thresholds[i];
     const uint16_t offBelow = (onAt > hyst) ? static_cast<uint16_t>(onAt - hyst) : 0;
     barLatched_[i] = barLatched_[i] ? rpm >= offBelow : rpm >= onAt;
-  }
-  for (uint8_t i = 0; i < pixelCount_; ++i) {
-    const uint8_t zone = zoneForPixel(i);
-    logicalPixels_[i] = barLatched_[zone] ? cfg.ledColors[zone] : RgbColor{};
+    logicalPixels_[i] = barLatched_[i] ? cfg.ledColors[colorZone(i)] : RgbColor{};
   }
 
   // Configurable shift warning with hysteresis, rendered above the bar.
@@ -235,122 +240,93 @@ bool LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg,
 
 bool LedEffectEngine::update(uint32_t nowMs, const PulseShiftConfig& cfg,
                              const LiveRpmSnapshot& rpm, const LedFrameInput& input) {
-  // New startup settings take effect immediately, even if the previous
-  // one-shot sequence completed long ago. No reset of RPM hysteresis.
-  if (observedStartupAnimation_ == 0xFF) {
-    // First update after reset() must keep its original boot start timestamp.
-    observedStartupAnimation_ = cfg.startupAnimation;
-    observedStartupDurationMs_ = cfg.startupDurationMs;
-  } else if (cfg.startupAnimation != observedStartupAnimation_ ||
-             cfg.startupDurationMs != observedStartupDurationMs_) {
-    observedStartupAnimation_ = cfg.startupAnimation;
-    observedStartupDurationMs_ = cfg.startupDurationMs;
-    startupStartMs_ = nowMs;
-    startupComplete_ = false;
+  const uint8_t limit = pixelCount_ < cfg.installedLedCount ? pixelCount_ : cfg.installedLedCount;
+  renderCount_ = cfg.rpmMapping.activeCount(limit);
+  const bool verifiedBar = cfg.effect == 4;
+  const bool rpmMode = verifiedBar || cfg.effect == 5;
+  const bool decoded = rpm.available && rpm.fresh && rpm.valid;
+  const bool qualified = decoded && (!verifiedBar ||
+      (cfg.calibrationVerified && rpm.calibrationVerified && rpm.calibrationMatchesSettings));
+  canEvidenceSeen_ |= input.canTrafficSeen || rpm.available;
+  if (decoded) engineWasRunning_ = rpm.engineRunning;
+  const bool running = decoded && rpm.engineRunning;
+  const bool stopped = qualified && !rpm.engineRunning;
+  const bool initiallyQuiet = !canEvidenceSeen_;
+  const bool safeIdle = initiallyQuiet || stopped;
+  const bool safeguard = rpmMode && !qualified && !initiallyQuiet;
+  const bool liveRpm = rpmMode && qualified && running;
+  const uint32_t bootElapsed = nowMs - startupStartMs_;
+  startupComplete_ |= !cfg.bootEnabled || cfg.startupAnimation == 0 ||
+      bootElapsed >= cfg.startupDurationMs || running || input.testRpmActive;
+
+  animationEligible_ = input.canHealthy && cfg.isPowerOn && safeIdle &&
+      !input.feedbackActive && !input.testRpmActive && !input.authWindowOpen;
+  ambientStatus_ = AmbientStatus::Off;
+  if (cfg.ambient.enabled && cfg.isPowerOn) {
+    if (!input.canHealthy || (!running && !safeIdle) || safeguard) {
+      ambientStatus_ = AmbientStatus::SuppressedBySafety;
+    } else if (running) {
+      ambientStatus_ = AmbientStatus::PausedByRpm;
+    } else {
+      ambientStatus_ = AmbientStatus::Waiting;
+    }
   }
 
-  // ---- Priority 1: hardware fault / safety state -----------------------
-  // Cannot be masked by master power, decorative effects or commissioning.
+  const LedActiveLayer previous = activeLayer_;
+  if (!liveRpm && !input.testRpmActive) resetRpmLatches();
+
   if (!input.canHealthy) {
     activeLayer_ = LedActiveLayer::Fault;
-    const bool on = ((nowMs / 100) % 2) == 0;
-    setAllPixels(on ? RgbColor{255, 0, 0} : RgbColor{0, 0, 0});
-    return finishFrame(nowMs, cfg);
-  }
-
-  // ---- Priority 2: button feedback acknowledgment ----------------------
-  // Cosmetic acknowledgment of a physical interaction. It wins over all
-  // lighting layers but never over the fault indication above.
-  if (input.feedbackActive) {
+    setAllPixels((nowMs / 100) % 2 == 0 ? RgbColor{255, 0, 0} : RgbColor{});
+  } else if (input.feedbackActive) {
     activeLayer_ = LedActiveLayer::Feedback;
     setAllPixels(RgbColor{255, 255, 255});
-    return finishFrame(nowMs, cfg);
-  }
-
-  // ---- Priority 3: Master power switch ---------------------------------
-  // Explicit master power-off semantics: when turned off, strip is dark.
-  // Hardware safety protections (P1 fault and P2 feedback) win over power-off.
-  if (!cfg.isPowerOn) {
+  } else if (!cfg.isPowerOn) {
     activeLayer_ = LedActiveLayer::Off;
-    setAllPixels(RgbColor{0, 0, 0});
-    return finishFrame(nowMs, cfg);
-  }
-
-  // ---- Priority 4: Authorized bench-test preview -----------------------
-  // An explicitly requested synthetic bench test takes precedence over
-  // startup animations and owner commissioning indication, ensuring the
-  // authorized bench test runs for its intended visible duration without
-  // being silently obscured by cyan pulse or boot wipes.
-  if (input.testRpmActive) {
+    setAllPixels(RgbColor{});
+  } else if (input.testRpmActive) {
     activeLayer_ = LedActiveLayer::BenchTest;
-    startupComplete_ = true; // Mark startup complete so test expiration returns to normal operation
     renderRpmBar(nowMs, cfg, input.testRpm, true);
-    return finishFrame(nowMs, cfg);
-  }
-
-  // ---- Priority 5: RPM validity safeguard ------------------------------
-  // Effect 4 is the protected, calibrated shift light. Effect 5 is a
-  // separate, explicitly UNVERIFIED diagnostic preview of the live CAN signal.
-  // Neither mode is allowed to display stale, unavailable or invalid RPM.
-  // The missing-signal safeguard blanks the strip when an RPM mode is active,
-  // EXCEPT when the owner commissioning window is open (which displays cyan pairing pulse)
-  // or when an initial provisional preview startup animation is playing.
-  const bool verifiedBar = cfg.effect == 4;
-  const bool sampleQualified = rpm.available && rpm.fresh && rpm.valid &&
-      (!verifiedBar || (cfg.calibrationVerified && rpm.calibrationVerified &&
-                        rpm.calibrationMatchesSettings));
-  const bool rpmMode = verifiedBar || cfg.effect == 5;
-  const bool liveRpmActive = rpmMode && sampleQualified && rpm.engineRunning;
-
-  const bool commissioningActive = input.authWindowOpen && !liveRpmActive;
-  if (!rpmMode || !sampleQualified) resetRpmLatches();
-
-  // ---- Priority 6: owner commissioning indication ----------------------
-  // Displayed when the physical authorization window is open and the engine
-  // is NOT actively running with qualified RPM. If the engine is running on an
-  // RPM display mode, live RPM rendering takes precedence so a rider tapping
-  // or holding the button is never blinded by cyan.
-  if (commissioningActive) {
+  } else if (liveRpm) {
+    const bool warning = renderRpmBar(nowMs, cfg, rpm.rpm, false);
+    activeLayer_ = warning ? LedActiveLayer::Warning :
+        (verifiedBar ? LedActiveLayer::RpmBar : LedActiveLayer::ProvisionalRpm);
+  } else if (input.authWindowOpen && !engineWasRunning_) {
     activeLayer_ = LedActiveLayer::Commissioning;
     const uint32_t phase = nowMs % 1000;
-    const uint8_t factor = (phase < 500)
-        ? static_cast<uint8_t>(phase * 255 / 500)
-        : static_cast<uint8_t>((1000 - phase) * 255 / 500);
-    const RgbColor cyan = scaleColor(RgbColor{0, 255, 255}, factor);
-    setAllPixels(cyan);
-    return finishFrame(nowMs, cfg);
-  }
-
-  // ---- Priority 7: startup indication ----------------------------------
-  const bool loopStartup = (cfg.startupDurationMs & 0x8000u) != 0 && cfg.startupAnimation != 0;
-  // Never mask active engine RPM or its missing-signal safeguard with a
-  // looping decorative sequence. These layers retain priority during rides.
-  const bool rpmPriority = loopStartup && rpmMode &&
-      (rpm.engineRunning || !sampleQualified);
-  if ((!startupComplete_ || loopStartup) && (!verifiedBar || sampleQualified) && !rpmPriority) {
-    renderStartup(nowMs, cfg);
-    if (!startupComplete_) {
-      activeLayer_ = LedActiveLayer::Startup;
-      return finishFrame(nowMs, cfg);
-    }
-  }
-
-  // ---- Priority 8: verified RPM bar / provisional diagnostic preview ---
-  if (rpmMode) {
-    if (!sampleQualified) {
-      activeLayer_ = LedActiveLayer::SafeguardBlank;
-      setAllPixels(RgbColor{});
+    const uint32_t level = phase < 500 ? phase : 1000 - phase;
+    setAllPixels(scaleColor(RgbColor{0, 255, 255}, static_cast<uint8_t>(level * 255 / 500)));
+  } else if (safeguard) {
+    activeLayer_ = LedActiveLayer::SafeguardBlank;
+    setAllPixels(RgbColor{});
+  } else if (animationEligible_ && input.previewPattern != 0) {
+    activeLayer_ = LedActiveLayer::AnimationPreview;
+    renderAnimation(input.previewPattern, input.previewDurationMs, input.previewElapsedMs, cfg, false);
+  } else if (!startupComplete_ && safeIdle) {
+    activeLayer_ = LedActiveLayer::Startup;
+    renderAnimation(cfg.startupAnimation, cfg.startupDurationMs, bootElapsed, cfg, false);
+  } else if (cfg.ambient.enabled && animationEligible_) {
+    activeLayer_ = LedActiveLayer::Ambient;
+    ambientStatus_ = AmbientStatus::Playing;
+    if (previous != LedActiveLayer::Ambient || ambientPattern_ != cfg.ambient.pattern ||
+        ambientCycleMs_ != cfg.ambient.cycleMs) {
+      ambientPhaseMs_ = 0;
+      ambientPattern_ = cfg.ambient.pattern;
+      ambientCycleMs_ = cfg.ambient.cycleMs;
     } else {
-      const bool warning = renderRpmBar(nowMs, cfg, rpm.rpm, false);
-      activeLayer_ = warning ? LedActiveLayer::Warning
-                             : (verifiedBar ? LedActiveLayer::RpmBar : LedActiveLayer::ProvisionalRpm);
+      const uint32_t elapsed = nowMs - ambientLastMs_;
+      ambientPhaseMs_ = (ambientPhaseMs_ + elapsed % ambientCycleMs_) % ambientCycleMs_;
     }
-    return finishFrame(nowMs, cfg);
+    ambientLastMs_ = nowMs;
+    renderAnimation(ambientPattern_, ambientCycleMs_, ambientPhaseMs_, cfg, true);
+  } else if (rpmMode) {
+    activeLayer_ = qualified ? (verifiedBar ? LedActiveLayer::RpmBar : LedActiveLayer::ProvisionalRpm)
+                             : LedActiveLayer::SafeguardBlank;
+    setAllPixels(RgbColor{});
+  } else {
+    activeLayer_ = LedActiveLayer::Decorative;
+    renderEffect(nowMs, cfg);
   }
-
-  // ---- Priority 9: manual decorative lighting --------------------------
-  activeLayer_ = LedActiveLayer::Decorative;
-  renderEffect(nowMs, cfg);
   return finishFrame(nowMs, cfg);
 }
 
@@ -361,7 +337,7 @@ bool LedEffectEngine::finishFrame(uint32_t nowMs, const PulseShiftConfig& cfg) {
   bool changed = false;
   for (uint8_t i = 0; i < pixelCount_; ++i) {
     const uint8_t srcIdx = (cfg.ledDirection == 1) ? (pixelCount_ - 1 - i) : i;
-    outputPixels_[i] = scaleColor(logicalPixels_[srcIdx], cfg.brightness);
+    outputPixels_[i] = srcIdx < renderCount_ ? scaleColor(logicalPixels_[srcIdx], cfg.brightness) : RgbColor{};
     if (outputPixels_[i] != lastCalculatedOutputPixels_[i]) changed = true;
   }
   if (changed) {

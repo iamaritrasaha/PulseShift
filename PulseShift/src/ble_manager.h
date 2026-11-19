@@ -5,6 +5,7 @@
 #include "rpm_candidate.h"
 #include "can_transport.h"
 #include "can_recorder.h"
+#include "lighting_setup.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <atomic>
@@ -33,7 +34,8 @@ class BleManager {
             RpmCandidateMonitor& candidate,
             const CanTransport& transport,
             const CanRecorder& recorder,
-            bool rpmLightsRendering = false);
+            bool rpmLightsRendering = false,
+            bool flashAvailable = true);
 
   // Pure flag computation shared by the notification path and host tests.
   static uint8_t computeRpmStatusFlags(const RpmCandidateMonitor& candidate,
@@ -60,6 +62,16 @@ class BleManager {
     active = benchTestActive_;
     benchTestPending_ = false;
     return true;
+  }
+  void publishAnimationState(AmbientStatus ambient, bool previewAllowed) {
+    ambientStatus_ = ambient;
+    animationPreviewAllowed_ = previewAllowed;
+  }
+  uint8_t takeAnimationPreview(uint16_t& duration) {
+    const uint8_t pattern = previewPattern_;
+    previewPattern_ = 0;
+    duration = previewDurationMs_;
+    return pattern;
   }
 
   // Enqueue a live diagnostic log event to be broadcast over BLE (if subscribed)
@@ -177,6 +189,8 @@ class BleManager {
   void stopHistoricalPage();
   void stopCapturePage();
   void onClientDisconnected();
+  void processLightingUpload(const BleConfigExtCommandPacket& pkt, uint16_t connId,
+                             uint32_t nowMs, BleConfigResultPacket& result);
   void processConfigCommand(uint32_t nowMs, RpmCandidateMonitor& candidate,
                             const CanTransport& transport, const CanRecorder& recorder);
   void processSnapshotStream();
@@ -280,6 +294,24 @@ class BleManager {
   size_t snapshotLen_ = 0;
   uint8_t snapshotChunkIdx_ = 0;
   uint8_t snapshotTotalChunks_ = 0;
+
+  struct LightingUpload {
+    bool active = false;
+    bool startedOnLink = false;
+    bool staged = false;
+    uint16_t id = 0;
+    uint16_t connection = 0;
+    uint16_t length = 0;
+    uint16_t received = 0;
+    uint32_t crc = 0;
+    uint32_t revision = 0;
+    uint32_t startedMs = 0;
+    uint8_t data[LIGHTING_SETUP_MAX]{};
+  } lightingUpload_;
+  AmbientStatus ambientStatus_ = AmbientStatus::Off;
+  bool animationPreviewAllowed_ = false;
+  uint8_t previewPattern_ = 0;
+  uint16_t previewDurationMs_ = 0;
 
 #if defined(PULSESHIFT_TEST_BUILD)
   // Host-only capture of emitted result packets (NimBLE sendResult is inert

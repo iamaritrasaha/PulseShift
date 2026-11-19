@@ -116,7 +116,7 @@ struct BleLogChunkPacket {
 
 // Firmware version reported in the Capabilities packet.
 #define PULSESHIFT_FW_VERSION_MAJOR 2
-#define PULSESHIFT_FW_VERSION_MINOR 4
+#define PULSESHIFT_FW_VERSION_MINOR 5
 #define PULSESHIFT_FW_VERSION_PATCH 0
 
 // Configuration Opcodes
@@ -169,7 +169,13 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_OTA_END             = 0x62, // [sha256_tail_4B, crc32_u32LE]
   BLE_CFG_OP_OTA_ABORT           = 0x63, // abort update, discard written data
   BLE_CFG_OP_OTA_CONFIRM         = 0x64, // [0xA5, 0x5C] cancel rollback after post-reboot self-test
-  BLE_CFG_OP_OTA_STATUS          = 0x65  // query OTA engine state & active slot
+  BLE_CFG_OP_OTA_STATUS          = 0x65, // query OTA engine state & active slot
+  BLE_CFG_OP_LIGHTING_BEGIN      = 0x70,
+  BLE_CFG_OP_LIGHTING_DATA       = 0x71,
+  BLE_CFG_OP_LIGHTING_SAVE       = 0x72,
+  BLE_CFG_OP_LIGHTING_CANCEL     = 0x73,
+  BLE_CFG_OP_AMBIENT_STATUS      = 0x74,
+  BLE_CFG_OP_ANIMATION_PREVIEW   = 0x75
 };
 
 // v1 Control extensions (CAN capture browsing, bounded + cancellable)
@@ -197,7 +203,8 @@ enum BleConfigStatusCode : uint8_t {
   BLE_CFG_STATUS_VERSION_MISMATCH   = 7,
   BLE_CFG_STATUS_VALIDATION_FAILED  = 8,
   BLE_CFG_STATUS_OTA_CHECKSUM_ERROR = 9,
-  BLE_CFG_STATUS_OTA_FLASH_ERROR    = 10
+  BLE_CFG_STATUS_OTA_FLASH_ERROR    = 10,
+  BLE_CFG_STATUS_INTEGRITY_ERROR    = 11
 };
 
 // Configuration Result Flags
@@ -234,7 +241,8 @@ enum BleFeatureMaskBits : uint32_t {
   BLE_FEAT_OTA_UPDATE       = (1u << 19), // Dual-slot authenticated OTA engine supported
   BLE_FEAT_LOOP_STARTUP     = (1u << 20), // Startup duration bit15 requests continuous looping
   BLE_FEAT_STRIP_CONFIG     = (1u << 21), // Snapshot TLV 0x1F and SET_LED_COUNT
-  BLE_FEAT_VERIFIED_SAVE    = (1u << 22)  // SAVE_CONFIG may include expected revision
+  BLE_FEAT_VERIFIED_SAVE    = (1u << 22), // SAVE_CONFIG may include expected revision
+  BLE_FEAT_LIGHTING_SETUP   = (1u << 23)  // Versioned strip/RPM/animation extension
 };
 
 // BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires

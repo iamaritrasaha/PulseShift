@@ -8,26 +8,8 @@
 #include "config_manager.h"
 
 // ============================================================================
-// Unified LED controller - the SINGLE writer for all six WS2812B pixels.
-//
-// Every frame is produced by one priority arbiter so no two LED engines can
-// write contradictory output during a single refresh:
-//
-//   1. Hardware fault / safety state      (CAN halted: red blink)
-//   2. Button feedback flash              (physical interaction acknowledgment)
-//   3. Master power switch                (explicit off)
-//   4. Bench test                         (synthetic RPM)
-//   5. Owner commissioning                (auth window, no qualified running RPM)
-//   6. Startup indication                 (configured boot animation)
-//   7. Live RPM with validity safeguards  (calibrated or provisional)
-//   8. Decorative lighting               (static/breathing/rainbow/chase)
-//
-// The safety and power layers govern cosmetic effects, and live RPM-driven
-// lighting renders from the same authoritative
-// LiveRpmSnapshot that BLE telemetry reports.
-//
-// The controller is fully nonblocking: update() renders one frame into an
-// internal buffer and returns whether the visible output changed.
+// One priority arbiter produces each frame from configuration, RPM and
+// hardware state. The controller owns physical transmission and retries.
 // ============================================================================
 
 enum class LedActiveLayer : uint8_t {
@@ -41,7 +23,9 @@ enum class LedActiveLayer : uint8_t {
   BenchTest = 7,     // P6 owner bench-test preview (explicit provenance)
   Decorative = 8,    // P7 manual effect
   Warning = 9,       // shift warning overlay (reported as its own layer)
-  ProvisionalRpm = 10 // P6 unverified diagnostic preview; NOT a calibrated shift cue
+  ProvisionalRpm = 10, // Unverified diagnostic preview
+  Ambient = 11,
+  AnimationPreview = 12
 };
 
 // Per-frame inputs that do not belong to the persisted configuration.
@@ -51,6 +35,10 @@ struct LedFrameInput {
   bool     authWindowOpen = false; // P4: physical owner commissioning window
   bool     testRpmActive = false;  // P6b: bench-test preview active
   uint16_t testRpm = 0;
+  bool canTrafficSeen = false;
+  uint8_t previewPattern = 0;
+  uint16_t previewDurationMs = 0;
+  uint32_t previewElapsedMs = 0;
 };
 
 class LedEffectEngine {
@@ -69,9 +57,12 @@ class LedEffectEngine {
 
   bool isStartupComplete() const { return startupComplete_; }
   LedActiveLayer activeLayer() const { return activeLayer_; }
+  AmbientStatus ambientStatus() const { return ambientStatus_; }
+  bool animationEligible() const { return animationEligible_; }
 
  private:
-  void renderStartup(uint32_t nowMs, const PulseShiftConfig& cfg);
+  void renderAnimation(uint8_t pattern, uint32_t dur, uint32_t elapsed,
+                       const PulseShiftConfig& cfg, bool ambient);
   void renderEffect(uint32_t nowMs, const PulseShiftConfig& cfg);
   bool renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg, uint16_t rpm, bool benchTest);
   void resetRpmLatches();
@@ -87,13 +78,23 @@ class LedEffectEngine {
 
   bool startupComplete_ = false;
   uint32_t startupStartMs_ = 0;
-  uint8_t observedStartupAnimation_ = 0xFF;
-  uint16_t observedStartupDurationMs_ = 0;
+  bool canEvidenceSeen_ = false;
+  bool engineWasRunning_ = false;
+  uint32_t ambientLastMs_ = 0;
+  uint16_t ambientPhaseMs_ = 0;
+  uint16_t ambientCycleMs_ = 0;
+  uint8_t ambientPattern_ = 0;
+  AmbientStatus ambientStatus_ = AmbientStatus::Off;
+  bool animationEligible_ = false;
   bool barFromBenchTest_ = false;
 
   // Per-LED hysteresis latch: LED i stays lit until rpm falls below
   // thresholds[i] - hysteresis, preventing flicker around a threshold.
-  bool barLatched_[config::rpmStages] = {};
+  bool barLatched_[config::maxPhysicalLeds] = {};
+  uint16_t lastThresholds_[config::maxPhysicalLeds]{};
+  uint16_t lastHysteresis_ = 0;
+  uint16_t lastWarningRpm_ = 0;
+  uint8_t lastBarCount_ = 0;
   // Warning latch with its own hysteresis so the alert does not chatter
   // around the warning threshold.
   bool warningLatched_ = false;
@@ -101,9 +102,10 @@ class LedEffectEngine {
 
   LedActiveLayer activeLayer_ = LedActiveLayer::Off;
 
-  uint8_t zoneForPixel(uint8_t pixel) const { return pixel * config::rpmStages / pixelCount_; }
+  uint8_t colorZone(uint8_t pixel) const { return pixel * config::rpmStages / renderCount_; }
 
   uint8_t pixelCount_ = config::ledCount;
+  uint8_t renderCount_ = config::ledCount;
   RgbColor logicalPixels_[config::maxPhysicalLeds]{};
   RgbColor outputPixels_[config::maxPhysicalLeds]{};
   RgbColor lastCalculatedOutputPixels_[config::maxPhysicalLeds]{};
