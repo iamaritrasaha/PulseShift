@@ -80,7 +80,7 @@ jobs:
             echo "Invalid config unexpectedly compiled" >&2
             exit 1
           fi
-          grep -F "PULSESHIFT_LED_COUNT must be between 1 and 6" "$log"
+          grep -F "PULSESHIFT_LED_COUNT must be between 1 and 64" "$log"
 
       - name: Verify OLED dependencies removed
         run: |

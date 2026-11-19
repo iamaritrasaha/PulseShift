@@ -10,13 +10,13 @@
 // Schema version 3: adds decoder extension fields (byte width, byte order,
 // offset, validity clamp), threshold hysteresis and the bound calibration
 // verification record. NVS blobs of schema 2 still load (new fields default).
-struct PulseShiftConfig {
+struct PulseShiftConfigV3 {
   uint8_t  schemaVersion = 3;
   uint32_t activeRevision = 1;
   bool     isPowerOn = true;
   uint8_t  brightness = 200;
   RgbColor globalColor = {140, 43, 238}; // BrandViolet default
-  RgbColor ledColors[6] = {
+  RgbColor ledColors[config::rpmStages] = {
     {140, 43, 238}, {140, 43, 238}, {140, 43, 238},
     {140, 43, 238}, {140, 43, 238}, {140, 43, 238}
   };
@@ -25,7 +25,7 @@ struct PulseShiftConfig {
   uint8_t  ledDirection = 0;       // 0=Normal, 1=Reversed
   uint8_t  startupAnimation = 1;   // 0=None, 1=Sweep, 2=Wave, 3=Pulse, 4=CenterOut, 5=Strobe
   uint16_t startupDurationMs = 2000;
-  uint16_t rpmThresholds[6] = {1000, 2000, 3000, 4000, 5000, 6000};
+  uint16_t rpmThresholds[config::rpmStages] = {1000, 2000, 3000, 4000, 5000, 6000};
   uint16_t warningRpm = 6500;
   uint8_t  warningPatternId = 0;   // 0=Flash, 1=Strobe, 2=Solid, 3=Off
   RgbColor warningColor = {255, 0, 0};
@@ -46,6 +46,18 @@ struct PulseShiftConfig {
   uint8_t  calPointsUsed = 0;
   uint8_t  calMaxResidualRpm = 0;  // worst residual of the verification fit
   uint32_t calTimestampMs = 0;
+};
+
+struct PulseShiftConfig : PulseShiftConfigV3 {
+  uint8_t physicalLedCount = config::ledCount;
+};
+
+enum class ConfigLoadStatus : uint8_t {
+  Unavailable, Missing, Loaded, Legacy, RecoveredLegacy, Invalid, CountDefaulted
+};
+
+enum class ConfigSaveStatus : uint8_t {
+  NoAttempt, Verified, OpenFailed, WriteFailed, ReadbackFailed, InvalidConfig
 };
 
 // One operating-point observation collected during the mobile-assisted
@@ -73,7 +85,7 @@ class ConfigManager {
  public:
   static ConfigManager& instance();
 
-  bool begin();
+  bool begin(bool nvsAvailable = true);
   void poll(uint32_t nowMs);
 
   // Re-read the persisted configuration blob from NVS and apply it to the
@@ -82,9 +94,13 @@ class ConfigManager {
   bool reloadFromNvs();
 
   const PulseShiftConfig& active() const { return active_; }
+#if defined(PULSESHIFT_TEST_BUILD)
   PulseShiftConfig& activeMutable() { return active_; }
+#endif
 
   uint32_t activeRevision() const { return active_.activeRevision; }
+  uint8_t runningLedCount() const { return runningLedCount_; }
+  BleConfigStatusCode setPhysicalLedCount(uint8_t count, bool isStaged);
 
   // Transaction Management
   bool isStagedTransactionActive() const { return stagedTxActive_; }
@@ -175,8 +191,12 @@ class ConfigManager {
   static uint32_t computeCrc32(const uint8_t* data, size_t length);
 
   // NVS persistence outcome for diagnostics (did the last save succeed?)
-  bool lastNvsSaveOk() const { return lastNvsSaveOk_; }
+  bool lastNvsSaveOk() const { return saveStatus_ == ConfigSaveStatus::Verified; }
   uint32_t lastNvsSaveMs() const { return lastNvsSaveMs_; }
+  ConfigLoadStatus bootLoadStatus() const { return bootLoadStatus_; }
+  ConfigSaveStatus saveStatus() const { return saveStatus_; }
+  bool activeMatchesNvs() const { return activeMatchesNvs_ && matchedRevision_ == activeRevision(); }
+  uint32_t savedRevision() const { return savedRevision_; }
 
  private:
   ConfigManager();
@@ -218,14 +238,18 @@ class ConfigManager {
   static constexpr uint32_t CAL_SESSION_TIMEOUT_MS = 600000; // 10 min
   static constexpr uint32_t CAL_CAPTURE_WINDOW_MS = 2000;   // 2 s sampling window
 
-  bool lastNvsSaveOk_ = false;
+  bool nvsAvailable_ = true;
+  uint8_t runningLedCount_ = config::ledCount;
+  ConfigLoadStatus bootLoadStatus_ = ConfigLoadStatus::Unavailable;
+  ConfigSaveStatus saveStatus_ = ConfigSaveStatus::NoAttempt;
+  bool activeMatchesNvs_ = false;
+  uint32_t matchedRevision_ = 0;
+  uint32_t savedRevision_ = 0;
   uint32_t lastNvsSaveMs_ = 0;
 
   void applySafeDefaults(PulseShiftConfig& cfg);
   void loadOwnerSecurity();
-  // Shared NVS blob read path (schema-3 + schema-2 migration) used by
-  // begin() and reloadFromNvs().
-  bool loadConfigBlobLocked(PulseShiftConfig& out);
+  ConfigLoadStatus loadConfigBlob(PulseShiftConfig& out);
   // Invalidate the verification record; if an RPM-driven effect is active,
   // revert it to a decorative effect so the config always stays valid.
   void invalidateCalibration(PulseShiftConfig& cfg);

@@ -206,11 +206,45 @@ static void test_permanent_stall_stops_output_without_releasing_payload() {
   CHECK(hal.data[0].duration0 == 8);
 }
 
+static void test_supported_frame_lengths_and_timing() {
+  const uint8_t counts[] = {1, 2, 3, 6, 12, 24, 32, 64};
+  for (uint8_t count : counts) {
+    hal = {};
+    Esp32RmtLedDriver driver;
+    CHECK(!driver.begin(27, 0) && !driver.begin(27, 65));
+    CHECK(driver.begin(27, count));
+    RgbColor pixels[64]{};
+    for (uint8_t i = 0; i < count; ++i) pixels[i] = {0x55, 0xFF, 0};
+    CHECK(driver.write(pixels, count));
+    CHECK(hal.length == static_cast<size_t>(24 * count + 1));
+    unsigned ticks = 0;
+    for (size_t i = 0; i + 1 < hal.length; ++i) {
+      const auto symbol = hal.data[i];
+      CHECK(symbol.level0 == 1 && symbol.level1 == 0);
+      ticks += symbol.duration0 + symbol.duration1;
+    }
+    const auto latch = hal.data[hal.length - 1];
+    CHECK(latch.level0 == 0 && latch.level1 == 0);
+    CHECK(latch.duration0 + latch.duration1 == 3000);
+    CHECK(ticks == 24u * count * 13u);
+    hal.completeAfterMs = 40;
+    CHECK(!driver.write(pixels, count));
+    const auto* inFlight = hal.data;
+    CHECK(!driver.begin(27, count == 64 ? 63 : count + 1));
+    pixels[0] = {};
+    CHECK(!driver.write(pixels, count));
+    CHECK(hal.data == inFlight && inFlight[0].duration0 == 8 && hal.detaches == 0);
+    hal.now += 40;
+    CHECK(rmtTransmitCompleted(27));
+  }
+}
+
 int main() {
   test_grb_with_latch();
   test_rejected_submission_and_partial_setup_recover();
   test_timeout_does_not_reuse_pending_payload();
   test_failed_detach_does_not_touch_stale_mapping();
   test_permanent_stall_stops_output_without_releasing_payload();
+  test_supported_frame_lengths_and_timing();
   std::printf("PASS ESP32 RMT driver timing, rejection recovery and pending payload lifetime: %u checks\n", checks);
 }

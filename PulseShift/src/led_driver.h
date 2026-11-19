@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "led_color.h"
+#include "config.h"
 
 enum class LedDriverStatus : uint8_t {
   Uninitialized = 0,
@@ -35,7 +36,7 @@ class ILedDriver {
 #if defined(ARDUINO) && defined(ESP32)
 #include <esp32-hal-rmt.h>
 // Native ESP32 RMT driver utilizing Arduino-ESP32 HAL (esp32-hal-rmt).
-// Four ESP32 RMT blocks hold a six-pixel frame, latch interval and HAL EOF.
+// The Arduino HAL streams longer frames through four ESP32 RMT blocks.
 class Esp32RmtLedDriver : public ILedDriver {
  public:
   Esp32RmtLedDriver() = default;
@@ -53,7 +54,7 @@ class Esp32RmtLedDriver : public ILedDriver {
  private:
   void releaseIdleChannel();
 
-  static constexpr uint8_t MAX_PIXELS = 6;
+  static constexpr uint8_t MAX_PIXELS = config::maxPhysicalLeds;
   static constexpr size_t BITS_PER_PIXEL = 24;
   static constexpr uint32_t TRANSMIT_TIMEOUT_MS = 20;
   static constexpr uint32_t TRANSMIT_STALL_MS = 100;
@@ -76,6 +77,10 @@ class MockLedDriver : public ILedDriver {
   ~MockLedDriver() override = default;
 
   bool begin(uint8_t pin, uint8_t count) override {
+    if (count < config::minPhysicalLeds || count > config::maxPhysicalLeds) {
+      lastStatus_ = LedDriverStatus::InvalidParam;
+      return false;
+    }
     pin_ = pin;
     count_ = count;
     if (failBeginCount_ > 0) {
@@ -91,7 +96,7 @@ class MockLedDriver : public ILedDriver {
 
   bool write(const RgbColor* pixels, uint8_t count) override {
     ++writeAttempts_;
-    if (!ready_ || !pixels || count == 0) {
+    if (!ready_ || !pixels || count != count_) {
       lastStatus_ = LedDriverStatus::InvalidParam;
       return false;
     }
@@ -100,7 +105,7 @@ class MockLedDriver : public ILedDriver {
       lastStatus_ = LedDriverStatus::Timeout;
       return false;
     }
-    for (uint8_t i = 0; i < count && i < 6; ++i) {
+    for (uint8_t i = 0; i < count; ++i) {
       lastWrittenPixels_[i] = pixels[i];
     }
     ++successfulWrites_;
@@ -126,7 +131,7 @@ class MockLedDriver : public ILedDriver {
   void setFailBegin(uint32_t count) { failBeginCount_ = count; }
   uint32_t writeAttempts() const { return writeAttempts_; }
   uint32_t successfulWrites() const { return successfulWrites_; }
-  RgbColor lastWrittenPixel(uint8_t idx) const { return (idx < 6) ? lastWrittenPixels_[idx] : RgbColor{0, 0, 0}; }
+  RgbColor lastWrittenPixel(uint8_t idx) const { return (idx < count_) ? lastWrittenPixels_[idx] : RgbColor{0, 0, 0}; }
 
  private:
   uint8_t pin_ = 0;
@@ -137,5 +142,5 @@ class MockLedDriver : public ILedDriver {
   uint32_t failBeginCount_ = 0;
   uint32_t writeAttempts_ = 0;
   uint32_t successfulWrites_ = 0;
-  RgbColor lastWrittenPixels_[6]{};
+  RgbColor lastWrittenPixels_[config::maxPhysicalLeds]{};
 };

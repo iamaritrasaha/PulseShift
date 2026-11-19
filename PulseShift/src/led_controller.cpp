@@ -15,6 +15,7 @@ LedController::LedController() {
 
 bool LedController::begin() {
   if (!driver_) return false;
+  pixelCount_ = ConfigManager::instance().runningLedCount();
 
 #if defined(ARDUINO)
   initializeDriver(millis());
@@ -24,9 +25,9 @@ bool LedController::begin() {
 
   // Start the boot animation clock after peripheral setup, not at reset time.
 #if defined(ARDUINO)
-  engine_.reset(millis());
+  engine_.reset(millis(), pixelCount_);
 #else
-  engine_.reset(0);
+  engine_.reset(0, pixelCount_);
 #endif
 
   return ready_;
@@ -35,7 +36,7 @@ bool LedController::begin() {
 void LedController::initializeDriver(uint32_t now) {
   lastInitAttemptMs_ = now;
   ++initAttempts_;
-  ready_ = driver_->begin(config::ledPin, LED_COUNT);
+  ready_ = driver_->begin(config::ledPin, pixelCount_);
   if (!ready_) {
     recordError(now);
     return;
@@ -48,8 +49,8 @@ void LedController::initializeDriver(uint32_t now) {
 void LedController::transmitAttemptedFrame(uint32_t now) {
   lastAttemptMs_ = now;
   ++attemptsCount_;
-  if (driver_->write(lastAttemptedPixels_, LED_COUNT)) {
-    memcpy(lastConfirmedPixels_, lastAttemptedPixels_, sizeof(lastConfirmedPixels_));
+  if (driver_->write(lastAttemptedPixels_, pixelCount_)) {
+    memcpy(lastConfirmedPixels_, lastAttemptedPixels_, pixelCount_ * sizeof(RgbColor));
     lastConfirmedMs_ = now;
     hasConfirmedFrame_ = true;
     lastAttemptFailed_ = false;
@@ -70,8 +71,8 @@ void LedController::recordError(uint32_t now) {
   lastErrorMs_ = now;
   if (!firstError && !newTerminalError && uint32_t(now - lastErrorLoggedMs_) < 5000) return;
   lastErrorLoggedMs_ = now;
-  char frame[LED_COUNT * 7 + 1]{};
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+  char frame[config::rpmStages * 7 + 1]{};
+  for (uint8_t i = 0; i < pixelCount_ && i < config::rpmStages; ++i) {
     const auto color = calculatedPixels_[i];
     snprintf(frame + i * 7, 8, "%02X%02X%02X ", (unsigned)color.r, (unsigned)color.g, (unsigned)color.b);
   }
@@ -107,7 +108,7 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
   engine_.update(now, ConfigManager::instance().active(), rpm, input);
 
   // 2. Fetch the newly calculated pixels
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+  for (uint8_t i = 0; i < pixelCount_; ++i) {
     calculatedPixels_[i] = engine_.getPixel(i);
   }
 
@@ -138,7 +139,7 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
   //    b) Retry due after previous write failure whose backoff has elapsed
   //    c) Periodic refresh interval elapsed (1000 ms forced resend to prevent freezing)
   const bool pixelsChanged = !hasConfirmedFrame_ ||
-      (memcmp(calculatedPixels_, lastConfirmedPixels_, sizeof(calculatedPixels_)) != 0);
+      (memcmp(calculatedPixels_, lastConfirmedPixels_, pixelCount_ * sizeof(RgbColor)) != 0);
 
   const bool retryDue = lastAttemptFailed_;
 
@@ -150,7 +151,7 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
       ++forcedRefreshCount_;
     }
 
-    memcpy(lastAttemptedPixels_, calculatedPixels_, sizeof(lastAttemptedPixels_));
+    memcpy(lastAttemptedPixels_, calculatedPixels_, pixelCount_ * sizeof(RgbColor));
     transmitAttemptedFrame(now);
   }
 }
@@ -159,7 +160,7 @@ void LedController::update(const LiveRpmSnapshot& rpm, uint32_t now, bool health
 void LedController::printStatus(uint32_t now) const {
   Serial.println("\n--- Physical WS2812B LED Output Subsystem ---");
   Serial.printf("Hardware: GPIO%u | Pixel Count: %u | Driver: %s | Status: %s\r\n",
-                (unsigned)config::ledPin, (unsigned)LED_COUNT,
+                (unsigned)config::ledPin, (unsigned)pixelCount_,
 #if defined(ARDUINO) && defined(ESP32)
                 "ESP32-RMT-HAL (4 blocks/256 sym)",
 #else
@@ -194,19 +195,19 @@ void LedController::printStatus(uint32_t now) const {
   }
 
   Serial.print("Calculated Frame (RGB): ");
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+  for (uint8_t i = 0; i < pixelCount_; ++i) {
     Serial.printf("[%u]=(%u,%u,%u) ", i, calculatedPixels_[i].r, calculatedPixels_[i].g, calculatedPixels_[i].b);
   }
   Serial.println();
 
   Serial.print("Last Attempted Frame (RGB): ");
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+  for (uint8_t i = 0; i < pixelCount_; ++i) {
     Serial.printf("[%u]=(%u,%u,%u) ", i, lastAttemptedPixels_[i].r, lastAttemptedPixels_[i].g, lastAttemptedPixels_[i].b);
   }
   Serial.println();
 
   Serial.print("Last RMT Completed Frame (RGB): ");
-  for (uint8_t i = 0; i < LED_COUNT; ++i) {
+  for (uint8_t i = 0; i < pixelCount_; ++i) {
     Serial.printf("[%u]=(%u,%u,%u) ", i, lastConfirmedPixels_[i].r, lastConfirmedPixels_[i].g, lastConfirmedPixels_[i].b);
   }
   Serial.println();

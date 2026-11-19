@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 #define CHECK(x) do {++checks;if(!(x)){std::fprintf(stderr,"LED FAIL %d: %s\n",__LINE__,#x);std::exit(1);}}while(0)
 static unsigned checks=0;
@@ -798,6 +799,68 @@ static void optional_startup_loops_without_masking_rpm_or_safety() {
   CHECK(ConfigManager::validateConfig(cfg));
 }
 
+static void effects_and_warning_scale_to_strip() {
+  const uint8_t counts[] = {1, 2, 3, 6, 12, 24, 32, 64};
+  for (uint8_t count : counts) {
+    PulseShiftConfig cfg = verifiedBarConfig();
+    cfg.physicalLedCount = count;
+    for (uint8_t zone = 0; zone < config::rpmStages; ++zone) {
+      cfg.ledColors[zone] = RgbColor{static_cast<uint8_t>(50 + 20 * zone), 0, 0};
+    }
+    LedEffectEngine forward;
+    LedEffectEngine reverse;
+    forward.reset(0, count);
+    reverse.reset(0, count);
+    auto renderBoth = [&](uint32_t time, const LiveRpmSnapshot& rpm, LedActiveLayer layer,
+                          LedFrameInput input = {}) {
+      cfg.ledDirection = 0;
+      forward.update(time, cfg, rpm, input);
+      cfg.ledDirection = 1;
+      reverse.update(time, cfg, rpm, input);
+      CHECK(forward.activeLayer() == layer && reverse.activeLayer() == layer);
+      for (uint8_t i = 0; i < count; ++i) CHECK(forward.getPixel(i) == reverse.getPixel(count - 1 - i));
+      CHECK(forward.getPixel(count) == RgbColor{});
+      CHECK(reverse.getPixel(255) == RgbColor{});
+    };
+    for (uint8_t animation = 1; animation <= 5; ++animation) {
+      cfg.startupAnimation = animation;
+      cfg.startupDurationMs = 0x8000 | 2000;
+      cfg.effect = 0;
+      for (uint32_t elapsed : {0u, 674u, 1300u, 1975u, 2674u}) {
+        renderBoth(animation * 3000 + elapsed, {}, LedActiveLayer::Startup);
+      }
+    }
+    cfg.startupAnimation = 0;
+    cfg.startupDurationMs = 2000;
+    for (uint8_t effect = 0; effect <= 3; ++effect) {
+      cfg.effect = effect;
+      renderBoth(20000, {}, LedActiveLayer::Decorative);
+    }
+    cfg.effect = 4;
+    renderBoth(22000, freshVerifiedSnapshot(3500), LedActiveLayer::RpmBar);
+    for (uint8_t i = 0; i < count; ++i) {
+      const uint8_t zone = i * config::rpmStages / count;
+      CHECK(forward.getPixel(i) == (zone < 3 ? cfg.ledColors[zone] : RgbColor{}));
+    }
+    for (uint8_t warning = 0; warning <= 3; ++warning) {
+      cfg.warningPatternId = warning;
+      const uint32_t time = 23000 + warning * 1000;
+      renderBoth(time, {}, LedActiveLayer::SafeguardBlank);
+      renderBoth(time + 10, freshVerifiedSnapshot(7500),
+                 warning == 3 ? LedActiveLayer::RpmBar : LedActiveLayer::Warning);
+      for (uint8_t i = 0; i < count; ++i) {
+        const uint8_t zone = i * config::rpmStages / count;
+        CHECK(forward.getPixel(i) == (warning == 3 ? cfg.ledColors[zone] : cfg.warningColor));
+      }
+    }
+    cfg.effect = 5;
+    renderBoth(27000, freshVerifiedSnapshot(3600), LedActiveLayer::ProvisionalRpm);
+    LedFrameInput failedCan;
+    failedCan.canHealthy = false;
+    renderBoth(28000, freshVerifiedSnapshot(7600), LedActiveLayer::Fault, failedCan);
+  }
+}
+
 int main() {
   fault_priority_wins_over_everything();
   unverified_rpm_bar_renders_nothing();
@@ -825,6 +888,7 @@ int main() {
   test_zero_hysteresis_uses_exact_threshold();
   master_power_off();
   change_detection_flags();
+  effects_and_warning_scale_to_strip();
   std::printf("PASS unified LED engine priorities, safeguard, hysteresis, warnings: %u checks\n", checks);
   return 0;
 }

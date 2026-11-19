@@ -91,10 +91,9 @@ static void snapshot_serialization_roundtrip() {
   ConfigManager& cm = ConfigManager::instance();
   CHECK(cm.restoreDefaults(0xA5, 0x5A)); // normalize to safe defaults
 
-  PulseShiftConfig& cfg = cm.activeMutable();
-  cfg.brightness = 123;
-  cfg.rpmThresholds[2] = 5200;
-  cfg.rpmHysteresis = 300;
+  CHECK(cm.setBrightness(123, false) == BLE_CFG_STATUS_OK);
+  CHECK(cm.setLedThreshold(2, 3500, false) == BLE_CFG_STATUS_OK);
+  CHECK(cm.setRpmHysteresis(300, false) == BLE_CFG_STATUS_OK);
 
   uint8_t buf[512];
   const size_t len = cm.serializeSnapshot(buf, sizeof(buf));
@@ -113,7 +112,7 @@ static void snapshot_serialization_roundtrip() {
     if (id == 0x16 && tl == 12) {
       sawThresholds = true;
       const uint16_t t2 = uint16_t(buf[off+2+4]) | uint16_t(uint16_t(buf[off+2+5]) << 8);
-      CHECK(t2 == 5200);
+      CHECK(t2 == 3500);
     }
     if (id == 0x1C && tl == 8) sawDecoderExt = true;
     if (id == 0x1D && tl == 11) sawCalRecord = true;

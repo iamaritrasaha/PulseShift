@@ -18,7 +18,6 @@
 // ============================================================================
 class LedController {
  public:
-  static constexpr uint8_t LED_COUNT = config::ledCount;
   static constexpr uint32_t PERIODIC_REFRESH_INTERVAL_MS = 1000;
   static constexpr uint32_t RETRY_INTERVAL_MS = 50;
   static constexpr uint32_t INIT_RETRY_INTERVAL_MS = 1000;
@@ -71,9 +70,9 @@ class LedController {
   LedDriverStatus lastDriverStatus() const { return driver_ ? driver_->lastStatus() : LedDriverStatus::Uninitialized; }
   const char* lastDriverStatusString() const { return driver_ ? driver_->lastStatusString() : "NO_DRIVER"; }
 
-  RgbColor calculatedPixel(uint8_t i) const { return (i < LED_COUNT) ? calculatedPixels_[i] : RgbColor{0, 0, 0}; }
-  RgbColor lastAttemptedPixel(uint8_t i) const { return (i < LED_COUNT) ? lastAttemptedPixels_[i] : RgbColor{0, 0, 0}; }
-  RgbColor lastConfirmedPixel(uint8_t i) const { return (i < LED_COUNT) ? lastConfirmedPixels_[i] : RgbColor{0, 0, 0}; }
+  RgbColor calculatedPixel(uint8_t i) const { return (i < pixelCount_) ? calculatedPixels_[i] : RgbColor{0, 0, 0}; }
+  RgbColor lastAttemptedPixel(uint8_t i) const { return (i < pixelCount_) ? lastAttemptedPixels_[i] : RgbColor{0, 0, 0}; }
+  RgbColor lastConfirmedPixel(uint8_t i) const { return (i < pixelCount_) ? lastConfirmedPixels_[i] : RgbColor{0, 0, 0}; }
 
   // Test injection
   void setDriverForTesting(ILedDriver* driver) {
@@ -115,9 +114,10 @@ class LedController {
   uint32_t testRpmStartMs_ = 0;
 
   // Tri-state buffer architecture
-  RgbColor calculatedPixels_[LED_COUNT]{};
-  RgbColor lastAttemptedPixels_[LED_COUNT]{};
-  RgbColor lastConfirmedPixels_[LED_COUNT]{};
+  uint8_t pixelCount_ = config::ledCount;
+  RgbColor calculatedPixels_[config::maxPhysicalLeds]{};
+  RgbColor lastAttemptedPixels_[config::maxPhysicalLeds]{};
+  RgbColor lastConfirmedPixels_[config::maxPhysicalLeds]{};
 
   bool hasConfirmedFrame_ = false;
   uint32_t attemptsCount_ = 0;

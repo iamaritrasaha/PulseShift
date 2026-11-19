@@ -23,6 +23,13 @@ g++ $CXXFLAGS \
     test/test_core.cpp -o "$BUILD_DIR/test_core"
 "$BUILD_DIR/test_core"
 
+g++ $CXXFLAGS \
+    -DPULSESHIFT_TEST_NVS -DPULSESHIFT_SERIAL_DIAGNOSTICS=0 \
+    -Itest/stubs -IPulseShift -IPulseShift/src \
+    PulseShift/src/rpm_candidate.cpp PulseShift/src/config_manager.cpp \
+    test/test_config_nvs.cpp -o "$BUILD_DIR/test_config_nvs"
+"$BUILD_DIR/test_config_nvs"
+
 # Unified LED engine tests: layer priorities, RPM validity safeguard,
 # hysteresis, warning patterns, direction/brightness.
 g++ $CXXFLAGS \

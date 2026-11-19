@@ -114,9 +114,9 @@ struct BleLogChunkPacket {
 
 #define PULSESHIFT_BLE_CONFIG_PROTOCOL_VERSION 2
 
-// Firmware version reported in the Capabilities packet (schema 3 / protocol 2.3.0)
+// Firmware version reported in the Capabilities packet.
 #define PULSESHIFT_FW_VERSION_MAJOR 2
-#define PULSESHIFT_FW_VERSION_MINOR 3
+#define PULSESHIFT_FW_VERSION_MINOR 4
 #define PULSESHIFT_FW_VERSION_PATCH 0
 
 // Configuration Opcodes
@@ -138,6 +138,7 @@ enum BleConfigOpcode : uint8_t {
   BLE_CFG_OP_SET_WARNING_RGB     = 0x1B,
   BLE_CFG_OP_SET_RPM_HYSTERESIS  = 0x1C, // [hyst_u16_LE] (schema 3)
   BLE_CFG_OP_SET_RPM_DECODER_EXT = 0x1D, // [width, endian, offset_s32LE(×1000), maxValid_u16LE] (8 bytes)
+  BLE_CFG_OP_SET_LED_COUNT        = 0x1E, // [extension version=1, count]; used on next boot
   BLE_CFG_OP_SAVE_CONFIG         = 0x20,
   BLE_CFG_OP_RESTORE_DEFAULTS    = 0x21,
   BLE_CFG_OP_RELOAD_CONFIG       = 0x22, // re-read NVS blob and apply (auth required)
@@ -231,7 +232,9 @@ enum BleFeatureMaskBits : uint32_t {
   BLE_FEAT_EXT_STARTUP_ANIM = (1u << 17), // Animations 4 (Center-Out) & 5 (Strobe Rush) supported
   BLE_FEAT_RANGE_DISCOVERY  = (1u << 18), // GET_ARG_RANGES opcode supported
   BLE_FEAT_OTA_UPDATE       = (1u << 19), // Dual-slot authenticated OTA engine supported
-  BLE_FEAT_LOOP_STARTUP     = (1u << 20)  // Startup duration bit15 requests continuous looping
+  BLE_FEAT_LOOP_STARTUP     = (1u << 20), // Startup duration bit15 requests continuous looping
+  BLE_FEAT_STRIP_CONFIG     = (1u << 21), // Snapshot TLV 0x1F and SET_LED_COUNT
+  BLE_FEAT_VERIFIED_SAVE    = (1u << 22)  // SAVE_CONFIG may include expected revision
 };
 
 // BLE_RPM packet extended flags usage (schema 3): Bit 1 additionally requires
@@ -328,24 +331,25 @@ enum BleDiagnosticsTlvId : uint8_t {
   BLE_DIAG_TLV_CALIBRATION   = 0x49, // sessionActive u8, points u8, captureActive u8,
                                      // samples u16 LE, calVerified u8, pointsUsed u8,
                                      // maxResidual u8, fingerprint u32 LE (13 bytes)
-  BLE_DIAG_TLV_EXPERIMENTAL = 0x4A  // freshness mask, then raw 0x302[1], 0x302[5], 0x452[7], 0x540[3]
+  BLE_DIAG_TLV_CONFIG_NVS   = 0x4B, // [version, boot status, save status, matches RAM, stored revision u32LE]
+  BLE_DIAG_TLV_EXPERIMENTAL = 0x4A // freshness mask, then raw 0x302[1], 0x302[5], 0x452[7], 0x540[3]
 };
 
 // Binary Capabilities Packet (UUID: ...d218, exactly 20 bytes)
 struct BleCapabilitiesPacket {
   uint8_t  version;                // Byte 0: Configuration protocol version = 2
-  uint8_t  physicalLedCount;       // Byte 1: Physical LED count (6)
+  uint8_t  physicalLedCount;       // Byte 1: Running physical LED count
   uint32_t featureMask;            // Bytes 2-5: Feature capability mask (little-endian)
   uint32_t currentRevision;        // Bytes 6-9: Current active configuration revision (little-endian)
   uint8_t  hardwarePresetCapacity; // Byte 10: Hardware preset storage capacity (0 = phone-managed)
   uint8_t  securityMode;           // Byte 11: Security / Provisioning mode
   uint8_t  firmwareMajor;          // Byte 12: Firmware version major (2)
-  uint8_t  firmwareMinor;          // Byte 13: Firmware version minor (3)
+  uint8_t  firmwareMinor;          // Byte 13: Firmware version minor
   uint8_t  firmwarePatch;          // Byte 14: Firmware version patch (0)
   uint8_t  maxStartupAnimId;       // Byte 15: Maximum supported startup animation ID (5)
   uint8_t  maxEffectId;            // Byte 16: Maximum supported effect ID (5)
   uint8_t  otaActiveSlot;          // Byte 17: Active OTA slot (0 = app0, 1 = app1)
-  uint8_t  protocolMinor;          // Byte 18: Minor protocol revision (3)
+  uint8_t  protocolMinor;          // Byte 18: Minor protocol revision
   uint8_t  otaFlags;               // Byte 19: Bit 0 = OTA available, Bit 1 = Rollback supported
 };
 
