@@ -697,7 +697,7 @@ bool ConfigManager::saveToNvs() {
 }
 
 bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved) {
-  if (stagedTxActive_ || conf1 != 0xA5 || conf2 != 0x5A) {
+  if (conf1 != 0xA5 || conf2 != 0x5A) {
     if (nvsSaved) *nvsSaved = false;
     return false;
   }
@@ -705,6 +705,7 @@ bool ConfigManager::restoreDefaults(uint8_t conf1, uint8_t conf2, bool* nvsSaved
   // a credential recovery path: owner enrollment and stored captures are
   // intentionally preserved. Credential recovery is the distinct physical
   // BOOT-window re-enrollment flow.
+  abortTransaction();
   const uint32_t nextRevision = active_.activeRevision + 1;
   applySafeDefaults(active_);
   active_.activeRevision = nextRevision;
