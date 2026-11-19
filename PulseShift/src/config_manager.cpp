@@ -393,10 +393,7 @@ bool ConfigManager::commitTransaction() {
     abortTransaction();
     return false;
   }
-  if (!validateConfig(staged_)) {
-    abortTransaction();
-    return false;
-  }
+  if (!validateConfig(staged_)) return false;
 
   active_ = staged_;
   active_.activeRevision++;
