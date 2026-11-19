@@ -815,7 +815,7 @@ bool ConfigManager::persistConfig(const PulseShiftConfig& config, bool appliesTo
   if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return false;
   NvsConfigBlobV5 stored{};
   size_t size = sizeof(stored);
-  const bool read = nvs_get_blob(handle, NVS_KEY_V4, &stored, &size) == ESP_OK;
+  const bool read = nvs_get_blob(handle, NVS_KEY_V5, &stored, &size) == ESP_OK;
   nvs_close(handle);
   PulseShiftConfig decoded{};
   if (!read || size != sizeof(stored) || memcmp(&stored, &blob, sizeof(blob)) != 0 ||

@@ -94,7 +94,6 @@ class LedEffectEngine {
   uint16_t lastThresholds_[config::maxPhysicalLeds]{};
   uint16_t lastHysteresis_ = 0;
   uint16_t lastWarningRpm_ = 0;
-  uint8_t lastWarningPattern_ = 0;
   uint8_t lastBarCount_ = 0;
   // Warning latch with its own hysteresis so the alert does not chatter
   // around the warning threshold.

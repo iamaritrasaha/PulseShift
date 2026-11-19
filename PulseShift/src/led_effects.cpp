@@ -191,14 +191,13 @@ bool LedEffectEngine::renderRpmBar(uint32_t nowMs, const PulseShiftConfig& cfg,
   cfg.rpmMapping.expand(thresholds, renderCount_, cfg.rpmThresholds);
   const size_t bytes = renderCount_ * sizeof(uint16_t);
   if (lastBarCount_ != renderCount_ || lastHysteresis_ != hyst ||
-      lastWarningRpm_ != cfg.warningRpm || lastWarningPattern_ != cfg.warningPatternId ||
+      lastWarningRpm_ != cfg.warningRpm ||
       memcmp(lastThresholds_, thresholds, bytes) != 0) {
     resetRpmLatches();
     memcpy(lastThresholds_, thresholds, bytes);
     lastBarCount_ = renderCount_;
     lastHysteresis_ = hyst;
     lastWarningRpm_ = cfg.warningRpm;
-    lastWarningPattern_ = cfg.warningPatternId;
   }
   for (uint8_t i = 0; i < renderCount_; ++i) {
     const uint16_t onAt = thresholds[i];
